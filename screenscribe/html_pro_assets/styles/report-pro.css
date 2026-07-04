@@ -533,6 +533,27 @@ body[data-window-mode="player"] .header-tabs {
     background: #000;
 }
 
+/* Static-demo mode (the GitHub Pages sample): no source recording ships, so the
+   dead <video> element is hidden and a muted empty state fills the evidence panel
+   in its place. Controls are dropped server-side (see shell renderer). */
+body[data-static-demo="true"] .video-container video {
+    display: none;
+}
+
+.video-empty-state {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: var(--space-lg);
+    margin: 0;
+    aspect-ratio: 16 / 9;
+    color: var(--text-muted);
+    font-size: var(--fs-sm);
+    background: #000;
+}
+
 /* Ensure native video controls are always visible */
 .video-container video::-webkit-media-controls {
     opacity: 1 !important;

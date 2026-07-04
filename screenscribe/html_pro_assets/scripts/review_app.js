@@ -460,6 +460,12 @@ function broadcastWindowCommandWithPayload(command, payload = {}) {
     }
 }
 
+// The report was rendered as a self-contained static demo (baked by the example
+// generator via data-static-demo on <body>): no backing server, no source video.
+function isStaticDemo() {
+    return document.body?.dataset?.staticDemo === 'true';
+}
+
 function canControlEmbeddedPlayer() {
     return Boolean(
         detachedWindowRuntime.mode !== WINDOW_MODES.review
@@ -583,6 +589,12 @@ function enrichManualFrameImagesFromServerState(snapshot) {
 }
 
 async function hydrateReportStateFromDisk({ enrichManualFrameImagesOnly = false } = {}) {
+    // Static-demo sample (GitHub Pages): there is no server, so skip the
+    // /api/review-state hydration entirely — no request leaves the page and the
+    // console stays clean, honoring the landing page's self-contained promise.
+    if (isStaticDemo()) {
+        return;
+    }
     try {
         const response = await fetch('/api/review-state', {
             headers: { 'Accept': 'application/json' },
@@ -2721,6 +2733,11 @@ function handleFindingSeekClick(event) {
 }
 
 function seekToTimestamp(seconds) {
+    // Static-demo sample carries no source recording; seeking from a finding card
+    // must be a clean no-op (nothing to play, no error thrown).
+    if (isStaticDemo()) {
+        return;
+    }
     if (canControlEmbeddedPlayer()) {
         window.player.seekTo(seconds);
         return;

@@ -229,6 +229,9 @@ def main() -> None:
 
     # 3) Standalone interactive HTML (via the product renderer; video_path=None
     #    => opens from file:// with no embedded video and no server).
+    #    static_demo=True bakes the self-contained sample mode: the client skips the
+    #    /api/review-state hydration fetch (zero network requests on GitHub Pages)
+    #    and the video panel shows an honest empty state instead of a dead player.
     html = render_html_report_pro(
         video_name=VIDEO_NAME,
         video_path=None,
@@ -239,6 +242,7 @@ def main() -> None:
         errors=None,
         embed_video=False,
         language=LANGUAGE,
+        static_demo=True,
     )
     (OUT_DIR / "example_report.html").write_text(html, encoding="utf-8")
 

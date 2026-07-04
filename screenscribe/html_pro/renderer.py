@@ -441,6 +441,7 @@ def render_html_report_pro(
     errors: list[dict[str, str]] | None = None,
     embed_video: bool = False,
     language: str = "en",
+    static_demo: bool = False,
 ) -> str:
     """Render complete HTML Pro report with video player and synchronized subtitles.
 
@@ -454,6 +455,11 @@ def render_html_report_pro(
         errors: Optional list of pipeline error dictionaries
         embed_video: Whether to embed video as base64 (for smaller files)
         language: Subtitle language code for VTT metadata and track markup
+        static_demo: Bake a self-contained "static demo" report (the sample shipped
+            on GitHub Pages). Opt-in only; set by the example generator. When True
+            the client skips the ``/api/review-state`` hydration fetch (zero network
+            requests) and the video panel shows an honest empty state instead of a
+            dead player, since the sample carries no source recording.
 
     Returns:
         Complete HTML document as string
@@ -607,5 +613,6 @@ def render_html_report_pro(
         "findings_html": findings_html,
         "findings_json": findings_json,
         "segments_json": segments_json,
+        "static_demo": static_demo,
     }
     return render_surface(REVIEW_SURFACE, context)
