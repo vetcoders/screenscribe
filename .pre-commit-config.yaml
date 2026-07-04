@@ -58,4 +58,6 @@ repos:
         # is not where our secrets live. The vendored copy is tracked in git
         # and its provenance (source URL, SHA256, SRI at vendoring time) is
         # recorded in html_pro_assets/vendor/JSZIP_SOURCE.txt + README.md.
-        exclude: ^screenscribe/html_pro_assets/vendor/
+        # site/demo/ is a GENERATED demo report (inlined JSZip + embedded
+        # base64 assets) — excluded by path so the baseline never churns.
+        exclude: ^(screenscribe/html_pro_assets/vendor/|site/demo/)
