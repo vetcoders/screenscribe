@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://vetcoders.github.io/screenscribe/sitemap.xml
+Sitemap: https://screenscribe.vetcoders.io/sitemap.xml
