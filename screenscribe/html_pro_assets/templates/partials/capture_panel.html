@@ -1,0 +1,44 @@
+<div id="tab-capture" class="tab-content active" role="tabpanel" tabindex="0">
+    <h2 class="capture-heading" data-i18n="panel_heading">{t_panel_heading}</h2>
+    <div class="ux-hint" id="uxHint" data-i18n="ux_hint">
+        {t_ux_hint}
+    </div>
+    <div class="capture-controls">
+        <div class="mic-group">
+            <button class="mic-button" id="micBtn"
+                    aria-labelledby="micLabel"
+                    data-i18n-attr="title:mic_title"
+                    title="{t_mic_title}">
+                <!-- Phosphor microphone icon (monochrome) -->
+                <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M128,176a48,48,0,0,0,48-48V64a48,48,0,0,0-96,0v64A48,48,0,0,0,128,176ZM96,64a32,32,0,0,1,64,0v64a32,32,0,0,1-64,0Zm40,143.6V232a8,8,0,0,1-16,0V207.6A80.11,80.11,0,0,1,48,128a8,8,0,0,1,16,0,64,64,0,0,0,128,0,8,8,0,0,1,16,0A80.11,80.11,0,0,1,136,207.6Z"/>
+                </svg>
+            </button>
+            <span class="mic-label" id="micLabel" data-i18n="mic_label">{t_mic_label}</span>
+        </div>
+
+        <div class="transcript-input">
+            <div id="recordingStatus" class="recording-indicator" data-i18n="recording">
+                {t_recording}
+            </div>
+            <div id="transcriptPreview" class="transcript-preview" hidden></div>
+            <textarea id="notesInput" class="notes-input" rows="2"
+                      data-i18n-attr="placeholder:notes_placeholder"
+                      placeholder="{t_notes_placeholder}"></textarea>
+        </div>
+
+        <button class="mark-frame-btn" id="markFrameBtn" data-i18n="mark_frame">
+            {t_mark_frame}
+        </button>
+    </div>
+
+    <!-- How it works - first-run helper, shown only at zero moments
+         (CSS gates on body[data-has-markers="false"]). Step numbers
+         come from a CSS counter, not the i18n strings. -->
+    <ol class="howto" id="howtoSteps" data-i18n-attr="aria-label:howto_heading" aria-label="{t_howto_heading}">
+        <li data-i18n="howto_step_1">{t_howto_step_1}</li>
+        <li data-i18n="howto_step_2">{t_howto_step_2}</li>
+        <li data-i18n="howto_step_3">{t_howto_step_3}</li>
+        <li data-i18n="howto_step_4">{t_howto_step_4}</li>
+    </ol>
+</div>

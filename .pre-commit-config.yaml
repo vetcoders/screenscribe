@@ -1,0 +1,61 @@
+# Pre-commit hooks for Screenscribe
+# Install: uv run pre-commit install
+# Run manually: uv run pre-commit run --all-files
+#
+# Built by Vetcoders
+
+repos:
+  # Ruff - fast Python linter & formatter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # Bandit - security linter
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.10
+    hooks:
+      - id: bandit
+        args: [-c, pyproject.toml]
+        additional_dependencies: ["bandit[toml]"]
+
+  # Semgrep - static analysis against the local pinned ruleset (semgrep.yml).
+  # Deliberately not `--config auto`: that pulls ~3000 registry rules over the
+  # network on every commit, reports metrics upstream, and fans out one
+  # semgrep-core process per CPU core. The local set runs offline in <1s.
+  - repo: https://github.com/semgrep/semgrep
+    rev: v1.146.0
+    hooks:
+      - id: semgrep
+        args: [--config, semgrep.yml, --error, --metrics=off]
+        # Don't scan vendored, minified third-party (JSZip): findings in
+        # upstream library code are noise, not our code.
+        exclude: ^screenscribe/html_pro_assets/vendor/
+
+  # Basic file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^screenscribe/html_pro_assets/vendor/
+      - id: end-of-file-fixer
+        exclude: ^screenscribe/html_pro_assets/vendor/
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: detect-private-key
+      - id: check-merge-conflict
+
+  # Check for secrets
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        # Vendored, minified third-party (JSZip) trips entropy heuristics; it
+        # is not where our secrets live. The vendored copy is tracked in git
+        # and its provenance (source URL, SHA256, SRI at vendoring time) is
+        # recorded in html_pro_assets/vendor/JSZIP_SOURCE.txt + README.md.
+        exclude: ^screenscribe/html_pro_assets/vendor/

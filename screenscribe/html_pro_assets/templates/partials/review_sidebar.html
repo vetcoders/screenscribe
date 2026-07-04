@@ -1,0 +1,26 @@
+<div id="tab-summary" class="tab-content active" role="tabpanel" tabindex="0">
+    {errors_html}
+    {executive_summary_html}
+</div>
+<div id="tab-findings" class="tab-content" role="tabpanel" tabindex="0">
+    <section class="findings-section">
+        <section class="manual-findings-section" id="manualFindingsSection" hidden>
+            <div class="manual-findings-header">
+                <h3 data-i18n="manualFramesHeading">{t_manual_frames_heading}</h3>
+                <span id="manualFindingsCount" class="manual-findings-count">0</span>
+            </div>
+            <div id="manualFindingsList" class="manual-findings-list"></div>
+        </section>
+        {findings_html}
+    </section>
+</div>
+<!-- Export is the final review tab. Artifact downloads (TODO/JSON/ZIP) live
+     here only, never in an always-visible footer. Save review (review-state
+     persistence) stays in the sidebar footer. -->
+<div id="tab-export" class="tab-content" role="tabpanel" tabindex="0">
+    <div class="export-buttons">
+        <button type="button" data-action="export-todo" class="btn-secondary" data-i18n="exportTodo">{t_exportTodo}</button>
+        <button type="button" data-action="export-json" class="btn-secondary" data-i18n="exportJson">{t_exportJson}</button>
+        <button type="button" data-action="export-zip" class="btn-secondary" data-i18n="exportZip" data-i18n-title="exportZipTitle" title="{t_exportZipTitle}">{t_exportZip}</button>
+    </div>
+</div>

@@ -1,0 +1,112 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+!screenscribe/html_pro_assets/scripts/lib/
+!screenscribe/html_pro_assets/scripts/lib/*.js
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Python cache
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+**/.DS_Store
+Thumbs.db
+
+# Environment (secrets)
+.env
+!.env.example
+*.pem
+*.key
+
+# Project specific - media files
+*.log
+*.mp3
+*.wav
+*.mov
+*.mp4
+
+# Test outputs
+*_review/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Tools cache
+.loctree/
+.claude/
+.gemini/
+
+# Temp/patch files
+*.new
+*.patch
+*.diff
+
+# ── Public / private boundary ────────────────────────────────────────────
+# Team and agent context, and any private material, never belong in the
+# public product repo — keep them in a private workspace / channel instead.
+# Machine-local agent/tool overlay dirs beyond the ones below belong in your
+# personal .git/info/exclude, not here.
+.private/
+internal-context/
+private-context/
+ops/
+fixtures-private/
+recipes-private/
+.playwright-mcp/
+/output/*
+
+# Raw media, archives and dumps (ship small neutral examples instead)
+*.zip
+*.tar
+*.tar.gz
+*.m4a
+*.jsonl
+
+# Environment variants
+.env.*
+!.env.example
+
+# Operator-local scratch — wandered into the worktree, never part of the product.
+# (The public seed is built via `git archive HEAD`, so untracked files can never
+# ship anyway; this just keeps `git status` clean and prevents accidental adds.)
+shots/
+diagnose-which-*.txt
+/.vibecrafted
+
+# Generated example report (produced by examples/generate_example.py; inlines
+# vendored minified JS, so it is regenerated locally rather than tracked).
+examples/example_report.html

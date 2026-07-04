@@ -1,0 +1,81 @@
+# Local, pinned semgrep ruleset — runs offline in a fraction of a second.
+#
+# Deliberately NOT `--config auto`: the registry resolves ~3000 rules over the
+# network on every run and reports metrics upstream, which contradicts both
+# commit-time speed and this project's "nothing phones home" promise.
+#
+# Scope is curated to what bandit (Python security) and detect-secrets
+# (credentials) do NOT cover: the shipped JavaScript assets, and a few
+# project-specific invariants of the localhost security model.
+rules:
+  # ── JavaScript (html_pro_assets — bandit never sees these) ──────────────
+  - id: js-no-eval
+    patterns:
+      - pattern: eval(...)
+    message: "eval() executes arbitrary strings as code; the report/dashboard JS must never need it."
+    languages: [javascript]
+    severity: ERROR
+
+  - id: js-no-new-function
+    patterns:
+      - pattern: new Function(...)
+    message: "new Function() is eval in disguise; build behavior from real functions instead."
+    languages: [javascript]
+    severity: ERROR
+
+  - id: js-no-document-write
+    pattern-either:
+      - pattern: document.write(...)
+      - pattern: document.writeln(...)
+    message: "document.write enables injection and breaks on parsed documents; build DOM nodes instead."
+    languages: [javascript]
+    severity: ERROR
+
+  - id: js-no-string-timers
+    pattern-either:
+      - pattern: setTimeout("$CODE", ...)
+      - pattern: setInterval("$CODE", ...)
+    message: "String arguments to timers are eval'd; pass a function reference."
+    languages: [javascript]
+    severity: ERROR
+
+  - id: js-no-html-injection-from-concat
+    pattern-either:
+      - pattern: $EL.innerHTML = $A + $B
+      - pattern: $EL.outerHTML = $A + $B
+      - pattern: $EL.insertAdjacentHTML($WHERE, $A + $B)
+    message: "HTML built by string concatenation invites XSS in generated reports; build nodes or escape every interpolated value (escapeHtml)."
+    languages: [javascript]
+    severity: ERROR
+
+  # ── Python (project invariants beyond bandit's generic checks) ──────────
+  - id: py-no-bind-all-interfaces
+    patterns:
+      - pattern-either:
+          - pattern: uvicorn.run(..., host="0.0.0.0", ...)
+          - pattern: uvicorn.run(..., host="::", ...)
+    message: "The analyze/review servers are localhost-only by security design (Host/Origin/token guards assume it); never bind all interfaces."
+    languages: [python]
+    severity: ERROR
+
+  - id: py-no-wildcard-cors
+    patterns:
+      - pattern: app.add_middleware(CORSMiddleware, ..., allow_origins=["*"], ...)
+    message: "Wildcard CORS would let any web page drive the local API and defeat the Origin guard."
+    languages: [python]
+    severity: ERROR
+
+  - id: py-no-disabled-httpx-timeout
+    pattern-either:
+      - pattern: httpx.Client(..., timeout=None, ...)
+      - pattern: httpx.AsyncClient(..., timeout=None, ...)
+    message: "timeout=None hangs the pipeline forever on a stuck upstream; keep an explicit finite timeout."
+    languages: [python]
+    severity: ERROR
+
+  - id: py-no-token-in-query-string
+    patterns:
+      - pattern-regex: '\?token='
+    message: "The session token travels in the URL fragment (#token=...) so it stays out of server logs and Referer — never in the query string."
+    languages: [python]
+    severity: ERROR

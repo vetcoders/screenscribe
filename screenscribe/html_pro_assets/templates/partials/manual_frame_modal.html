@@ -1,0 +1,38 @@
+<div id="manualFrameModal" class="manual-frame-modal" hidden>
+    <div class="manual-frame-backdrop" data-action="close-manual-frame"></div>
+    <div class="manual-frame-dialog" role="dialog" aria-modal="true" aria-labelledby="manualFrameTitle">
+        <div class="manual-frame-header">
+            <h2 id="manualFrameTitle" data-i18n="manualFrameAnalysis">{t_manual_frame_analysis}</h2>
+            <button type="button" class="manual-frame-close" data-action="close-manual-frame">&times;</button>
+        </div>
+        <div class="manual-frame-body">
+            <div class="manual-frame-preview-wrap">
+                <img id="manualFramePreview" class="manual-frame-preview" alt="{t_manual_frame_preview_alt}" data-i18n-alt="manualFramePreviewAlt">
+            </div>
+            <div class="manual-frame-fields">
+                <div class="manual-frame-row">
+                    <label class="manual-frame-label" data-i18n="manualFrameTimestamp">{t_manual_frame_timestamp}</label>
+                    <div id="manualFrameTimestamp" class="manual-frame-timestamp">00:00.000</div>
+                </div>
+                <div class="manual-frame-row">
+                    <label class="manual-frame-label" data-i18n="manualFrameSpokenDescription">{t_manual_frame_spoken_description}</label>
+                    <div class="manual-frame-transcript-tools">
+                        <button type="button" id="manualFrameMicBtn" class="player-btn" data-i18n="manualFrameHoldToRecord">🎤 {t_manual_frame_hold_to_record}</button>
+                        <span id="manualFrameMicStatus" class="manual-frame-mic-status"></span>
+                    </div>
+                    <div id="manualFrameTranscript" class="manual-frame-transcript empty" data-i18n="manualFrameNoSpoken">{t_manual_frame_no_spoken}</div>
+                </div>
+                <div class="manual-frame-row">
+                    <label class="manual-frame-label" for="manualFrameNotes" data-i18n="manualFrameNotes">{t_manual_frame_notes}</label>
+                    <textarea id="manualFrameNotes" class="manual-frame-notes" rows="4" placeholder="{t_manual_frame_notes_placeholder}" data-i18n="manualFrameNotesPlaceholder"></textarea>
+                </div>
+                <div id="manualFrameAnalysisStatus" class="manual-frame-analysis-status" data-i18n="manualFrameReady">{t_manual_frame_ready}</div>
+            </div>
+        </div>
+        <div class="manual-frame-footer">
+            <button type="button" class="btn-secondary" data-action="close-manual-frame" data-i18n="manualFrameCancel">{t_manual_frame_cancel}</button>
+            <button type="button" id="manualFrameAnalyzeBtn" class="btn-secondary" data-i18n="manualFrameAnalyze">{t_manual_frame_analyze}</button>
+            <button type="button" id="manualFrameAddBtn" class="btn-primary" data-i18n="manualFrameAdd">{t_manual_frame_add}</button>
+        </div>
+    </div>
+</div>

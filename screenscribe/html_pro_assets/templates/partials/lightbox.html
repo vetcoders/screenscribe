@@ -1,0 +1,17 @@
+<div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-hidden="true" aria-label="Frame annotation" tabindex="-1">
+    <button type="button" class="lightbox-close" data-action="close-lightbox" title="Close (ESC)" aria-label="Close" data-i18n-title="lightboxClose">&times;</button>
+    <div class="lightbox-content">
+        <img id="lightbox-img" src="" alt="Full size" data-i18n-alt="lightboxAlt">
+        <svg id="lightbox-svg" class="lightbox-annotation-svg"></svg>
+    </div>
+    <div id="lightbox-toolbar" class="lightbox-toolbar" style="display: none;" role="toolbar" aria-label="Annotation tools">
+        <button type="button" class="tool-btn" data-tool="pen" data-i18n="toolPen">{t_tool_pen}</button>
+        <button type="button" class="tool-btn" data-tool="rect" data-i18n="toolRect">{t_tool_rect}</button>
+        <button type="button" class="tool-btn" data-tool="arrow" data-i18n="toolArrow">{t_tool_arrow}</button>
+        <button type="button" class="tool-btn" data-tool="text" data-i18n="toolText">{t_tool_text}</button>
+        <input type="color" class="color-picker" value="#ffffff" data-default-token="--annotation-color-default">
+        <button type="button" class="undo-btn" data-i18n="toolUndo">{t_tool_undo}</button>
+        <button type="button" class="clear-btn" data-i18n="toolClear">{t_tool_clear}</button>
+        <button type="button" class="done-btn" data-action="close-lightbox" data-i18n="toolDone">{t_tool_done}</button>
+    </div>
+</div>

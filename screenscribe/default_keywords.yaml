@@ -1,0 +1,156 @@
+# screenscribe - Default Keywords Configuration
+#
+# Keywords are user-editable HINTS for AI detection. They are
+# always-on extra context, safe when empty, and never replace LLM analysis.
+# Edit this file to teach screenscribe the words/phrases you and your team
+# use to describe problem types. Multiple languages may share one file.
+#
+# Categories (match the semantic detection categories):
+#   bug, change, ui, performance, accessibility, other
+
+bug:
+  # Polish
+  - "nie działa"
+  - "nie dziala"
+  - "klikam i nic"
+  - "bug"
+  - "błąd"
+  - "blad"
+  - "problem"
+  - "zepsute"
+  - "nie widać"
+  - "nie widac"
+  - "brakuje"
+  - "złe"
+  - "zle"
+  - "straszne"
+  - "tragedia"
+  - "koszmar"
+  - "bez sensu"
+  # English
+  - "broken"
+  - "doesn't work"
+  - "not working"
+  - "issue"
+  - "error"
+  - "wrong"
+  - "missing"
+  - "bad"
+
+change:
+  # Polish
+  - "trzeba"
+  - "powinno"
+  - "powinien"
+  - "powinniśmy"
+  - "powinnismy"
+  - "musimy"
+  - "zmienić"
+  - "zmienic"
+  - "poprawić"
+  - "poprawic"
+  - "wyrzucić"
+  - "wyrzucic"
+  - "usunąć"
+  - "usunac"
+  - "dodać"
+  - "dodac"
+  - "przenieść"
+  - "przeniesc"
+  - "przeprojektować"
+  - "przeprojektowac"
+  - "zrobić"
+  - "zrobic"
+  - "ogarnąć"
+  - "ogarnac"
+  - "spłaszczyć"
+  - "splaszczyc"
+  - "wywalamy"
+  # English
+  - "should"
+  - "must"
+  - "need to"
+  - "have to"
+  - "fix"
+  - "change"
+  - "remove"
+  - "add"
+  - "move"
+  - "redesign"
+
+ui:
+  # Polish
+  - "potworek"
+  - "nie podoba"
+  - "przycisk"
+  - "okno"
+  - "ekran"
+  - "rama"
+  - "warstwa"
+  # English
+  - "layout"
+  - "ui"
+  - "ux"
+  - "button"
+  - "modal"
+  - "screen"
+  - "animacj"
+  - "scroll"
+  - "glass"
+  - "blur"
+  - "vibrancy"
+  - "border"
+  - "layer"
+
+performance:
+  # Polish
+  - "za ciężkie"
+  - "za ciezkie"
+  - "wolno"
+  - "muli"
+  - "lag"
+  - "zacina"
+  - "przycina"
+  - "długo się ładuje"
+  - "dlugo sie laduje"
+  # English
+  - "slow"
+  - "laggy"
+  - "freeze"
+  - "freezing"
+  - "janky"
+  - "stutter"
+  - "takes forever"
+  - "performance"
+
+accessibility:
+  # Polish
+  - "nie widać tekstu"
+  - "nie widac tekstu"
+  - "za mały"
+  - "za maly"
+  - "kontrast"
+  - "czytnik ekranu"
+  - "klawiatura"
+  # English
+  - "contrast"
+  - "screen reader"
+  - "keyboard navigation"
+  - "alt text"
+  - "aria"
+  - "too small"
+  - "hard to read"
+  - "color blind"
+  - "accessibility"
+  - "a11y"
+
+other:
+  # Catch-all for signals that do not fit the categories above.
+  # English
+  - "weird"
+  - "strange"
+  - "hmm"
+  - "not sure"
+  # Polish
+  - "dziwne"
+  - "nie wiem"

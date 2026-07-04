@@ -1,0 +1,21 @@
+<div id="tab-export" class="tab-content" role="tabpanel" tabindex="0">
+    <div class="export-panel">
+        <div class="export-options">
+            <span id="statusText" data-i18n="status_ready">{t_status_ready}</span>
+            <div id="finalizeProgress" class="finalize-progress" hidden>
+                <div class="finalize-progress-meta">
+                    <span id="finalizeProgressLabel">0/0</span>
+                    <span id="finalizeProgressErrors" data-i18n-tpl="errors_count" data-i18n-tpl-args="0">{t_errors_count}</span>
+                </div>
+                <div class="finalize-progress-track">
+                    <div id="finalizeProgressFill" class="finalize-progress-fill"></div>
+                </div>
+            </div>
+        </div>
+        <div class="export-buttons">
+            <button type="button" id="exportJsonBtn" class="btn-secondary" data-i18n="export_json" disabled>{t_export_json}</button>
+            <button type="button" id="finalizeBtn" class="btn-primary" data-i18n="report_md" disabled>{t_report_md}</button>
+        </div>
+        <p id="exportGateHint" class="export-gate-hint" data-i18n="export_gate_hint">{t_export_gate_hint}</p>
+    </div>
+</div>

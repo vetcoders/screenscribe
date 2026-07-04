@@ -1,0 +1,14 @@
+Name: JSZip
+Version: 3.10.1
+License: MIT or GPLv3 (dual; see JSZIP_LICENSE.markdown)
+Upstream: https://github.com/Stuk/jszip
+Source URL: https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
+SHA256: acc7e41455a80765b5fd9c7ee1b8078a6d160bbbca455aeae854de65c947d59e
+SHA384 (SRI): sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG
+Vendored on: 2026-06-06
+License file: JSZIP_LICENSE.markdown (fetched from
+  https://raw.githubusercontent.com/Stuk/jszip/v3.10.1/LICENSE.markdown)
+
+Update procedure: download the new version from the official source, verify
+its published SRI/SHA256, replace jszip.min.js, refresh this record and the
+license file, then run `make verify` (the single READY gate).

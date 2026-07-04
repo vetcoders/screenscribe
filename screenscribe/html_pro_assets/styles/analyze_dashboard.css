@@ -1,0 +1,862 @@
+/* Analyze mode layout — reuses the report-pro workspace-shell:
+ * left column = video + searchable transcript (stacked),
+ * right column = capture controls + markers (tabs),
+ * resizer between columns.
+ */
+
+/* Default vertical proportion in the left column: video gets ~70%,
+ * transcript gets ~30%. Transcript is usually empty in analyze mode
+ * (screen recordings without audio), so we want more screen real
+ * estate for the video by default. The 120px floor keeps the
+ * transcript header + search visible without forcing a tall panel. */
+.main-column {
+    --surface-video-row: 7fr;
+    --surface-transcript-row-min: 120px;
+    --surface-transcript-row: 3fr;
+}
+
+/* Capture tab lives inside the sidebar now; make it full-width and
+ * column-oriented so mic/transcript/Mark fit vertically. */
+.capture-controls {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    align-items: stretch;
+    padding: var(--space-md);
+    background: var(--surface-card);
+    border-radius: var(--radius-md);
+    margin-top: 0;
+}
+
+.capture-controls .mic-group {
+    align-self: center;
+}
+
+/* Analyze has no pre-existing transcript until markers are captured,
+ * so show a friendly empty state that explains the flow. */
+.transcript-panel .empty-state {
+    padding: var(--space-lg);
+    text-align: center;
+    color: var(--text-muted);
+    font-size: var(--fs-md);    line-height: 1.5;
+}
+
+.video-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.marker-timeline {
+    padding: 0 var(--space-sm) var(--space-xs);
+}
+
+.marker-timeline-track {
+    position: relative;
+    height: 14px;
+    border-radius: var(--radius-full);
+    background: color-mix(in srgb, var(--surface-hover) 60%, transparent);
+    border: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
+}
+
+.marker-tick {
+    position: absolute;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid var(--surface-primary);
+    background: var(--ss-accent);
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ss-accent) 20%, transparent);
+}
+
+.marker-tick:hover,
+.marker-tick:focus-visible {
+    width: 12px;
+    height: 12px;
+    outline: none;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ss-accent) 28%, transparent);
+}
+
+.marker-tick.active {
+    width: 14px;
+    height: 14px;
+    background: var(--ss-accent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ss-accent) 32%, transparent);
+}
+
+.transcript-panel.transcript-panel--disabled {
+    opacity: 0.82;
+}
+
+.transcript-panel.transcript-panel--disabled .search-box {
+    display: none;
+}
+
+/* Findings (markers) tab uses the same scroll area as report mode. */
+#tab-findings {
+    min-height: 200px;
+}
+
+/* Mic button - the brightened ring + icon are intentional: the
+ * default report-pro tokens (--border-default, --text-secondary)
+ * blend into the dark workspace surface, leaving the mic looking
+ * un-clickable. Issue #10a brightens the ring to a high-contrast
+ * white tint and the icon to near-white so the affordance reads
+ * clearly against --surface-primary. Hover and recording states
+ * stay loud so the user always knows the current mode. */
+.mic-button {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.45);
+    background: var(--surface-card);
+    color: rgba(255, 255, 255, 0.92);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--motion-fast);
+    flex-shrink: 0;
+}
+
+.mic-button:hover {
+    border-color: var(--ss-accent);
+    background: var(--surface-hover);
+    color: #ffffff;
+    transform: scale(1.04);
+}
+
+.mic-button:focus-visible {
+    outline: 2px solid var(--ss-accent);
+    outline-offset: 2px;
+}
+
+.mic-button.recording {
+    border-color: var(--color-critical);
+    background: color-mix(in srgb, var(--color-critical) 20%, transparent);
+    color: #ffffff;
+    animation: pulse-recording 1s infinite;
+}
+
+.speech-language {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);    white-space: nowrap;
+}
+
+.speech-language strong {
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    letter-spacing: 0;
+}
+
+@keyframes pulse-recording {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+}
+
+.mic-button svg {
+    width: 28px;
+    height: 28px;
+    fill: currentColor;
+}
+
+.recording-indicator {
+    display: none;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: color-mix(in srgb, var(--color-critical) 20%, transparent);
+    border-radius: var(--radius-sm);
+    color: var(--color-critical);
+    font-weight: 600;
+}
+
+.recording-indicator.active {
+    display: flex;
+}
+
+.recording-indicator::before {
+    content: '';
+    width: 12px;
+    height: 12px;
+    background: var(--color-critical);
+    border-radius: 50%;
+    animation: pulse-dot 1s infinite;
+}
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+.transcript-input {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.transcript-preview {
+    background: var(--surface-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: var(--space-md);
+    min-height: 60px;
+    font-style: italic;
+    color: var(--text-secondary);
+}
+
+.transcript-preview.has-text {
+    font-style: normal;
+    color: var(--text-primary);
+}
+
+.notes-input {
+    width: 100%;
+    padding: var(--space-sm);
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    resize: vertical;
+}
+
+/* Mark Frame button — primary CTA on the right rail. The one loud action on
+   the analyze screen: only this button lights up the accent on hover; everything
+   else (export, secondary) stays neutral so the accent never floods. */
+.mark-frame-btn {
+    padding: var(--space-md) var(--space-xl);
+    background: var(--surface-hover);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    box-shadow: var(--shadow-sm);
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--motion-fast);
+    flex-shrink: 0;
+}
+
+.mark-frame-btn:hover {
+    border-color: var(--ss-accent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ss-accent) 38%, transparent), var(--shadow-sm);
+}
+
+.mark-frame-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.markers-list {
+    margin-top: var(--space-lg);
+}
+
+.marker-item {
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    margin-bottom: var(--space-md);
+    cursor: pointer;
+    transition: border-color var(--motion-fast), box-shadow var(--motion-fast), background var(--motion-fast);
+}
+
+.marker-item:hover {
+    border-color: color-mix(in srgb, var(--ss-accent) 55%, var(--border-default));
+}
+
+.marker-item.active {
+    border-color: var(--ss-accent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ss-accent) 40%, transparent);
+    background: color-mix(in srgb, var(--ss-accent) 7%, var(--surface-card));
+}
+
+.marker-item:focus-visible {
+    outline: 2px solid var(--ss-accent);
+    outline-offset: 2px;
+}
+
+.marker-item.analyzing {
+    border-color: var(--ss-accent-hi);
+}
+
+.marker-item.completed {
+    /* Success border is the "converged/done" mint (--color-low), kept
+     * distinct from the live accent (--ss-accent) so a completed card
+     * reads as done, not active. */
+    border-color: var(--color-low);
+}
+
+.marker-item.error {
+    border-color: var(--color-critical);
+}
+
+.marker-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-sm);
+}
+
+.marker-time {
+    font-family: var(--font-mono);
+    color: var(--ss-accent);
+}
+
+.marker-status {
+    font-size: var(--fs-md);    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    background: var(--surface-hover);
+}
+
+.marker-transcript {
+    color: var(--text-secondary);
+    font-size: var(--fs-md);}
+
+.marker-result {
+    margin-top: var(--space-md);
+    padding-top: var(--space-md);
+    border-top: 1px solid var(--border-default);
+}
+
+.marker-thumb {
+    margin-top: var(--space-sm);
+    display: block;
+    max-width: 200px;
+    max-height: 120px;
+    width: auto;
+    height: auto;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: zoom-in;
+    background: var(--surface-primary);
+    object-fit: contain;
+}
+
+.marker-thumb:hover {
+    border-color: var(--ss-accent);
+}
+
+/* Per-finding action toolbar (delete / edit-note / re-analyze). Wraps
+ * onto a second row on narrow sidebar widths. */
+.marker-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    margin-top: var(--space-sm);
+}
+
+.marker-actions button {
+    font-size: var(--fs-sm);    padding: var(--space-xs) var(--space-sm);
+    background: var(--surface-hover);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-family: var(--font-sans);
+    transition: all var(--motion-fast);
+}
+
+.marker-actions button:hover {
+    border-color: var(--ss-accent);
+    background: var(--surface-card);
+}
+
+.marker-actions button.danger:hover {
+    border-color: var(--color-critical);
+    color: var(--color-critical);
+}
+
+.marker-actions button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Per-marker priority control (A7b): a quiet inline row beneath the action
+ * toolbar letting the operator SET a marker's priority (mirrors Review's
+ * severity-select). Lives in a data-action="stop" region so it never selects
+ * the kafelek. */
+.marker-priority {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    margin-top: var(--space-xs);
+}
+
+.marker-priority-label {
+    font-size: var(--fs-xs);    color: var(--text-secondary);
+}
+
+.marker-priority .severity-select {
+    font-size: var(--fs-sm);    padding: var(--space-xs) var(--space-sm);
+    background: var(--surface-hover);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
+    cursor: pointer;
+}
+
+.marker-priority .severity-select:hover {
+    border-color: var(--ss-accent);
+}
+
+/* Inline note editor opens beneath the marker card when "Edit note" is
+ * clicked. Hidden by default so the card stays compact. */
+.marker-note-editor {
+    display: none;
+    margin-top: var(--space-sm);
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.marker-note-editor.active {
+    display: flex;
+}
+
+.marker-note-editor textarea {
+    width: 100%;
+    min-height: 60px;
+    padding: var(--space-sm);
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    resize: vertical;
+}
+
+.marker-note-editor .editor-buttons {
+    display: flex;
+    gap: var(--space-xs);
+    justify-content: flex-end;
+}
+
+.marker-note-editor .editor-buttons button {
+    font-size: var(--fs-sm);    padding: var(--space-xs) var(--space-sm);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-family: var(--font-sans);
+    transition: all var(--motion-fast);
+}
+
+.marker-note-editor .editor-buttons .primary {
+    background: var(--surface-hover);
+    border-color: var(--border-default);
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.marker-note-editor .editor-buttons .secondary {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+}
+
+.marker-note-editor .editor-buttons button:hover {
+    border-color: var(--ss-accent);
+}
+
+.marker-notes-display {
+    margin-top: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--surface-primary);
+    border-left: 2px solid var(--ss-accent);
+    color: var(--text-secondary);
+    font-size: var(--fs-md);    white-space: pre-wrap;
+}
+
+.frame-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    cursor: zoom-out;
+    padding: var(--space-lg);
+}
+
+.frame-modal.active {
+    display: flex;
+}
+
+.frame-modal img {
+    max-width: min(95vw, 1600px);
+    max-height: 95vh;
+    object-fit: contain;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+}
+
+.frame-modal-close {
+    position: absolute;
+    top: var(--space-md);
+    right: var(--space-md);
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(0, 0, 0, 0.55);
+    color: #ffffff;
+    font-family: var(--font-sans);
+    font-size: var(--fs-base);    font-weight: 700;
+    cursor: pointer;
+}
+
+.frame-modal-close:hover,
+.frame-modal-close:focus-visible {
+    border-color: var(--ss-accent);
+    background: rgba(0, 0, 0, 0.75);
+    outline: none;
+}
+
+.tab-btn.findings-pulse {
+    animation: findings-pulse 0.9s ease-out 2;
+}
+
+@keyframes findings-pulse {
+    0%, 100% { box-shadow: none; }
+    50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ss-accent) 28%, transparent); }
+}
+
+.spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border-default);
+    border-top-color: var(--ss-accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.empty-state {
+    text-align: center;
+    padding: var(--space-xl);
+    color: var(--text-muted);
+}
+
+.finalize-progress {
+    min-width: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.finalize-progress[hidden] {
+    display: none;
+}
+
+.finalize-progress-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: var(--fs-sm);    color: var(--text-secondary);
+}
+
+.finalize-progress-track {
+    width: 100%;
+    height: 8px;
+    border-radius: var(--radius-full);
+    background: var(--surface-hover);
+    overflow: hidden;
+    border: 1px solid var(--border-default);
+}
+
+.finalize-progress-fill {
+    width: 0%;
+    height: 100%;
+    background: var(--ss-accent);
+    transition: width var(--motion-fast);
+}
+
+/* Language toggle - sits on the far right of the header next to
+ * the meta line. Two pill segments, one per language, with the
+ * active one raised on a neutral surface. localStorage drives the
+ * persisted state via JS. */
+.lang-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    padding: 2px;
+    background: var(--surface-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-full);
+    font-family: var(--font-sans);
+    font-size: var(--fs-2xs);    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.lang-toggle button {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 0.3rem 0.65rem;
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    font: inherit;
+    transition: all var(--motion-fast) var(--ease-out);
+    min-width: 2.4rem;
+}
+
+.lang-toggle button:hover {
+    color: var(--text-primary);
+}
+
+.lang-toggle button.active {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+}
+
+.lang-toggle button:focus-visible {
+    outline: 2px solid var(--ss-accent);
+    outline-offset: 2px;
+}
+
+/* R-P6 a11y — keyboard focus rings on the dashboard's custom controls:
+   header tabs, the Mark Frame action, the export buttons, and the
+   keyboard-resizable separator. */
+.header-tabs .tab-btn:focus-visible,
+.mark-frame-btn:focus-visible,
+.export-panel .export-buttons button:focus-visible,
+.sidebar-resizer:focus-visible {
+    outline: 2px solid var(--ss-accent);
+    outline-offset: 2px;
+}
+
+/* Keep the H1 prompt mark and the active header tab on the accent in
+ * the analyze dashboard, independent of the report-pro defaults. */
+.app-header h1::before {
+    color: var(--ss-accent);
+}
+
+.header-tabs .tab-btn.active {
+    color: var(--ss-accent);
+}
+
+/* UX hint - small, subtle line above the mic button so first-time
+ * users understand the flow without on-screen tour. Issue #11. */
+.ux-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-xs);
+    padding: var(--space-sm) var(--space-md);
+    margin-bottom: var(--space-sm);
+    background: color-mix(in srgb, var(--ss-accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ss-accent) 25%, transparent);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);    font-style: italic;
+    line-height: 1.55;
+}
+
+.ux-hint::before {
+    content: "i";
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    margin-top: 1px;
+    border-radius: 50%;
+    background: var(--ss-accent);
+    color: var(--ss-accent-ink);
+    font-family: var(--font-mono);
+    font-size: var(--fs-2xs);    font-style: normal;
+    font-weight: 700;
+}
+
+/* ============================================================================
+   Bucket B + C — analyze dashboard UX refinements (mono-first, accent only)
+   ============================================================================ */
+
+/* Right Capture panel primary heading — above the ux_hint subtext. */
+.capture-heading {
+    margin: 0 0 var(--space-sm);
+    color: var(--text-primary);
+    font-size: var(--fs-base);    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+/* Mic button + its visible label stacked and centered as one unit. */
+.capture-controls .mic-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.mic-label {
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);    text-align: center;
+    line-height: 1.3;
+}
+
+/* "UI:" label + language toggle as one compact header group. */
+.ui-language {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    white-space: nowrap;
+}
+
+.ui-language-label {
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);}
+
+/* "How it works" first-run helper — shown ONLY at zero moments (gated on
+   body[data-has-markers]); hidden after the first. Neutral raised surface +
+   hairline; accent only on the step numeral (text, not a fill). */
+.howto {
+    display: none;
+}
+
+body[data-has-markers="false"] .howto {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin: var(--space-md) 0 0;
+    padding: var(--space-md);
+    list-style: none;
+    counter-reset: howto;
+    background: var(--surface-hover);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);    line-height: 1.45;
+}
+
+.howto li {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    counter-increment: howto;
+}
+
+.howto li::before {
+    content: counter(howto);
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: var(--radius-full);
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    color: var(--ss-accent);
+    font-family: var(--font-mono);
+    font-size: var(--fs-2xs);    font-weight: 700;
+    line-height: 1;
+}
+
+/* Empty state: with zero moments the transcript is guaranteed empty, so give
+   the video almost all the height and shrink the transcript to its header +
+   helper copy. Reverts to the 7fr/3fr default once the first moment lands. */
+body[data-has-markers="false"] .main-column {
+    grid-template-rows: minmax(0, 1fr) auto;
+}
+
+body[data-has-markers="false"] .transcript-panel .empty-state {
+    padding: var(--space-md);
+}
+
+/* Export tab: let the panel fill the sidebar height instead of floating at the
+   top with a big void below (F-10: the tab read as empty). The panel itself now
+   stretches to 100% and centers its own contents vertically. */
+#tab-export.active {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+}
+
+/* Export tab panel — the export bar moved out of the bottom island into the
+   #tab-export tab-content. Quiet raised framing inside the sidebar scroll;
+   neutral surface + hairline, no accent fill. F-10: fill the available height and
+   center the export controls + helper copy so the tab never looks empty. */
+.export-panel {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--space-md);
+    padding: var(--space-md);
+    min-height: 100%;
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    text-align: center;
+}
+
+.export-panel .export-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    font-size: var(--fs-md);    color: var(--text-secondary);
+}
+
+.export-panel .export-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.export-panel .export-buttons button {
+    width: 100%;
+    /* report-pro's base `.export-buttons button { flex: 1 1 150px }` is meant for
+       a horizontal row; in this vertical column it makes the basis a 150px-tall
+       button that then grows to fill — reset so each sizes to its own content. */
+    flex: 0 0 auto;
+}
+
+/* Export gate: disabled buttons read as "not yet" and never light the accent on
+   hover; the helper line explains why. */
+.export-buttons button:disabled,
+.export-buttons button[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.export-panel .export-buttons button:disabled:hover,
+.export-panel .export-buttons button[disabled]:hover {
+    border-color: var(--border-default);
+    box-shadow: none;
+    color: var(--text-primary);
+}
+
+.export-gate-hint {
+    margin: var(--space-xs) 0 0;
+    color: var(--text-muted);
+    font-size: var(--fs-2xs);    line-height: 1.45;
+}
+
+.export-gate-hint[hidden] {
+    display: none;
+}
+
+/* Reactive video status line — a quiet mono hint under the player + timeline.
+   Neutral muted text; no surface fill, no accent. */
+.video-status-line {
+    margin: var(--space-xs) 0 0;
+    padding: 0 var(--space-sm);
+    min-height: 1.2em;
+    color: var(--text-muted);
+    font-size: var(--fs-sm);    font-family: var(--font-mono);
+    line-height: 1.4;
+}

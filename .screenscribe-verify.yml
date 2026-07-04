@@ -1,0 +1,34 @@
+# ss-verify contract — declared by the repo, consumed by scripts/ss_verify.py.
+# This is the single source of truth for "what does READY mean here". The
+# verifier reads it when present; absent, it falls back to sensible defaults.
+
+# Which tests constitute the gate (pytest -m expression).
+tests: "not integration"
+
+# Real-browser surface dimension of READY. `make verify` stays browserless by
+# design (the F0 node-vm canary covers JS-runtime), so this dimension is enforced
+# by the CI `e2e` job, which is BLOCKING (no continue-on-error) and runs this
+# exact selector against a real Chromium. Declared here so the contract — not
+# just the workflow — names the browser surface as part of what READY means.
+# Note: a declarative key; scripts/ss_verify.py ignores unknown keys, so adding
+# it does not change the local `make verify` run.
+browser_smoke: "tests/e2e -m e2e --run-e2e"
+
+# Coverage floor (percent). Mirrors [tool.coverage.report] fail_under.
+coverage_floor: 80
+
+# Runtime command reserved for future surfaces. The cli+effect-smoke check
+# carries its own REVIEW render contract (below), so this stays null for now.
+runtime_command: null
+
+# Critical-asset / runtime EFFECT contract: the packaged wheel, installed into
+# an isolated env, MUST render a self-contained REVIEW report — embedded
+# base64 image (data:image/), no external <script src=>, no missing template.
+critical_assets:
+  - "review-render: self-contained HTML with embedded data:image/ and no external <script src=>"
+
+# Paths excluded from the no-secrets scan. Vendored minified bundles carry
+# benign high-entropy strings; the Makefile secrets-check excludes the same
+# path. Declared here so the script stays portable (no hardcode).
+secrets_exclude:
+  - "screenscribe/html_pro_assets/vendor"

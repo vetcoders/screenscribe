@@ -1,0 +1,11 @@
+<!-- Frame preview modal - clickable thumbnails open here.
+     Closing happens by clicking the overlay (any spot), the X, or pressing Esc.
+     Close is wired via event delegation in analyze_dashboard.js (CSP-ready,
+     no inline onclick — C7.2b). -->
+<div id="frameModal" class="frame-modal" role="dialog" aria-hidden="true"
+     data-i18n-attr="aria-label:modal_aria"
+     aria-label="Captured frame preview">
+    <button type="button" class="frame-modal-close" aria-label="Close"
+            data-i18n-attr="aria-label:modal_close">X</button>
+    <img id="frameModalImg" alt="Captured frame" data-i18n-attr="alt:modal_alt">
+</div>

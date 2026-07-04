@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege GITHUB_TOKEN: this workflow only reads the repo.
+# Third-party actions are pinned to full commit SHAs (supply-chain hardening);
+# the trailing comment records the human-readable version.
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality & tests (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # node is REQUIRED here: the F0 JS-runtime canary is fail-closed under CI
+      # (tests/test_f0_js_runtime_smoke.py — a missing node FAILS, never skips),
+      # so `make verify` would go red without a node on PATH. setup-node is the
+      # provisioning side of that contract.
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "20"
+
+      - name: Install FFmpeg
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install ffmpeg
+          else
+            sudo apt-get update && sudo apt-get install -y ffmpeg
+          fi
+
+      - name: Sync dependencies
+        run: uv sync --dev
+
+      # ONE gate. `make verify` runs scripts/ss_verify.py against this checkout:
+      # no-junk · no-secrets · leak-scan · compiles · ruff check + ruff
+      # format --check + mypy · bandit security · pytest + coverage floor ·
+      # build (sdist+wheel) · cli+effect-smoke (isolated wheel renders a
+      # self-contained REVIEW report). This is a strict superset of the old
+      # `make release-check` (lint · format · typecheck · security · tests ·
+      # coverage · leak-scan · secrets · build · ship-verify), so green CI means
+      # releasable. Fail-closed: any check fail -> NOT READY -> nonzero exit.
+      # Runs on the full matrix (every OS × Python), same coverage as before.
+      - name: Verify (ss-verify — the single READY gate)
+        shell: bash
+        run: make verify
+
+  e2e:
+    name: E2E (installed wheel + real browser)
+    runs-on: ubuntu-latest
+    # BLOCKING gate = the deterministic no-API smoke (tests/e2e/test_smoke_no_api.py):
+    # it renders the review + analyze UI straight from source over a real Chromium
+    # (Playwright) with NO STT/LLM/VLM key, so a UI regression reddens the gate while
+    # the gate stays green on a keyless fork. It is fail-closed by construction — the
+    # `chromium` fixture hard-fails (never skips) when Playwright/Chromium is missing.
+    # The full pipeline-backed e2e suite (real ffmpeg + STT/LLM/VLM) needs an API key,
+    # so it is OPT-IN: it runs only when the SCREENSCRIBE_API_KEY secret is set, never
+    # reddening a keyless run by omission.
+    env:
+      SCREENSCRIBE_API_KEY: ${{ secrets.SCREENSCRIBE_API_KEY }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "20"
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Sync dependencies
+        run: uv sync --dev
+
+      # Playwright needs its browser binaries + system libs; --with-deps pulls the
+      # apt packages Chromium needs on the runner.
+      - name: Install Playwright Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: E2E smoke (keyless — BLOCKING gate, renders review + analyze UI without an API key)
+        run: uv run pytest tests/e2e/test_smoke_no_api.py -m e2e --run-e2e -q
+
+      - name: E2E full pipeline (opt-in — runs only when the SCREENSCRIBE_API_KEY secret is set)
+        if: ${{ env.SCREENSCRIBE_API_KEY != '' }}
+        run: uv run pytest tests/e2e -m e2e --run-e2e -q

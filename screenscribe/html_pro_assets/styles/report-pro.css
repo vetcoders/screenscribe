@@ -1,0 +1,2162 @@
+/* ==========================================================================
+   SCREENSCRIBE PRO — REPORT STYLESHEET
+   Structural base + professional accessibility. The visual identity
+   (neutral interaction tone, surfaces, atmosphere) is layered by
+   screenscribe-theme.css, which owns every shared design token.
+   ========================================================================== */
+
+/* No webfont imports: the report must stay fully offline/self-contained
+   (an evidence bundle must not phone home just by being opened). Font
+   names below resolve only if installed locally; system stacks carry
+   the design otherwise. */
+
+/* Reset */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; }
+
+/* Base */
+html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    font-family: var(--font-sans);
+    background: var(--surface-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+    min-height: 100vh;
+    /* Allow Cmd +/- zoom to produce scrollbars when content exceeds viewport;
+     * individual panels still manage their own overflow. */
+    overflow: hidden auto;
+    /* Lock UI chrome against accidental selection; text surfaces opt back in. */
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* Narrative/text surfaces where reviewers expect to select + copy. */
+.transcript-list,
+.subtitle-list,
+.transcript-preview,
+.manual-frame-transcript,
+.executive-summary,
+.summary-content,
+.drawer-content,
+.finding-description,
+.finding-evidence,
+.finding-title,
+.finding-comment,
+.finding-body,
+.sidebar-scroll p,
+.sidebar-scroll li,
+.sidebar-scroll code,
+.sidebar-scroll pre,
+input,
+textarea,
+[contenteditable="true"] {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+/* ==========================================================================
+   LAYOUT - Fixed shell: video top-left, transcript bottom-left, findings right
+   ========================================================================== */
+
+.app-container {
+    position: fixed;
+    inset: var(--header-height) 0 0 0;
+    padding: var(--content-gap);
+    min-height: 0;
+    box-sizing: border-box;
+}
+
+.workspace-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--resizer-width) minmax(var(--sidebar-min), var(--sidebar-width));
+    align-items: stretch;
+    height: 100%;
+    min-height: 0;
+}
+
+.main-column {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-rows:
+        minmax(0, var(--surface-video-row, 2fr))
+        minmax(var(--surface-transcript-row-min, 260px), var(--surface-transcript-row, 1fr));
+    gap: var(--content-gap);
+    padding-right: var(--content-gap);
+}
+
+.review-column {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--content-gap);
+    padding-left: var(--content-gap);
+}
+
+body[data-window-mode="player"] .workspace-shell,
+body[data-window-mode="review"] .workspace-shell {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+body[data-window-mode="player"] .review-column,
+body[data-window-mode="player"] .sidebar-resizer,
+body[data-window-mode="review"] .main-column,
+body[data-window-mode="review"] .sidebar-resizer {
+    display: none;
+}
+
+body[data-window-mode="player"] .main-column,
+body[data-window-mode="review"] .review-column {
+    padding-left: 0;
+    padding-right: 0;
+}
+
+body[data-window-mode="player"] .header-tabs {
+    display: none;
+}
+
+/* Tablet: sidebar becomes narrower by DEFAULT, but the user-dragged width
+   (JS sets --sidebar-width inline on :root) still wins. The clamp is the
+   fallback for when --sidebar-width is unset (e.g. standalone export without
+   the resize JS / theme), NOT a hard override — otherwise drag is dead here. */
+@media (max-width: 1200px) and (min-width: 901px) {
+    .workspace-shell {
+        grid-template-columns:
+            minmax(0, 1fr) var(--resizer-width) minmax(var(--sidebar-min), var(--sidebar-width, clamp(280px, 35vw, 400px)));
+    }
+}
+
+/* Mobile: single column layout */
+@media (max-width: 900px) {
+    body {
+        overflow: auto;
+    }
+    .app-container {
+        position: static;
+        inset: auto;
+        min-height: 100vh;
+        padding: calc(var(--header-height) + var(--space-md)) var(--space-md) var(--space-md);
+    }
+    .workspace-shell {
+        grid-template-columns: 1fr;
+        height: auto;
+    }
+    .main-column {
+        grid-template-rows: auto minmax(280px, auto);
+        padding-right: 0;
+    }
+    .sidebar {
+        height: auto;
+    }
+    .review-column {
+        padding-left: 0;
+        margin-top: var(--content-gap);
+    }
+    .sidebar-panel {
+        min-height: 420px;
+    }
+    .sidebar-resizer {
+        display: none;
+    }
+    .video-container video {
+        height: auto;
+        max-height: 48vh;
+    }
+    .video-controls-pro {
+        position: absolute;
+        top: var(--space-sm);
+        left: var(--space-sm);
+        right: var(--space-sm);
+        max-width: none;
+    }
+    /* Narrow viewport: collapse the MODAL body to a single column. The
+       review-sidebar card body is a plain block (not a grid), so it needs no
+       override here — it already wraps full-width. */
+    .manual-frame-dialog .manual-frame-body {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Wide screens: wider sidebar by DEFAULT, but honor the user-dragged width.
+   Same rationale as the tablet query above: --sidebar-width (set inline by the
+   resize JS) must win, clamp is only the no-JS fallback. Without this, drag is
+   dead at >=1600px too -- which is the "doesn't work at all" regression on big
+   monitors where full-screen lands in this band. */
+@media (min-width: 1600px) {
+    .workspace-shell {
+        grid-template-columns:
+            minmax(0, 1fr) var(--resizer-width) minmax(var(--sidebar-min), var(--sidebar-width, clamp(400px, 25vw, 560px)));
+    }
+}
+
+/* ==========================================================================
+   TAB CONTENT (controlled by header tabs)
+   ========================================================================== */
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* Summary tab balance: a single short brief in a wide rail otherwise strands
+   the card at the top with a pool of empty space below. Center the brief in the
+   available height and cap it to a comfortable reading measure so it reads as an
+   intentional focal card, not a banner stretched edge-to-edge. (No new data —
+   layout only.) */
+#tab-summary.active {
+    display: flex;
+    flex-direction: column;
+    justify-content: safe center;
+    min-height: 100%;
+    gap: var(--space-lg);
+}
+
+#tab-summary .executive-summary {
+    width: 100%;
+    max-width: 620px;
+    margin-inline: auto;
+    margin-bottom: 0;
+}
+
+/* ==========================================================================
+   TRANSCRIPT PANEL
+   ========================================================================== */
+
+/* Supporting evidence log — deliberately quieter than the video. Flat,
+   recessed, no lift; it sits under the primary surface as reference material. */
+.transcript-panel {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+}
+
+.transcript-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-sm) var(--space-md);
+    background: transparent;
+    border-bottom: 1px solid var(--rule-soft);
+    gap: var(--space-md);
+}
+
+.transcript-panel-header h3 {
+    font-size: var(--fs-sm);    font-weight: 600;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-shrink: 0;
+}
+
+.transcript-drawer {
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    margin-top: var(--space-md);
+}
+
+.drawer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--surface-card);
+    cursor: pointer;
+    user-select: none;
+    transition: background var(--motion-fast);
+}
+
+.drawer-header:hover {
+    background: var(--surface-hover);
+}
+
+.drawer-header h3 {
+    font-size: var(--fs-sm);    font-weight: 600;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.drawer-toggle {
+    color: var(--text-muted);
+    transition: transform var(--motion-fast);
+}
+
+.transcript-drawer.open .drawer-toggle {
+    transform: rotate(180deg);
+}
+
+.drawer-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height var(--motion-medium) var(--ease-out);
+}
+
+.transcript-drawer.open .drawer-content {
+    max-height: 400px;
+}
+
+.drawer-search {
+    padding: var(--space-sm) var(--space-md);
+    border-bottom: 1px solid var(--border-default);
+}
+
+.drawer-list {
+    max-height: 350px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-default) transparent;
+}
+
+/* ==========================================================================
+   HEADER WITH INTEGRATED TABS
+   ========================================================================== */
+
+.app-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-sm) var(--space-lg);
+    /* Solid console title bar — no glass. A faint top highlight reads as a
+       lit bezel; the content scrolls cleanly beneath an opaque chrome. */
+    background:
+        linear-gradient(var(--surface-elevated), var(--surface-elevated)) padding-box,
+        linear-gradient(180deg, rgba(244, 246, 250, 0.04), transparent 40%) border-box;
+    border-bottom: 1px solid var(--border-default);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    gap: var(--space-lg);
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    flex-shrink: 0;
+    min-width: 0;
+}
+
+.app-header h1 {
+    font-size: var(--fs-lg);    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    white-space: nowrap;
+}
+
+.app-header h1::before {
+    content: ">";
+    color: var(--ss-accent);
+    font-family: var(--font-mono);
+    animation: blink 1.2s step-end infinite;
+}
+
+@keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+}
+
+.header-tabs {
+    display: flex;
+    gap: 2px;
+    background: var(--surface-primary);
+    padding: 3px;
+    border-radius: var(--radius-sm);
+    flex: 1;
+    max-width: 400px;
+    justify-content: center;
+}
+
+.header-tabs .tab-btn {
+    flex: 1;
+    padding: var(--space-xs) var(--space-md);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: var(--fs-xs);    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--motion-fast) var(--ease-out);
+    white-space: nowrap;
+}
+
+.header-tabs .tab-btn:hover {
+    color: var(--text-secondary);
+    background: var(--surface-hover);
+}
+
+.header-tabs .tab-btn.active {
+    background: var(--surface-card);
+    color: var(--ss-accent);
+    box-shadow: var(--shadow-sm);
+}
+
+.app-header .meta {
+    font-size: var(--fs-sm);    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+    text-align: right;
+}
+
+.window-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    min-width: 0;
+}
+
+.header-action-btn {
+    border: 1px solid color-mix(in srgb, var(--ss-accent) 40%, var(--border-default));
+    background: color-mix(in srgb, var(--surface-card) 82%, transparent);
+    color: var(--text-primary);
+    border-radius: var(--radius-full);
+    padding: 0.45rem 0.9rem;
+    font-size: var(--fs-xs);    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--motion-fast) var(--ease-out);
+    white-space: nowrap;
+}
+
+.header-action-btn:hover {
+    border-color: var(--ss-accent);
+    color: var(--ss-accent);
+    box-shadow: var(--shadow-sm);
+}
+
+.header-action-btn[hidden] {
+    display: none !important;
+}
+
+@media (max-width: 900px) {
+    .app-header {
+        flex-wrap: wrap;
+    }
+    .header-tabs {
+        order: 3;
+        max-width: none;
+        width: 100%;
+    }
+    .window-actions {
+        width: 100%;
+        justify-content: flex-start;
+        overflow-x: auto;
+    }
+}
+
+/* Language toggle */
+.lang-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+    margin-left: var(--space-md);
+}
+
+.lang-toggle button {
+    padding: 4px 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--fs-2xs);    font-weight: 600;
+    cursor: pointer;
+    border-radius: var(--radius-xs);
+    transition: all var(--motion-fast);
+}
+
+.lang-toggle button:hover {
+    color: var(--text-secondary);
+}
+
+.lang-toggle button.active {
+    background: var(--ss-accent);
+    color: var(--ss-accent-ink);
+}
+
+/* ==========================================================================
+   VIDEO PLAYER SECTION
+   ========================================================================== */
+
+.video-panel {
+    min-height: 0;
+    display: block;
+}
+
+.video-container {
+    position: relative;
+    min-height: 0;
+    height: 100%;
+    display: flex;
+    background: #000;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    /* The single dominant surface. A deep grounded shadow lifts it off the
+       desk — no accent ring, no bloom — so the eye lands on the evidence first. */
+    border: 1px solid var(--border-default);
+    box-shadow: var(--shadow-evidence);
+}
+
+.video-container video {
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    flex: 1;
+    display: block;
+    aspect-ratio: 16 / 9;
+    object-fit: contain;
+    cursor: pointer;
+    /* Empty / test / letterbox state: paint the element deep black so an
+       unloaded player reads as a powered evidence screen at standby, not a
+       large mid-gray placeholder slab. A real frame paints over this. */
+    background: #000;
+}
+
+/* Ensure native video controls are always visible */
+.video-container video::-webkit-media-controls {
+    opacity: 1 !important;
+    display: flex !important;
+}
+
+.video-container video::-webkit-media-controls-panel {
+    opacity: 1 !important;
+}
+
+/* Precision player controls (frame sweep + step) */
+.video-controls-pro {
+    position: absolute;
+    top: var(--space-md);
+    left: var(--space-md);
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+    max-width: calc(100% - (var(--space-md) * 2));
+    background: color-mix(in srgb, var(--surface-elevated) 94%, transparent);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
+    border-radius: var(--radius-md);
+    padding: var(--space-xs) var(--space-sm);
+    z-index: 3;
+    box-shadow: var(--shadow-md);
+    /* F-08: the overlay box sits over the top-left video corner. Let its own
+       chrome (background/padding/border) pass clicks through to the <video>
+       beneath; only the interactive controls re-enable pointer events below. */
+    pointer-events: none;
+}
+
+.video-controls-buttons,
+.video-controls-pro .player-btn,
+.video-controls-pro .current-time-label {
+    /* Re-enable pointer events on the actual controls so buttons stay
+       clickable while the surrounding overlay chrome is click-through. */
+    pointer-events: auto;
+}
+
+.video-controls-buttons {
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+/* Time-jump / step controls are quiet utilities: ghost by default, they
+   surface only on hover. They must not compete with the capture action. */
+.player-btn {
+    border: 1px solid transparent;
+    background: color-mix(in srgb, var(--surface-card) 55%, transparent);
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    padding: 0.3rem 0.6rem;
+    font-size: var(--fs-xs);    font-weight: 500;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition: all var(--motion-fast) var(--ease-out);
+}
+
+/* "Przechwyć klatkę" — the one deliberate primary action on the evidence
+   surface. It alone carries the accent fill, so the operator's eye knows
+   the main move without reading every button. */
+.player-btn.capture-btn {
+    /* R4: a MEASURED prominence bump (not a redesign) so the primary
+       "Add moment" action reads at a glance. Stronger accent fill + border and
+       a small shadow lift, all within the existing token system — the accent
+       stays the single deliberate fill, monochrome foundation untouched. */
+    background: color-mix(in srgb, var(--ss-accent) 24%, var(--surface-card));
+    border-color: color-mix(in srgb, var(--ss-accent) 60%, transparent);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-weight: 600;
+    padding-inline: var(--space-md);
+    box-shadow: var(--shadow-sm);
+}
+
+.player-btn:hover {
+    border-color: var(--border-default);
+    background: var(--surface-hover);
+    color: var(--text-primary);
+}
+
+.player-btn.capture-btn:hover {
+    border-color: var(--ss-accent);
+    background: color-mix(in srgb, var(--ss-accent) 34%, var(--surface-card));
+    color: var(--text-primary);
+    box-shadow: var(--shadow-md);
+}
+
+.player-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ss-accent) 25%, transparent);
+}
+
+.current-time-label {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);    color: var(--text-secondary);
+    padding-inline: var(--space-xs);
+    white-space: nowrap;
+}
+
+/* Current subtitle display below video */
+/* ==========================================================================
+   FINDINGS SECTION (Right resizable column)
+   ========================================================================== */
+
+.findings-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.manual-findings-section {
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md);
+}
+
+.manual-findings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    margin-bottom: var(--space-md);
+}
+
+.manual-findings-header h3 {
+    margin: 0;
+    font-size: var(--fs-md);    color: var(--text-primary);
+}
+
+.manual-findings-count {
+    min-width: 1.75rem;
+    height: 1.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-full);
+    background: color-mix(in srgb, var(--ss-accent) 16%, var(--surface-hover));
+    color: var(--ss-accent);
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);}
+
+.manual-findings-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.manual-frame-item {
+    /* Stack preview over content like the AI finding cards. The side-by-side
+       grid crammed the text into a ~150px column inside the narrow review
+       sidebar; stacking lets the copy wrap across the full card width. */
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    padding: var(--space-md);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-default);
+    background: var(--surface-elevated);
+}
+
+.manual-frame-item .manual-frame-preview-card {
+    min-width: 0;
+    /* Keep the screenshot from blowing up into a banner on a wide sidebar. */
+    max-width: 360px;
+    overflow: hidden;
+}
+
+.manual-frame-item .annotation-container {
+    display: block;
+    width: 100%;
+    margin-top: 0;
+}
+
+.manual-frame-item .thumbnail {
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+}
+
+.manual-frame-item .manual-frame-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    min-width: 0;
+}
+
+.manual-frame-item .manual-frame-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    align-items: center;
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);}
+
+.manual-frame-item .manual-frame-title {
+    font-size: var(--fs-base);    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.manual-frame-item .manual-frame-delete {
+    margin-left: auto;
+    flex: none;
+    padding: 0.1rem 0.45rem;
+    line-height: 1.2;
+    font-size: var(--fs-md);    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: color var(--motion-fast) var(--ease-out),
+        border-color var(--motion-fast) var(--ease-out);
+}
+
+.manual-frame-item .manual-frame-delete:hover,
+.manual-frame-item .manual-frame-delete:focus-visible {
+    color: var(--color-critical);
+    border-color: color-mix(in srgb, var(--color-critical) 45%, transparent);
+}
+
+.manual-frame-item .manual-frame-body,
+.manual-frame-item .manual-frame-notes-copy {
+    /* Plain text in the card: full card width, wrap on a readable column like
+       the AI finding cards — never the modal's 2-column grid. */
+    display: block;
+    width: 100%;
+    min-width: 0;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    overflow-wrap: break-word;
+    word-break: normal;
+}
+
+/* R13: empty-state placeholder ("No AI summary available") — visually distinct
+   from real content so it never reads as a genuine summary. Reuses the same
+   muted+italic empty-state language as the modal's .manual-frame-transcript.empty;
+   no new tokens. */
+.manual-frame-item .manual-frame-body.empty {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.manual-frame-item .manual-frame-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: 0.2rem 0.55rem;
+    border-radius: var(--radius-full);
+    font-size: var(--fs-2xs);    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border: 1px solid var(--border-default);
+}
+
+.manual-frame-item .manual-frame-badge.severity-critical {
+    color: var(--color-critical);
+    border-color: color-mix(in srgb, var(--color-critical) 45%, transparent);
+}
+
+.manual-frame-item .manual-frame-badge.severity-high {
+    color: var(--color-high);
+    border-color: color-mix(in srgb, var(--color-high) 45%, transparent);
+}
+
+.manual-frame-item .manual-frame-badge.severity-medium {
+    color: var(--color-medium);
+    border-color: color-mix(in srgb, var(--color-medium) 45%, transparent);
+}
+
+.manual-frame-item .manual-frame-badge.severity-low {
+    color: var(--color-low);
+    border-color: color-mix(in srgb, var(--color-low) 45%, transparent);
+}
+
+/* R12: "Edit note" trigger on the manual-frame card. Quiet, aligned with the
+   delete affordance (which stays pushed to the far right via margin-left:auto). */
+.manual-frame-item .manual-frame-edit-note {
+    flex: none;
+    padding: 0.1rem 0.55rem;
+    line-height: 1.2;
+    font-size: var(--fs-sm);    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: color var(--motion-fast) var(--ease-out),
+        border-color var(--motion-fast) var(--ease-out);
+}
+
+.manual-frame-item .manual-frame-edit-note:hover,
+.manual-frame-item .manual-frame-edit-note:focus-visible {
+    color: var(--text-primary);
+    border-color: var(--ss-accent);
+}
+
+/* R14: per-card priority control — a quiet inline row letting the reviewer SET a
+   manual frame's priority (mirrors Analyze's marker-priority + Review's own
+   AI-finding severity-select). */
+.manual-frame-item .manual-frame-priority {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.manual-frame-item .manual-frame-priority-label {
+    font-size: var(--fs-xs);    color: var(--text-secondary);
+}
+
+.manual-frame-item .manual-frame-severity-select {
+    font-size: var(--fs-sm);    padding: var(--space-xs) var(--space-sm);
+    background: var(--surface-hover);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
+    cursor: pointer;
+}
+
+.manual-frame-item .manual-frame-severity-select:hover,
+.manual-frame-item .manual-frame-severity-select:focus-visible {
+    border-color: var(--ss-accent);
+}
+
+/* R12: inline note editor, hidden until "Edit note" toggles .active. Mirrors the
+   Analyze marker-note-editor pattern so the card stays compact by default. */
+.manual-frame-item .manual-frame-note-editor {
+    display: none;
+    flex-direction: column;
+    gap: var(--space-xs);
+    margin-top: var(--space-xs);
+}
+
+.manual-frame-item .manual-frame-note-editor.active {
+    display: flex;
+}
+
+.manual-frame-item .manual-frame-note-editor textarea {
+    width: 100%;
+    min-height: 70px;
+    padding: var(--space-sm);
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    resize: vertical;
+}
+
+.manual-frame-item .manual-frame-note-editor-buttons {
+    display: flex;
+    gap: var(--space-xs);
+    justify-content: flex-end;
+}
+
+.manual-frame-item .manual-frame-note-editor-buttons button {
+    font-size: var(--fs-sm);    padding: var(--space-xs) var(--space-sm);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--surface-hover);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.manual-frame-item .manual-frame-note-editor-buttons .primary {
+    font-weight: 600;
+}
+
+.manual-frame-item .manual-frame-note-editor-buttons button:hover,
+.manual-frame-item .manual-frame-note-editor-buttons button:focus-visible {
+    border-color: var(--ss-accent);
+}
+
+.findings-section h2 {
+    font-size: var(--fs-base);    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding-bottom: var(--space-sm);
+    border-bottom: 1px solid var(--border-default);
+}
+
+/* ==========================================================================
+   SIDEBAR - STICKY FINDINGS PANEL WITH TABS
+   ========================================================================== */
+
+.sidebar {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.sidebar-resizer {
+    position: relative;
+    width: var(--resizer-width);
+    cursor: col-resize;
+    touch-action: none;
+    /* Widen the hit target beyond the visual grip so it's easy to grab. */
+    margin: 0 calc(var(--resizer-width) * -0.5);
+    padding: 0 calc(var(--resizer-width) * 0.5);
+    background-clip: content-box;
+    z-index: 2;
+}
+
+.sidebar-resizer::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 6px;
+    height: 72px;
+    border-radius: var(--radius-full);
+    transform: translate(-50%, -50%);
+    background: color-mix(in srgb, var(--border-default) 90%, transparent);
+    transition: background var(--motion-fast) var(--ease-out),
+        box-shadow var(--motion-fast) var(--ease-out),
+        height var(--motion-fast) var(--ease-out);
+}
+
+.sidebar-resizer:hover::before,
+body.is-resizing .sidebar-resizer::before {
+    background: var(--ss-accent);
+    box-shadow: var(--shadow-glow);
+    height: 120px;
+}
+
+body.is-resizing,
+body.is-resizing * {
+    cursor: col-resize !important;
+    user-select: none !important;
+}
+
+.sidebar-panel {
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: 100%;
+}
+
+.sidebar-footer {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding: var(--space-md);
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+}
+
+.reviewer-field label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: var(--fs-md);    color: var(--text-secondary);
+}
+
+.reviewer-field input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+}
+
+.reviewer-field input[type="text"]:focus {
+    outline: none;
+    border-color: var(--ss-accent);
+}
+
+.sidebar-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: var(--space-md);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-default) transparent;
+    contain: layout;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+    width: 6px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+    background: var(--border-default);
+    border-radius: var(--radius-xs);
+}
+
+.search-box {
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--fs-md);    transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.search-box:focus {
+    outline: none;
+    border-color: var(--ss-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ss-accent) 25%, transparent);
+}
+
+.search-box::placeholder {
+    color: var(--text-muted);
+}
+
+/* Subtitle list */
+.subtitle-list {
+    max-height: 500px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-default) transparent;
+}
+
+.transcript-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+}
+
+.subtitle-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.subtitle-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.subtitle-list::-webkit-scrollbar-thumb {
+    background: var(--border-default);
+    border-radius: var(--radius-xs);
+}
+
+.subtitle-item {
+    padding: var(--space-sm) var(--space-md);
+    border-left: 2px solid transparent;
+    cursor: pointer;
+    transition: all var(--motion-fast) var(--ease-out);
+    border-bottom: 1px solid var(--rule-soft);
+}
+
+.subtitle-item:hover {
+    background: var(--surface-hover);
+    border-left-color: var(--ss-accent);
+}
+
+.subtitle-item.active {
+    background: color-mix(in srgb, var(--ss-accent) 10%, var(--surface-card));
+    border-left-color: var(--ss-accent);
+}
+
+.subtitle-item .timestamp {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);    color: var(--ss-accent);
+    margin-bottom: 2px;
+}
+
+.subtitle-item .text {
+    font-size: var(--fs-sm);    color: var(--text-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.3;
+}
+
+.subtitle-item.active .text {
+    color: var(--text-primary);
+}
+
+/* ==========================================================================
+   FINDING CARD
+   ========================================================================== */
+
+.finding {
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    border-left: 4px solid var(--border-default);
+    transition: all var(--motion-fast) var(--ease-out);
+}
+
+.finding:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .finding:hover { transform: none; }
+}
+
+.finding[data-verdict="accepted"] {
+    border-left-color: var(--color-success);
+}
+
+.finding[data-verdict="rejected"] {
+    opacity: 0.6;
+    border-left-color: var(--text-muted);
+}
+
+.finding[data-verdict="rejected"] .finding-title {
+    text-decoration: line-through;
+}
+
+/* Inline reject/accept feedback: a short row flash fired on the click so the
+   reviewer gets visible confirmation immediately, on top of the persistent
+   dimming + strikethrough above. */
+@keyframes review-flash-reject {
+    0% { box-shadow: 0 0 0 0 var(--text-muted); }
+    30% { box-shadow: 0 0 0 4px var(--text-muted); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+@keyframes review-flash-accept {
+    0% { box-shadow: 0 0 0 0 var(--color-success); }
+    30% { box-shadow: 0 0 0 4px var(--color-success); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.finding[data-review-flash="rejected"] {
+    animation: review-flash-reject 0.9s ease-out;
+}
+
+.finding[data-review-flash="accepted"] {
+    animation: review-flash-accept 0.9s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .finding[data-review-flash="rejected"],
+    .finding[data-review-flash="accepted"] {
+        animation: none;
+        outline: 2px solid var(--text-muted);
+    }
+}
+
+/* Case-file header: id + type on the left, severity on the right, a hairline
+   sealing the header off from the evidence below. */
+.finding-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-md);
+    padding-bottom: var(--space-sm);
+    border-bottom: 1px solid var(--rule-soft);
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+}
+
+.finding-title {
+    font-weight: 600;
+    font-size: var(--fs-base);    letter-spacing: 0.01em;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+/* Case id — monospace chip. */
+.finding-title .index {
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);    font-weight: 600;
+    color: var(--ss-accent);
+    background: var(--ss-accent-ghost);
+    border: 1px solid var(--ss-accent-line);
+    border-radius: var(--radius-sm);
+    padding: 0.05rem 0.4rem;
+}
+
+.finding-meta {
+    font-size: var(--fs-sm);    color: var(--text-muted);
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition: color var(--motion-fast);
+}
+
+/* The unclassed id/type/timestamp wrapper: stack id+type over the
+   seek-able timestamp (column layout, top-down). */
+.finding-header > div:first-child {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+}
+
+.finding-meta:hover {
+    color: var(--ss-accent);
+    text-decoration: underline;
+}
+
+/* Severity Badge */
+.severity-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-full);
+    font-size: var(--fs-2xs);    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Severity badges are monochrome: the uppercase label carries the meaning, the
+   tinted fill/border ride the gray brightness ramp (--color-*), text stays
+   off-white. Differentiation is label + lightness + weight, never hue. */
+.severity-critical {
+    background: color-mix(in srgb, var(--color-critical) 20%, transparent);
+    color: var(--text-primary);
+    border: 1px solid color-mix(in srgb, var(--color-critical) 40%, transparent);
+}
+
+.severity-high {
+    background: color-mix(in srgb, var(--color-high) 20%, transparent);
+    color: var(--text-primary);
+    border: 1px solid color-mix(in srgb, var(--color-high) 40%, transparent);
+}
+
+.severity-medium {
+    background: color-mix(in srgb, var(--color-medium) 20%, transparent);
+    color: var(--text-primary);
+    border: 1px solid color-mix(in srgb, var(--color-medium) 40%, transparent);
+}
+
+.severity-low {
+    background: color-mix(in srgb, var(--color-low) 20%, transparent);
+    color: var(--text-primary);
+    border: 1px solid color-mix(in srgb, var(--color-low) 40%, transparent);
+}
+
+.severity-none {
+    background: var(--surface-hover);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-default);
+}
+
+/* Zones of a case card, separated by space so the eye walks them in order:
+   evidence -> what happened -> the analysis fields. */
+.finding-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+/* The spoken evidence — a recessed quote well. Sunken surface + accent edge
+   reads as lifted-from-the-record testimony, not body copy. */
+.finding-transcript {
+    background: var(--surface-sunken);
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm) var(--space-md);
+    margin-bottom: 0;
+    font-style: italic;
+    color: var(--text-secondary);
+    border-left: 3px solid var(--ss-accent-line);
+    font-size: var(--fs-base);    line-height: 1.5;
+}
+
+/* "What happened" — the one full-strength sentence on the card. */
+.finding-summary {
+    margin-bottom: 0;
+    color: var(--text-primary);
+    font-size: var(--fs-md);    line-height: 1.55;
+}
+
+.finding-summary strong {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: var(--fs-2xs);    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 0.3rem;
+}
+
+.finding-details {
+    font-size: var(--fs-md);    color: var(--text-secondary);
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+/* Field labels as mono micro-eyebrows (suggested fix / visual issues /
+   affected components) — scannable metadata, not prose headers. */
+.finding-details dt {
+    font-family: var(--font-mono);
+    font-size: var(--fs-2xs);    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-top: var(--space-sm);
+}
+
+.finding-details dd {
+    margin: 0.1rem 0 0 0;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+/* Screenshot thumbnail */
+.finding-screenshot {
+    margin-top: var(--space-md);
+}
+
+.thumbnail {
+    max-width: 280px;
+    border-radius: var(--radius-md);
+    cursor: zoom-in;
+    transition: all var(--motion-fast) var(--ease-out);
+    border: 1px solid var(--border-default);
+}
+
+.thumbnail:hover {
+    transform: scale(1.03);
+    box-shadow: var(--shadow-lg), var(--shadow-glow);
+    border-color: var(--ss-accent);
+}
+
+/* ==========================================================================
+   ANNOTATION TOOL (Thumbnail - preview only)
+   ========================================================================== */
+
+.annotation-container {
+    position: relative;
+    display: inline-block;
+    margin-top: var(--space-md);
+    transform-origin: top left;
+}
+
+.annotation-container .thumbnail {
+    display: block;
+    margin-top: 0;
+}
+
+.annotation-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    border-radius: var(--radius-md);
+}
+
+.annotation-svg .annotation-shape,
+.lightbox-annotation-svg .annotation-shape {
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.annotation-hint {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.7);
+    color: var(--text-secondary);
+    font-size: var(--fs-2xs);    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+.annotation-container:hover .annotation-hint {
+    opacity: 1;
+}
+
+/* Show indicator when annotations exist */
+.annotation-container.has-annotations::after {
+    content: '';
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 12px;
+    height: 12px;
+    background: var(--ss-accent);
+    border-radius: 50%;
+    border: 2px solid var(--surface-primary);
+    box-shadow: var(--shadow-md);
+}
+
+/* ==========================================================================
+   HUMAN REVIEW SECTION
+   ========================================================================== */
+
+/* Human-review decision area. Negative margins bleed it to the case-card
+   edges; its own grounded surface sets it apart from the finding body. */
+.human-review {
+    margin: var(--space-lg) calc(var(--space-lg) * -1) calc(var(--space-lg) * -1);
+    padding: var(--space-md) var(--space-lg) var(--space-lg);
+    background: var(--decision-surface);
+    border-top: 1px solid var(--rule-soft);
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
+.human-review h4 {
+    margin: 0 0 var(--space-md) 0;
+    font-family: var(--font-mono);
+    font-size: var(--fs-2xs);    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Accent tick — the gate marker. Signals "decision required" without a word. */
+.human-review h4::before {
+    content: "";
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: var(--radius-sm);
+    background: var(--ss-accent);
+    flex: none;
+}
+
+.review-row {
+    display: flex;
+    gap: var(--space-md) var(--space-lg);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-md);
+}
+
+.review-field {
+    flex: 1;
+    min-width: 200px;
+}
+
+/* The verdict is two committed pills, one of which carries the long PL label
+   "Nie / Fałszywy alarm". Give it more of the row than the priority select so
+   the pills are not squeezed, and let it claim the full width before it has to
+   sit beside another control on a cramped rail. */
+.review-field:has(.radio-group) {
+    flex: 1.6 1 240px;
+}
+
+.review-field label {
+    display: block;
+    font-size: var(--fs-xs);    font-weight: 500;
+    margin-bottom: var(--space-xs);
+    color: var(--text-secondary);
+}
+
+.review-field select,
+.review-field input[type="text"],
+.review-field textarea {
+    width: 100%;
+    padding: var(--space-sm);
+    background: var(--surface-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--fs-md);    transition: border-color var(--motion-fast);
+}
+
+.review-field select:focus,
+.review-field input[type="text"]:focus,
+.review-field textarea:focus {
+    outline: none;
+    border-color: var(--ss-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ss-accent) 20%, transparent);
+}
+
+.review-field textarea {
+    min-height: 80px;
+    resize: vertical;
+}
+
+.notes-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+}
+
+.notes-mic-btn {
+    border: 1px solid var(--border-default);
+    background: var(--surface-card);
+    color: var(--text-secondary);
+    border-radius: var(--radius-full);
+    font-size: var(--fs-xs);    font-weight: 600;
+    padding: 0.35rem 0.7rem;
+    cursor: pointer;
+    transition: all var(--motion-fast) var(--ease-out);
+}
+
+.notes-mic-btn:hover {
+    border-color: var(--ss-accent);
+    color: var(--ss-accent);
+}
+
+.notes-mic-btn.recording {
+    border-color: var(--color-critical);
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--color-critical) 20%, transparent);
+}
+
+.notes-mic-status {
+    font-size: var(--fs-xs);    color: var(--text-muted);
+}
+
+.ai-suggestions {
+    font-size: var(--fs-sm);    color: var(--text-secondary);
+    background: color-mix(in srgb, var(--surface-hover) 55%, transparent);
+    padding: var(--space-sm);
+    border-radius: var(--radius-sm);
+    margin-bottom: var(--space-sm);
+    border-left: 3px solid var(--ss-accent);
+}
+
+/* The verdict reads as a segmented decision, not two loose radios. Each
+   option is a real target the operator commits to; the chosen one lights up
+   in its decision colour (accept = mint, reject = muted dismissal). */
+.radio-group {
+    display: flex;
+    gap: var(--space-sm);
+    padding-top: var(--space-xs);
+}
+
+.radio-group label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    cursor: pointer;
+    font-size: var(--fs-sm);    line-height: 1.3;
+    text-wrap: balance;
+    color: var(--text-secondary);
+    flex: 1;
+    padding: 0.55rem var(--space-md);
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    transition: all var(--motion-fast) var(--ease-out);
+}
+
+.radio-group label:hover {
+    border-color: var(--text-muted);
+    color: var(--text-primary);
+}
+
+.radio-group input[type="radio"] {
+    accent-color: var(--ss-accent);
+    flex: none;
+}
+
+/* Committed states — the decision colour fills the chosen pill. */
+.radio-group label:has(input[value="accepted"]:checked) {
+    border-color: var(--color-low);
+    background: color-mix(in srgb, var(--color-low) 16%, var(--surface-card));
+    color: var(--text-primary);
+}
+
+.radio-group label:has(input[value="accepted"]:checked) input[type="radio"] {
+    accent-color: var(--color-low);
+}
+
+.radio-group label:has(input[value="rejected"]:checked) {
+    border-color: var(--text-muted);
+    background: var(--surface-hover);
+    color: var(--text-secondary);
+}
+
+/* Keyboard focus surfaces the whole pill, not just the native dot. */
+.radio-group label:focus-within {
+    border-color: var(--ss-accent);
+    box-shadow: 0 0 0 2px var(--ss-accent-ghost);
+}
+
+/* ==========================================================================
+   LIGHTBOX
+   ========================================================================== */
+
+.lightbox {
+    display: none;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 10000;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+}
+
+.lightbox.active {
+    display: flex;
+}
+
+.lightbox-content {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    max-width: 95%;
+    max-height: 85%;
+}
+
+.lightbox img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: var(--radius-md);
+}
+
+.lightbox-annotation-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    border-radius: var(--radius-md);
+}
+
+.lightbox-annotation-svg.drawing {
+    pointer-events: auto;
+    cursor: crosshair;
+    touch-action: none;
+}
+
+.lightbox-toolbar {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: var(--space-sm);
+    align-items: center;
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: var(--space-sm) var(--space-md);
+    z-index: 10001;
+    box-shadow: var(--shadow-md);
+}
+
+.lightbox-toolbar .tool-btn {
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: var(--fs-md);    transition: all 0.15s ease;
+}
+
+.lightbox-toolbar .tool-btn:hover {
+    background: color-mix(in srgb, var(--ss-accent) 18%, transparent);
+    border-color: var(--ss-accent);
+}
+
+.lightbox-toolbar .tool-btn.active {
+    background: var(--ss-accent);
+    color: var(--ss-accent-ink);
+    border-color: var(--ss-accent);
+}
+
+/* Annotation text halo is baked into SVG presentation attributes in
+   createAnnotationElement() (review_app.js), NOT here: a CSS-only halo is lost
+   when the SVG is rasterized to PNG on export, and would double the outline /
+   re-split UI vs export if duplicated. Do not reintroduce a CSS halo rule. */
+
+/* Inline text-annotation entry field (replaces the old blocking window.prompt
+   so the colour picker stays reachable while placing text). */
+.annotation-text-input {
+    background: var(--surface-card);
+    border: 1px solid var(--ss-accent);
+    border-radius: var(--radius-sm);
+    padding: var(--space-xs) var(--space-sm);
+    font-size: var(--fs-base);    font-weight: 700;
+    min-width: 140px;
+    box-shadow: var(--shadow-md);
+}
+
+.lightbox-toolbar .color-picker {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 2px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.lightbox-toolbar .undo-btn,
+.lightbox-toolbar .clear-btn {
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: var(--fs-md);}
+
+.lightbox-toolbar .clear-btn {
+    color: var(--color-high);
+}
+
+.lightbox-toolbar .done-btn {
+    padding: var(--space-xs) var(--space-md);
+    background: var(--ss-accent);
+    border: 1px solid var(--ss-accent);
+    border-radius: var(--radius-sm);
+    color: var(--ss-accent-ink);
+    cursor: pointer;
+    font-size: var(--fs-md);    font-weight: 600;
+    margin-left: var(--space-sm);
+}
+
+.lightbox-toolbar .done-btn:hover {
+    background: var(--ss-accent-lo);
+}
+
+.lightbox-close {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    width: 44px;
+    height: 44px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid var(--border-default);
+    border-radius: 50%;
+    color: var(--text-primary);
+    /* Intentional off-scale literal: this is the close "x" glyph sized to fill
+       the 44px round hit target, not body text. Above the text scale by design. */
+    font-size: 1.75rem;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 10002;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.lightbox-close:hover {
+    background: var(--color-high);
+    border-color: var(--color-high);
+    color: white;
+}
+
+/* ==========================================================================
+   MANUAL FRAME MODAL
+   ========================================================================== */
+
+.manual-frame-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 11000;
+}
+
+.manual-frame-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(10px);
+}
+
+.manual-frame-dialog {
+    position: relative;
+    width: min(1080px, calc(100vw - 2rem));
+    max-height: calc(100vh - 2rem);
+    margin: 1rem auto;
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.manual-frame-header,
+.manual-frame-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-lg);
+    border-bottom: 1px solid var(--border-default);
+}
+
+.manual-frame-footer {
+    border-top: 1px solid var(--border-default);
+    border-bottom: none;
+    justify-content: flex-end;
+}
+
+.manual-frame-header h2 {
+    margin: 0;
+    font-size: var(--fs-base);}
+
+.manual-frame-close {
+    width: 2.25rem;
+    height: 2.25rem;
+    border: 1px solid var(--border-default);
+    border-radius: 50%;
+    background: var(--surface-elevated);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: var(--fs-xl);    line-height: 1;
+}
+
+/* MODAL body only: a 2-column grid (preview | fields). This rule must NOT
+   reach the review-sidebar CARD, which reuses class="manual-frame-body" for
+   plain text divs — there the grid collapsed the copy into a one-word column
+   (UX-LAYOUT-1). Scope it to the modal dialog. */
+.manual-frame-dialog .manual-frame-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+    gap: var(--space-lg);
+    padding: var(--space-lg);
+    min-height: 0;
+    overflow: auto;
+}
+
+.manual-frame-preview-wrap {
+    background: var(--surface-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: var(--space-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 280px;
+}
+
+.manual-frame-preview {
+    width: 100%;
+    max-height: 60vh;
+    display: block;
+    object-fit: contain;
+    border-radius: var(--radius-md);
+}
+
+.manual-frame-fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.manual-frame-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.manual-frame-label {
+    font-size: var(--fs-sm);    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.manual-frame-timestamp,
+.manual-frame-transcript,
+.manual-frame-analysis-status {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--surface-elevated);
+    padding: var(--space-md);
+}
+
+.manual-frame-transcript.empty {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.manual-frame-transcript-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.manual-frame-mic-status {
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);}
+
+.manual-frame-notes {
+    width: 100%;
+    padding: var(--space-md);
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    resize: vertical;
+    min-height: 120px;
+}
+
+.manual-frame-analysis-status.busy {
+    color: var(--ss-accent-hi);
+}
+
+.manual-frame-analysis-status.error {
+    color: var(--color-critical);
+}
+
+.manual-frame-analysis-status.success {
+    color: var(--ss-accent);
+}
+
+/* R-P6 a11y — explicit :focus-visible rings on the custom controls the
+   keyboard nav targets. The global :where(...):focus-visible baseline already
+   covers these; these rules guarantee a strong, on-brand ring survives the
+   per-element styling above (tabs, lang toggle, resizer, lightbox). */
+.header-tabs .tab-btn:focus-visible,
+.lang-toggle button:focus-visible,
+.lightbox-toolbar .tool-btn:focus-visible,
+.lightbox-close:focus-visible,
+.sidebar-resizer:focus-visible {
+    outline: 2px solid var(--ss-accent);
+    outline-offset: 2px;
+}
+
+/* Keyboard focus on the resizer separator brightens the grip so the focus
+   target is obvious even though the element is otherwise a thin handle. */
+.sidebar-resizer:focus-visible::before {
+    background: var(--ss-accent);
+    box-shadow: var(--shadow-glow);
+    height: 120px;
+}
+
+/* ==========================================================================
+   EXPORT BAR
+   ========================================================================== */
+
+.export-buttons {
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.export-buttons button {
+    padding: var(--space-sm) var(--space-lg);
+    background: var(--ss-accent);
+    color: var(--ss-accent-ink);
+    border: none;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--motion-fast) var(--ease-out);
+    flex: 1 1 150px;
+}
+
+.export-buttons button:hover {
+    background: var(--ss-accent-hi);
+    box-shadow: var(--shadow-glow);
+}
+
+.export-buttons button.btn-secondary {
+    background: var(--surface-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+}
+
+.export-buttons button.btn-secondary:hover {
+    background: var(--surface-hover);
+    border-color: var(--ss-accent);
+}
+
+/* ==========================================================================
+   TOAST NOTIFICATIONS
+   ========================================================================== */
+
+.toast {
+    position: fixed;
+    bottom: 6rem;
+    right: var(--space-lg);
+    background: var(--surface-card);
+    color: var(--text-primary);
+    padding: var(--space-sm) var(--space-lg);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--ss-accent);
+    box-shadow: var(--shadow-lg), var(--shadow-glow);
+    animation: toastSlide 3s ease forwards;
+    z-index: 10001;
+    font-size: var(--fs-md);}
+
+@keyframes toastSlide {
+    0% { opacity: 0; transform: translateX(100%); }
+    10% { opacity: 1; transform: translateX(0); }
+    90% { opacity: 1; transform: translateX(0); }
+    100% { opacity: 0; transform: translateX(100%); }
+}
+
+/* ==========================================================================
+   EXECUTIVE SUMMARY
+   ========================================================================== */
+
+.executive-summary {
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    margin-bottom: var(--space-lg);
+    border-left: 4px solid var(--ss-accent);
+}
+
+.executive-summary h3 {
+    font-size: var(--fs-md);    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: var(--space-md);
+}
+
+.executive-summary p {
+    color: var(--text-secondary);
+    line-height: 1.7;
+}
+
+.executive-summary-warning {
+    border-left-color: var(--ss-accent-hi);
+    background: color-mix(in srgb, var(--ss-accent-hi) 8%, var(--surface-card));
+}
+
+/* ==========================================================================
+   ERRORS SECTION
+   ========================================================================== */
+
+.errors-section {
+    background: color-mix(in srgb, var(--color-critical) 10%, var(--surface-card));
+    border: 1px solid color-mix(in srgb, var(--color-critical) 30%, transparent);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    margin-bottom: var(--space-lg);
+}
+
+.errors-section h3 {
+    color: var(--text-primary);
+    margin-bottom: var(--space-md);
+    font-size: var(--fs-base);}
+
+.errors-section ul {
+    margin: 0;
+    padding-left: var(--space-lg);
+    color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   FOOTER
+   ========================================================================== */
+
+footer {
+    display: none;
+    text-align: center;
+    padding: var(--space-lg) 0;
+    color: var(--text-muted);
+    font-size: var(--fs-sm);    font-family: var(--font-mono);
+}
+
+footer::before {
+    content: "// ";
+    color: var(--ss-accent);
+}
+
+/* ===== Human-merge action (N findings -> 1) ===== */
+.merge-action-bar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+    margin-bottom: 0.5rem;
+}
+
+.merge-action-btn {
+    background: var(--ss-accent);
+    color: var(--surface-primary, #000);
+    border: 1px solid var(--ss-accent);
+    border-radius: var(--radius-md, 6px);
+    padding: 0.4rem 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.merge-action-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.merge-select-wrap {
+    margin-right: 0.5rem;
+    display: inline-flex;
+    align-items: center;
+}
+
+.finding-merged {
+    border-left: 3px solid var(--ss-accent);
+}
+
+.merged-badge {
+    background: color-mix(in srgb, var(--ss-accent) 25%, transparent);
+    border: 1px solid var(--ss-accent);
+}
+
+.merged-from {
+    margin-top: 0.5rem;
+    font-size: var(--fs-md);    color: var(--text-muted);
+}
+
+.merged-summary-field textarea.merged-summary {
+    width: 100%;
+    min-height: 3rem;
+}

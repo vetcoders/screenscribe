@@ -1,0 +1,79 @@
+/* ==========================================================================
+   screenscribe — REPORT POLISH LAYER
+   ==========================================================================
+
+   Load AFTER screenscribe-theme.css (which loads after report-pro.css).
+   Purely additive: it only completes / extends the identity already defined
+   by the theme. No structural rewrites, no token redefinition, no component
+   surgery — remove this one <link> to revert everything.
+
+   Scope (a small polishing PR):
+     1. Wordmark → full two-corner viewfinder lockup (matches logo-lockup.svg)
+     2. Monochrome instrument scrollbars
+     3. Footer cursor echo — the underscore prompt, closing the document
+     4. Case id → bracketed terminal chip
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Wordmark — complete the viewfinder lockup.
+   The theme draws only the top-left corner tick. The brand mark frames the
+   wordmark between TWO opposing corners (top-left + bottom-right). This adds
+   the missing bottom-right corner and squares the top-left tick to the padded
+   box, so the header lockup reads exactly like logo/logo-lockup.svg.
+   The blinking BLOCK cursor stays: it is the live/interactive prompt.
+   -------------------------------------------------------------------------- */
+.app-header h1 {
+    --vf: color-mix(in srgb, var(--text-secondary) 90%, transparent);
+    padding: 0.36em 0.60em 0.36em 0.50em;
+    background:
+        linear-gradient(var(--vf), var(--vf)) right bottom / 0.5em 2px  no-repeat,
+        linear-gradient(var(--vf), var(--vf)) right bottom / 2px  0.5em no-repeat;
+}
+.app-header h1::before {
+    top: 0;
+    left: 0;
+    width: 0.5em;
+    height: 0.5em;
+    opacity: 1;
+    border-color: var(--vf);
+}
+
+/* --------------------------------------------------------------------------
+   2. Monochrome instrument scrollbars — thin, neutral, brighten on hover.
+   -------------------------------------------------------------------------- */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-default) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: var(--border-default);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--ss-accent-lo); }
+
+/* --------------------------------------------------------------------------
+   3. Footer cursor echo — the underscore prompt closes the document, echoing
+   the wordmark's blink. (Block cursor = live prompt in the header; underscore
+   = the inert, signed-off prompt at the foot.)
+   -------------------------------------------------------------------------- */
+footer::after {
+    content: "_";
+    margin-left: 0.15em;
+    color: var(--ss-accent);
+    animation: ss-blink 1.1s steps(1) infinite;
+}
+@media (prefers-reduced-motion: reduce) { footer::after { animation: none; } }
+
+/* --------------------------------------------------------------------------
+   4. Case id → bracketed terminal chip. Tabular figures keep a column of
+   findings visually aligned; the brackets tie the id to the mono family.
+   -------------------------------------------------------------------------- */
+.finding-title .index {
+    font-variant-numeric: tabular-nums;
+}
+.finding-title .index::before { content: "["; opacity: 0.45; }
+.finding-title .index::after  { content: "]"; opacity: 0.45; }

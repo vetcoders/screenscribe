@@ -1,0 +1,13 @@
+<div class="sidebar-footer">
+    <div class="reviewer-field">
+        <label><span data-i18n="reviewer">{t_reviewer}</span>
+            <input type="text" id="reviewer-name" placeholder="{t_reviewerPlaceholder}" data-i18n="reviewerPlaceholder">
+        </label>
+    </div>
+    <!-- Save review persists review state to disk; it is not an artifact
+         download, so it stays in the footer. The TODO/JSON/ZIP artifact
+         downloads live in the final Export tab (review_sidebar.html). -->
+    <div class="export-buttons">
+        <button type="button" data-action="save-review" class="btn-primary" data-i18n="saveToDisk">{t_saveToDisk}</button>
+    </div>
+</div>

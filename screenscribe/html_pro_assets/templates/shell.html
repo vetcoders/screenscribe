@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="{document_language}">
+<head>
+{slot:head}
+</head>
+<body {body_attrs}>
+    <header class="app-header">
+        <div class="header-left">
+            <h1>{wordmark}</h1>
+            {slot:window_actions}
+        </div>
+        {slot:tabs}
+        {slot:header_right}
+    </header>
+
+    <div class="app-container">
+        <div class="workspace-shell">
+            <main class="main-column">
+                {slot:main_panels}
+            </main>
+
+            <div class="sidebar-resizer" id="sidebarResizer" role="separator" aria-orientation="vertical" aria-label="{t_resize_findings_panel}" title="{t_resize_findings_panel}" data-i18n-attr="aria-label:resize_findings_panel,title:resize_findings_panel"></div>
+
+            <section class="review-column">
+                <aside class="sidebar">
+                    <div class="sidebar-panel">
+                        <div class="sidebar-scroll">
+                            {slot:sidebar_panels}
+                        </div>
+                    </div>
+                </aside>
+
+                {slot:sidebar_footer}
+            </section>
+        </div>
+    </div>
+
+    <div class="modal-layer">
+        {slot:modals}
+    </div>
+
+    {slot:scripts}
+
+    {slot:document_footer}
+
+</body>
+</html>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#000000"></rect>
+  <rect x="79" y="79" width="79" height="9" fill="#d0d0d0"></rect>
+  <rect x="79" y="79" width="9" height="79" fill="#d0d0d0"></rect>
+  <rect x="354" y="424" width="79" height="9" fill="#d0d0d0"></rect>
+  <rect x="424" y="354" width="9" height="79" fill="#d0d0d0"></rect>
+  <text x="248" y="328" text-anchor="middle" font-family="&#39;JetBrains Mono&#39;, ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="400" font-size="205" fill="#a0a0a0">s<tspan fill="#d0d0d0">_</tspan></text>
+</svg>
