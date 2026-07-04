@@ -4,6 +4,11 @@
 (function () {
     "use strict";
 
+    /* Progressive enhancement flag: mark the document as JS-capable so CSS can
+       scope the initially-hidden fade-up state under `.js`. Without JS this
+       class is never added and all content stays visible. Must run first. */
+    document.documentElement.classList.add("js");
+
     var reduceMotion = window.matchMedia &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -33,7 +38,7 @@
                 ta.style.left = "-9999px";
                 document.body.appendChild(ta);
                 ta.select();
-                try { document.execCommand("copy"); done(); } catch (e) { /* no-op */ }
+                try { if (document.execCommand("copy")) { done(); } } catch (e) { /* no-op */ }
                 document.body.removeChild(ta);
             }
         });

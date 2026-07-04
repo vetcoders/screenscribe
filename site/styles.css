@@ -507,7 +507,7 @@ section { padding: var(--space-3xl) 0; }
 /* --------------------------------------------------------------------------
    Fade-up on scroll (IntersectionObserver adds .is-visible)
    -------------------------------------------------------------------------- */
-.fade-up {
+.js .fade-up {
     opacity: 0;
     transform: translateY(16px);
     transition: opacity var(--motion-medium) var(--ease-out),
@@ -518,5 +518,5 @@ section { padding: var(--space-3xl) 0; }
     transform: none;
 }
 @media (prefers-reduced-motion: reduce) {
-    .fade-up { opacity: 1; transform: none; transition: none; }
+    .js .fade-up { opacity: 1; transform: none; transition: none; }
 }
