@@ -28,7 +28,12 @@ critical_assets:
   - "review-render: self-contained HTML with embedded data:image/ and no external <script src=>"
 
 # Paths excluded from the no-secrets scan. Vendored minified bundles carry
-# benign high-entropy strings; the Makefile secrets-check excludes the same
-# path. Declared here so the script stays portable (no hardcode).
+# benign high-entropy strings; the Makefile secrets-check and the pre-commit
+# detect-secrets hook exclude the same paths. Declared here so the script stays
+# portable (no hardcode).
+#   - html_pro_assets/vendor: vendored minified JSZip (entropy false positive).
+#   - site/demo: GENERATED demo report (inlined JSZip + embedded base64 assets);
+#     excluded by path so the baseline does not churn on every regeneration.
 secrets_exclude:
   - "screenscribe/html_pro_assets/vendor"
+  - "site/demo/"

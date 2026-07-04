@@ -38,6 +38,7 @@ _SERVER_I18N: dict[str, dict[str, dict[str, str]]] = {
         },
         "media": {
             "noHtml5Video": "Your browser does not support HTML5 video.",
+            "staticDemoNoVideo": "Sample report — the source recording is not included.",
         },
         "review": {
             "tabs_aria": "Report sections",
@@ -107,6 +108,7 @@ _SERVER_I18N: dict[str, dict[str, dict[str, str]]] = {
         },
         "media": {
             "noHtml5Video": "Twoja przeglądarka nie obsługuje wideo HTML5.",
+            "staticDemoNoVideo": "Raport przykładowy — nagranie źródłowe nie jest dołączone.",
         },
         "review": {
             "tabs_aria": "Sekcje raportu",
@@ -337,6 +339,13 @@ def _render_lang_toggle(config: SurfaceConfig, context: Mapping[str, Any]) -> st
 
 
 def _video_panel_after_video(config: SurfaceConfig, context: Mapping[str, Any]) -> str:
+    if context.get("static_demo"):
+        # Static-demo sample: no source recording ships with the report, so the
+        # player controls are dropped entirely and an honest muted empty state
+        # takes the (CSS-hidden) video's place. data-i18n keeps it re-translatable
+        # on the client language toggle (media namespace).
+        message = html.escape(_t(config, context, "staticDemoNoVideo", namespace="media"))
+        return f'<p class="video-empty-state" data-i18n="staticDemoNoVideo">{message}</p>'
     if config.features.get("native_video"):
         timeline_label = html.escape(_t(config, context, "marker_timeline_aria"), quote=True)
         status = html.escape(_t(config, context, "video_status_idle"))
@@ -425,6 +434,10 @@ def _body_attrs(config: SurfaceConfig, context: Mapping[str, Any]) -> str:
         context_key = f"body_{attr_name}"
         if context_key in context:
             attrs[f"data-{attr_name.replace('_', '-')}"] = str(context[context_key])
+    # Static-demo flag (opt-in, example generator only): the client reads this to
+    # skip server hydration and render the video empty state (self-contained sample).
+    if context.get("static_demo"):
+        attrs["data-static-demo"] = "true"
     for feature, enabled in config.features.items():
         attrs[f"data-feature-{feature.replace('_', '-')}"] = "true" if enabled else "false"
     return " ".join(

@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>screenscribe — turn screen recordings into actionable engineering reports</title>
+    <meta name="description" content="Turn screen recordings into actionable engineering reports. screenscribe transcribes your narrated screencast, matches it to what is on screen, and produces a structured, self-contained report you or your AI agent can act on.">
+
+    <link rel="canonical" href="https://vetcoders.github.io/screenscribe/">
+
+    <!-- Icons / manifest (relative — project page) -->
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="assets/favicon-32.png" sizes="32x32" type="image/png">
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon-180.png">
+    <link rel="manifest" href="assets/site.webmanifest">
+    <meta name="theme-color" content="#000000">
+    <meta name="color-scheme" content="dark">
+
+    <!-- Open Graph (absolute URLs required) -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="screenscribe">
+    <meta property="og:title" content="screenscribe — turn screen recordings into actionable engineering reports">
+    <meta property="og:description" content="Record yourself walking through your app, talk through the bugs and changes you see, and screenscribe turns the narration into a structured, self-contained report.">
+    <meta property="og:url" content="https://vetcoders.github.io/screenscribe/">
+    <meta property="og:image" content="https://vetcoders.github.io/screenscribe/assets/og-image.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="screenscribe — turn screen recordings into actionable engineering reports">
+    <meta name="twitter:description" content="Record yourself walking through your app, talk through the bugs and changes you see, and screenscribe turns the narration into a structured, self-contained report.">
+    <meta name="twitter:image" content="https://vetcoders.github.io/screenscribe/assets/og-image.png">
+
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+    <div class="wrap">
+        <a href="#top" aria-label="screenscribe home"><span class="wordmark">screenscribe</span></a>
+        <nav>
+            <a class="nav-hide" href="#how">How it works</a>
+            <a class="nav-hide" href="#features">Features</a>
+            <a href="#install">Install</a>
+            <a class="nav-github" href="https://github.com/vetcoders/screenscribe">GitHub</a>
+        </nav>
+    </div>
+</header>
+
+<main id="top">
+
+    <!-- HERO -->
+    <section class="hero">
+        <div class="wrap">
+            <span class="wordmark">screenscribe</span>
+            <h1 class="tagline">Turn screen recordings into actionable engineering reports.</h1>
+            <p class="subtag">
+                Record yourself walking through your app, talk through the bugs and
+                changes you see, and screenscribe transcribes the narration, matches
+                it to what is on screen, and produces a structured report you — or your
+                AI agent — can act on.
+            </p>
+            <div class="cta-row">
+                <a class="btn btn-primary" href="demo/report.html">View a live report</a>
+                <a class="btn" href="#install">Get started</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section id="how">
+        <div class="wrap">
+            <p class="eyebrow fade-up">How it works</p>
+            <h2 class="section-title fade-up">From &ldquo;watch this&rdquo; to &ldquo;fix this&rdquo;</h2>
+            <p class="section-lead fade-up">
+                A single narrated screencast in, a structured report out. Three stages,
+                no manual scrubbing.
+            </p>
+            <div class="steps">
+                <div class="step fade-up">
+                    <h3>Record</h3>
+                    <p>Capture your screen and narrate the bugs and changes in plain
+                       language. Any format FFmpeg decodes works.</p>
+                </div>
+                <div class="step fade-up">
+                    <h3>Pipeline</h3>
+                    <p>screenscribe runs an <span class="pipe">STT&nbsp;&rarr;&nbsp;LLM&nbsp;&rarr;&nbsp;VLM</span>
+                       pipeline: transcribe the narration, find the actionable moments,
+                       then confirm each against captured frames.</p>
+                </div>
+                <div class="step fade-up">
+                    <h3>Report</h3>
+                    <p>Get findings with timestamps, screenshots, and an executive
+                       summary — as JSON, Markdown, and an interactive HTML report.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FEATURES -->
+    <section id="features">
+        <div class="wrap">
+            <p class="eyebrow fade-up">Features</p>
+            <h2 class="section-title fade-up">Built for a clean handoff</h2>
+            <p class="section-lead fade-up">
+                Everything the report needs travels with it, so a finding is ready to
+                act on the moment it lands.
+            </p>
+            <div class="features">
+                <div class="feature fade-up">
+                    <span class="marker">&rsaquo;</span>
+                    <div>
+                        <h3>Self-contained HTML reports</h3>
+                        <p>One interactive file with a synchronized player, subtitle sync,
+                           and screenshot annotations — no server, no external requests.</p>
+                    </div>
+                </div>
+                <div class="feature fade-up">
+                    <span class="marker">&rsaquo;</span>
+                    <div>
+                        <h3>Two analysis modes</h3>
+                        <p><code>review</code> runs the automatic pipeline end to end;
+                           <code>analyze</code> is a human-first dashboard where you drive.</p>
+                    </div>
+                </div>
+                <div class="feature fade-up">
+                    <span class="marker">&rsaquo;</span>
+                    <div>
+                        <h3>Moment marking &amp; voice notes</h3>
+                        <p>Scrub the video, mark the frames that matter, and add voice or
+                           text notes to trigger analysis only where it counts.</p>
+                    </div>
+                </div>
+                <div class="feature fade-up">
+                    <span class="marker">&rsaquo;</span>
+                    <div>
+                        <h3>Hallucination-filtered transcripts</h3>
+                        <p>A transcript-first lane produces stable TXT, segments JSON, and
+                           WebVTT artifacts — clean enough to hand straight to an agent.</p>
+                    </div>
+                </div>
+                <div class="feature fade-up">
+                    <span class="marker">&rsaquo;</span>
+                    <div>
+                        <h3>Any OpenAI-compatible backend</h3>
+                        <p>Bring a key from OpenAI or any other OpenAI-compatible provider
+                           and point screenscribe at that endpoint. Vetcoders ships
+                           LibraxisAI as the first-party default.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- INSTALL -->
+    <section id="install" class="install">
+        <div class="wrap">
+            <p class="eyebrow fade-up">Install</p>
+            <h2 class="section-title fade-up">Get started</h2>
+            <p class="section-lead fade-up">
+                Clone the repo, sync dependencies with <code>uv</code>, and initialize
+                your config. Bring your own OpenAI-compatible key to run a review.
+            </p>
+
+            <div class="code-block fade-up">
+                <div class="code-head">
+                    <span class="label">bash</span>
+                    <button class="copy-btn" type="button"
+                            data-copy="git clone https://github.com/vetcoders/screenscribe.git && cd screenscribe && uv sync && uv run screenscribe config --init">Copy</button>
+                </div>
+<pre><code><span class="prompt">$ </span>git clone https://github.com/vetcoders/screenscribe.git
+<span class="prompt">$ </span>cd screenscribe
+<span class="prompt">$ </span>uv sync
+<span class="comment"># initialize config, then bring your own OpenAI-compatible key</span>
+<span class="prompt">$ </span>uv run screenscribe config --init</code></pre>
+            </div>
+
+            <div class="requirements fade-up">
+                <span class="req">Python 3.11+</span>
+                <span class="req">FFmpeg</span>
+                <span class="req">uv</span>
+            </div>
+        </div>
+    </section>
+
+</main>
+
+<footer class="site-footer">
+    <div class="wrap">
+        <span class="built">Built by Vetcoders<span class="cursor" aria-hidden="true"></span></span>
+        <nav>
+            <a href="https://github.com/vetcoders/screenscribe">GitHub</a>
+            <a href="https://github.com/vetcoders/screenscribe/releases">Releases</a>
+            <a href="https://github.com/vetcoders/screenscribe/blob/main/LICENSE">License</a>
+        </nav>
+    </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
