@@ -6,11 +6,29 @@ Supports timestamp anchoring and segment metadata.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .transcribe import Segment
+
+_CUE_BLANK_LINE_RE = re.compile(r"\n\s*\n+")
+
+
+def escape_cue_text(text: str) -> str:
+    """Escape transcript text so it is safe inside a WebVTT cue payload.
+
+    WebVTT requires ``&`` and ``<`` to be written as ``&amp;`` / ``&lt;`` in cue
+    text (raw ``<`` starts a cue-span tag, so ``<div>`` in narration would be
+    swallowed; raw ``&`` starts an entity). ``>`` is escaped too, which also
+    neutralises the ``-->`` sequence — a literal ``-->`` in a cue would be
+    mistaken for a timestamp separator and desync every following cue. Finally a
+    blank line terminates a cue, so internal blank lines are collapsed to keep
+    multi-line narration inside a single cue instead of splitting it.
+    """
+    escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return _CUE_BLANK_LINE_RE.sub("\n", escaped)
 
 
 def seconds_to_vtt_timestamp(seconds: float) -> str:
@@ -89,7 +107,7 @@ def generate_webvtt(segments: list[Segment], language: str = "en") -> str:
 
         lines.append(str(segment.id))
         lines.append(f"{start} --> {end}")
-        lines.append(segment.text)
+        lines.append(escape_cue_text(segment.text))
         lines.append("")
 
     return "\n".join(lines)
@@ -128,7 +146,7 @@ def generate_webvtt_with_cue_settings(
         cue_settings = f"position:{position} line:{line} align:{align}"
         lines.append(str(segment.id))
         lines.append(f"{start} --> {end} {cue_settings}")
-        lines.append(segment.text)
+        lines.append(escape_cue_text(segment.text))
         lines.append("")
 
     return "\n".join(lines)
