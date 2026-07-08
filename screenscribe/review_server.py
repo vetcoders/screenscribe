@@ -35,6 +35,7 @@ from .server_common import (
     serialize_stt_result,
     transcribe_browser_audio,
     validate_browser_stt_result,
+    validate_browser_stt_upload,
 )
 from .work_item import WorkItem, from_manual_frame, normalize_verdict
 
@@ -697,16 +698,7 @@ def create_review_app(
         # read into RAM (the prior ``await audio.read()`` buffered the whole
         # body before the size check).
         audio_data = await read_upload_capped(audio, max_bytes=MAX_AUDIO_BYTES)
-        if not audio_data:
-            raise HTTPException(status_code=400, detail="Voice recording is empty.")
-        if len(audio_data) < 1024:
-            # Mirror analyze-side: a sub-1KB browser recording is too short to
-            # carry usable speech, so reject it before paying for a provider
-            # round-trip (and the ffmpeg-normalization fallback).
-            raise HTTPException(
-                status_code=400,
-                detail="Voice recording is too short. Hold to record longer.",
-            )
+        validate_browser_stt_upload(audio_data)
 
         filename = audio.filename or "recording.webm"
         content_type = audio.content_type or "audio/webm"

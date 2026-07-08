@@ -43,6 +43,7 @@ from .server_common import (
     serialize_stt_result,
     transcribe_browser_audio,
     validate_browser_stt_result,
+    validate_browser_stt_upload,
 )
 from .work_item import from_analyze_marker
 
@@ -853,13 +854,7 @@ def create_analyze_app(video_path: Path, config: ScreenScribeConfig) -> FastAPI:
         filename = audio.filename or "recording.webm"
         content_type = audio.content_type or "audio/webm"
 
-        if not content:
-            raise HTTPException(status_code=400, detail="Voice recording is empty.")
-        if len(content) < 1024:
-            raise HTTPException(
-                status_code=400,
-                detail="Voice recording is too short. Hold to record longer.",
-            )
+        validate_browser_stt_upload(content)
 
         try:
             # BH13: transcribe_browser_audio makes blocking HTTP STT calls (plus

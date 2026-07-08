@@ -684,6 +684,49 @@ def test_review_server_stt_upload_cap_rejects_declared_oversize(
     assert "25 MB" in response.json()["detail"]
 
 
+def test_review_server_stt_rejects_empty_upload(
+    review_workspace: tuple[Path, Path, Path],
+) -> None:
+    """An empty browser STT upload is rejected 400 with the shared detail string
+    (byte-identical to analyze_server via validate_browser_stt_upload)."""
+    output_dir, report_file, video_path = review_workspace
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/stt",
+        files={"audio": ("recording.webm", b"", "audio/webm")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Voice recording is empty."
+
+
+def test_review_server_stt_rejects_tiny_browser_recording_before_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    review_workspace: tuple[Path, Path, Path],
+) -> None:
+    """A sub-1KB browser recording is rejected 400 before any STT provider call,
+    with the shared detail string (byte-identical to analyze_server)."""
+
+    def fail_transcribe(*args: Any, **kwargs: Any) -> TranscriptionResult:
+        raise AssertionError("Tiny browser recordings should not reach STT provider")
+
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio_bytes", fail_transcribe)
+
+    output_dir, report_file, video_path = review_workspace
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/stt",
+        files={"audio": ("recording.webm", b"\x1aE\xdf\xa3", "audio/webm")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Voice recording is too short. Hold to record longer."
+
+
 def test_review_server_mark_rejects_oversize_base64(
     review_workspace: tuple[Path, Path, Path],
 ) -> None:

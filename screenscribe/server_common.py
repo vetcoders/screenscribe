@@ -134,6 +134,27 @@ async def read_upload_capped(
     return b"".join(chunks)
 
 
+def validate_browser_stt_upload(content: bytes) -> None:
+    """Reject an empty or too-short browser STT upload before transcription.
+
+    Both ``/api/stt`` handlers apply the same two guards to the bytes read by
+    :func:`read_upload_capped`: an empty upload is rejected outright, and a
+    sub-1KB browser recording is too short to carry usable speech, so it is
+    refused before paying for a provider round-trip (and the possible
+    ffmpeg-normalization fallback). The ``400`` detail strings are a contract
+    with the browser frontends, which surface them verbatim, so they must stay
+    byte-identical across both servers — that is exactly why this guard lives
+    in one place.
+    """
+    if not content:
+        raise HTTPException(status_code=400, detail="Voice recording is empty.")
+    if len(content) < 1024:
+        raise HTTPException(
+            status_code=400,
+            detail="Voice recording is too short. Hold to record longer.",
+        )
+
+
 def validate_browser_stt_result(result: Any) -> str | None:
     """Validate browser voice notes before exposing STT text to the UI.
 
