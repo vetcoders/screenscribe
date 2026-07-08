@@ -799,7 +799,11 @@ def _branding_scan_files(target: Path) -> list[str]:
     out: list[str] = []
     for rel in _iter_scan_files(target):
         posix = rel.replace(os.sep, "/")
-        if posix.startswith(excludes):
+        # Match on a path-segment boundary, not a bare prefix: a plain
+        # ``startswith`` treats ``site/demo`` as excluding ``site/demographics.txt``
+        # (partial-name collision). Require either an exact path or a directory
+        # prefix ending at a ``/``.
+        if any(posix == exclude or posix.startswith(exclude + "/") for exclude in excludes):
             continue
         out.append(rel)
     return sorted(set(out))

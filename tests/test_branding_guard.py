@@ -143,6 +143,24 @@ def test_check_branding_honors_excludes(tmp_path: Path) -> None:
     assert res.ok is True
 
 
+def test_check_branding_excludes_match_on_segment_boundary(tmp_path: Path) -> None:
+    # ``site/demo`` is an exclude (generated demo). A sibling that merely shares
+    # that prefix (``site/demographics.txt``) must NOT be swept up by the exclude:
+    # the match has to land on a path-segment boundary, not a bare prefix.
+    demo = tmp_path / "site" / "demo"
+    demo.mkdir(parents=True)
+    (demo / "report.html").write_text("ScreenScribe demo build\n", encoding="utf-8")
+    (tmp_path / "site" / "demographics.txt").write_text(
+        "ScreenScribe usage stats\n", encoding="utf-8"
+    )
+    res = ssv.check_branding(tmp_path, _contract(tmp_path))
+    assert res.ok is False
+    # The partial-prefix sibling is scanned and flagged...
+    assert "site/demographics.txt" in res.detail
+    # ...while the genuinely excluded demo tree stays out of the scan.
+    assert "site/demo/report.html" not in res.detail
+
+
 def test_check_branding_skips_binary(tmp_path: Path) -> None:
     # A binary file in a scanned path is skipped (NUL-byte sniff), not decoded.
     (tmp_path / "README.md").write_bytes(b"\x00\x01ScreenScribe\x00")
