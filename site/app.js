@@ -14,15 +14,23 @@
 
     /* -- Copy button ------------------------------------------------------ */
     document.querySelectorAll(".copy-btn").forEach(function (btn) {
+        /* Capture the original label ONCE at wire time. Reading it inside the
+           click handler meant a rapid second click (while showing 'Copied')
+           captured 'Copied' as the original and froze the button there. */
+        var original = btn.textContent;
+        var resetTimer = null;
         btn.addEventListener("click", function () {
             var text = btn.getAttribute("data-copy") || "";
             var done = function () {
-                var original = btn.textContent;
                 btn.textContent = "Copied";
                 btn.classList.add("copied");
-                setTimeout(function () {
+                /* Debounce: a fresh click restarts the window rather than
+                   stacking timers that could fight over the label. */
+                if (resetTimer) { clearTimeout(resetTimer); }
+                resetTimer = setTimeout(function () {
                     btn.textContent = original;
                     btn.classList.remove("copied");
+                    resetTimer = null;
                 }, 1600);
             };
             if (navigator.clipboard && navigator.clipboard.writeText) {
