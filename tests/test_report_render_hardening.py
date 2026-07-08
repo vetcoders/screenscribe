@@ -92,7 +92,9 @@ def test_render_does_not_break_on_slot_literal_in_text() -> None:
 
 
 def test_html_does_not_leak_absolute_video_path_when_missing() -> None:
-    abs_video = "/home/someone/secret-project/demo.mov"
+    # Absolute + non-existent; deliberately NOT under /home or /Users so the
+    # fixture path itself does not trip the leak-scan local-path guard.
+    abs_video = "/data/private-project/demo.mov"
     html = render_html_report_pro(
         video_name="demo.mov",
         video_path=abs_video,
