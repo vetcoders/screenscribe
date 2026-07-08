@@ -200,6 +200,43 @@ def _remove_manual_frame_image(output_dir: Path, frame_path: str) -> bool:
     return existed
 
 
+def _sweep_orphan_manual_frames(output_dir: Path, keep: set[str]) -> int:
+    """Unlink stored manual-frame images no longer referenced by any live state.
+
+    A frame written at mark time (``store_manual_frame_image``) but never saved
+    into report.json and never explicitly deleted would otherwise linger on disk
+    forever: HTTP-reachable through the static mount (a privacy leak) and pure
+    disk litter. At save time the full live reference set is known — every
+    ``frame_path`` persisted into report.json plus every live session marker
+    (pending / unanalyzed included) — so any ``manual_frames/*`` file outside it
+    is orphaned and swept.
+
+    ``keep`` holds server-authored relative references
+    (``manual_frames/<id>.<ext>``). Each on-disk file is unlinked only when it is
+    contained inside ``output_dir`` (the same base-in-parents guard as
+    ``_remove_manual_frame_image``), so a sweep can never reach outside the
+    review dir. Idempotent and crash-safe: a missing file is not an error.
+    Returns the count of files removed.
+    """
+    frames_dir = output_dir / MANUAL_FRAMES_DIRNAME
+    if not frames_dir.is_dir():
+        return 0
+    base = output_dir.resolve()
+    keep_resolved = {(output_dir / rel).resolve() for rel in keep if rel}
+    removed = 0
+    for entry in frames_dir.iterdir():
+        if not entry.is_file():
+            continue
+        candidate = entry.resolve()
+        if base != candidate and base not in candidate.parents:
+            continue
+        if candidate in keep_resolved:
+            continue
+        entry.unlink(missing_ok=True)
+        removed += 1
+    return removed
+
+
 def _data_url_from_disk(output_dir: Path, frame_path: str) -> str | None:
     """Read a stored manual-frame image off disk and build a renderable data URL.
 
@@ -978,6 +1015,28 @@ def create_review_app(
             except Exception:
                 Path(tmp_name).unlink(missing_ok=True)
                 raise
+
+            # Sweep orphaned manual-frame images only after report.json is durably
+            # written (finding 156). The keep-set is the full live reference set:
+            # every frame_path persisted into report.json plus every live session
+            # marker (pending / unanalyzed included — those are marked-but-unsaved
+            # captures whose disk image must survive). Anything else under
+            # manual_frames/ was marked then discarded without a delete, and would
+            # otherwise linger on disk forever (privacy leak + litter). Running it
+            # before the atomic write would risk deleting a frame on a save that
+            # then fails; here report.json already reflects `keep`.
+            keep: set[str] = {m.frame_path for m in markers if m.frame_path}
+            human_review = report_data.get("human_review")
+            if isinstance(human_review, dict):
+                for frame in human_review.get("manual_frames") or []:
+                    if isinstance(frame, dict) and isinstance(frame.get("frame_path"), str):
+                        keep.add(frame["frame_path"])
+            manual_review_data = report_data.get("manual_review")
+            if isinstance(manual_review_data, dict):
+                for marker in manual_review_data.get("markers") or []:
+                    if isinstance(marker, dict) and isinstance(marker.get("frame_path"), str):
+                        keep.add(marker["frame_path"])
+            _sweep_orphan_manual_frames(session.output_dir, keep)
 
             logger.info("Saved manual review state to %s", json_path)
             return {"status": "success", "filename": json_path.name}
