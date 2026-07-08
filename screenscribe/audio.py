@@ -398,8 +398,19 @@ def detect_silence_boundaries(
     return sorted(boundaries)
 
 
-def _discard_partial_chunks(chunks: list[tuple[Path, float]], temp_dir: Path) -> None:
-    """Remove already-written chunk WAVs and their temp dir after a split abort."""
+def _discard_partial_chunks(
+    chunks: list[tuple[Path, float]], temp_dir: Path, current_path: Path | None = None
+) -> None:
+    """Remove already-written chunk WAVs and their temp dir after a split abort.
+
+    ``current_path`` is the chunk being written when the split aborted; it is not
+    yet in ``chunks`` (that append only happens on success), so a timed-out or
+    failed ffmpeg run can leave a partial file behind. Without removing it the
+    temp dir is non-empty and ``rmdir`` silently fails, leaking both the stray
+    WAV and the directory.
+    """
+    if current_path is not None:
+        current_path.unlink(missing_ok=True)
     for made_path, _offset in chunks:
         made_path.unlink(missing_ok=True)
     try:
@@ -523,12 +534,12 @@ def split_audio_chunks(
                 cmd, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT_SECONDS
             )
         except subprocess.TimeoutExpired as exc:
-            _discard_partial_chunks(chunks, temp_dir)
+            _discard_partial_chunks(chunks, temp_dir, chunk_path)
             raise RuntimeError(
                 f"chunk {chunk_idx} split timed out after {_FFMPEG_TIMEOUT_SECONDS:.0f}s"
             ) from exc
         if result.returncode != 0:
-            _discard_partial_chunks(chunks, temp_dir)
+            _discard_partial_chunks(chunks, temp_dir, chunk_path)
             raise RuntimeError(f"chunk {chunk_idx} split failed: {result.stderr[:200]}")
 
         chunks.append((chunk_path, offset))

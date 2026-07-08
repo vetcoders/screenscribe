@@ -9,7 +9,7 @@ long recordings, so long audio is cut at natural pauses into WAV chunks.
 from __future__ import annotations
 
 from pathlib import Path
-from subprocess import CompletedProcess
+from subprocess import CompletedProcess, TimeoutExpired
 from typing import Any
 
 import pytest
@@ -185,6 +185,69 @@ def test_split_audio_chunks_raises_and_cleans_up_on_mid_split_failure(
     for p in made_paths:
         assert not p.exists(), f"orphaned chunk left behind: {p}"
         assert not p.parent.exists(), f"orphaned temp dir left behind: {p.parent}"
+
+
+def test_split_audio_chunks_discards_in_flight_partial_on_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A partial WAV from the failing chunk itself must be cleaned up.
+
+    ffmpeg can write a truncated output file and then exit non-zero. That
+    in-flight ``chunk_path`` is not yet in the ``chunks`` list (the append only
+    happens on success), so if cleanup ignores it the stray file keeps the temp
+    dir non-empty and ``rmdir`` silently leaks both.
+    """
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"audio")
+    monkeypatch.setattr("screenscribe.audio.get_audio_duration", lambda _p: 200.0)
+    monkeypatch.setattr("screenscribe.audio.detect_silence_boundaries", lambda _p: [])
+
+    seen: list[Path] = []
+
+    def _run(cmd: list[str], *_args: Any, **_kwargs: Any) -> CompletedProcess[str]:
+        out = Path(cmd[-1])
+        # Every call writes a (partial) file, then the first chunk fails.
+        out.write_bytes(b"partial")
+        seen.append(out)
+        return CompletedProcess(args=cmd, returncode=1, stdout="", stderr="ffmpeg boom")
+
+    monkeypatch.setattr("screenscribe.audio.subprocess.run", _run)
+
+    with pytest.raises(RuntimeError, match="chunk 0 split failed"):
+        split_audio_chunks(audio, max_chunk_duration=60.0, overlap=3.0)
+
+    assert seen, "the failing chunk should have written a partial file"
+    partial = seen[0]
+    assert not partial.exists(), f"in-flight partial chunk left behind: {partial}"
+    assert not partial.parent.exists(), f"orphaned temp dir left behind: {partial.parent}"
+
+
+def test_split_audio_chunks_discards_in_flight_partial_on_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A partial WAV from a timed-out ffmpeg must be cleaned up too."""
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"audio")
+    monkeypatch.setattr("screenscribe.audio.get_audio_duration", lambda _p: 200.0)
+    monkeypatch.setattr("screenscribe.audio.detect_silence_boundaries", lambda _p: [])
+
+    seen: list[Path] = []
+
+    def _run(cmd: list[str], *_args: Any, **_kwargs: Any) -> CompletedProcess[str]:
+        out = Path(cmd[-1])
+        out.write_bytes(b"partial")  # ffmpeg wrote some bytes before wedging
+        seen.append(out)
+        raise TimeoutExpired(cmd=cmd, timeout=1.0)
+
+    monkeypatch.setattr("screenscribe.audio.subprocess.run", _run)
+
+    with pytest.raises(RuntimeError, match="chunk 0 split timed out"):
+        split_audio_chunks(audio, max_chunk_duration=60.0, overlap=3.0)
+
+    assert seen, "the timed-out chunk should have written a partial file"
+    partial = seen[0]
+    assert not partial.exists(), f"in-flight partial chunk left behind: {partial}"
+    assert not partial.parent.exists(), f"orphaned temp dir left behind: {partial.parent}"
 
 
 def test_get_audio_duration_parses_ffprobe(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
