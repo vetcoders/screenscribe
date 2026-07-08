@@ -188,16 +188,16 @@ def analyze_finding_unified_streaming(
                 nonlocal emitted
                 if suppress_callbacks:
                     return
-                emitted = True
                 if on_content:
+                    emitted = True
                     on_content(text)
 
             def emit_reasoning(text: str) -> None:
                 nonlocal emitted
                 if suppress_callbacks:
                     return
-                emitted = True
                 if on_reasoning:
+                    emitted = True
                     on_reasoning(text)
 
             with httpx.Client(timeout=120.0) as client:
