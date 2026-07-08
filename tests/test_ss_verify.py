@@ -375,10 +375,15 @@ def test_semgrep_clean_run_passes(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert result.ok is True and result.skipped is False
 
 
-def test_semgrep_missing_binary_skips_not_fails(
+def test_semgrep_missing_toolchain_fails_closed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Missing semgrep binary → explicit SKIP, never a security FAIL."""
+    """Ruleset declared but uv/semgrep unavailable → FAIL, never a silent skip.
+
+    semgrep is a declared dev dependency, so a target that ships semgrep.yml MUST
+    be able to run it. A missing toolchain means the whole security ruleset goes
+    unenforced — fail-closed instead of reporting READY (the old no-op gate bug).
+    """
     (tmp_path / "semgrep.yml").write_text("rules: []\n")
 
     def _boom(*a, **k):
@@ -387,7 +392,24 @@ def test_semgrep_missing_binary_skips_not_fails(
     monkeypatch.setattr(ssv, "_run", _boom)
     contract = ssv.load_contract(tmp_path)
     result = ssv.check_semgrep(tmp_path, contract)
-    assert result.ok is True and result.skipped is True
+    assert result.ok is False and result.skipped is False
+
+
+def test_semgrep_uninstalled_binary_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """uv resolves but semgrep is not installed → FAIL (ruleset unenforced)."""
+    (tmp_path / "semgrep.yml").write_text("rules: []\n")
+
+    class _CP:
+        returncode = 2
+        stdout = ""
+        stderr = "error: Failed to spawn: `semgrep`\n  Caused by: No such file or directory\n"
+
+    monkeypatch.setattr(ssv, "_run", lambda *a, **k: _CP())
+    contract = ssv.load_contract(tmp_path)
+    result = ssv.check_semgrep(tmp_path, contract)
+    assert result.ok is False and result.skipped is False
 
 
 # ---------------------------------------------------------------------------

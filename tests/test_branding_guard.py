@@ -1,11 +1,12 @@
-"""Tests for the branding guard in scripts/ss_verify.py (WARIANT A).
+"""Tests for the branding guard in scripts/ss_verify.py (repo-wide scan).
 
 The guard fails on bare public-facing camelCase ``ScreenScribe`` / ``VetCoders``
-brand strings in the public-surface path list, while exempting allowlisted
-technical identifiers (config class, JS namespace/player, HTTP header, env
-prefix). These tests drive the deterministic helpers (``scan_text_for_brand``
-and ``check_branding``) on temporary strings / tmp trees — never on the real
-repo — so they stay reproducible regardless of repo state.
+brand strings anywhere in the tracked tree (minus ``BRANDING_SCAN_EXCLUDES``),
+while exempting allowlisted technical identifiers (config class, JS
+namespace/player, HTTP header, env prefix). These tests drive the deterministic
+helpers (``scan_text_for_brand`` and ``check_branding``) on temporary strings /
+tmp trees — never on the real repo — so they stay reproducible regardless of
+repo state.
 """
 
 from __future__ import annotations
@@ -122,9 +123,22 @@ def test_check_branding_scans_docs_dir(tmp_path: Path) -> None:
     assert "docs/GUIDE.md" in res.detail
 
 
-def test_check_branding_ignores_unlisted_paths(tmp_path: Path) -> None:
-    # A path NOT in BRANDING_SCAN_PATHS must not trip the guard (bounded scope).
-    (tmp_path / "NOTES.md").write_text("ScreenScribe everywhere.\n", encoding="utf-8")
+def test_check_branding_catches_unlisted_paths(tmp_path: Path) -> None:
+    # Repo-wide scan: a bare brand in ANY new file (no hand-maintained list) is
+    # caught — this is the blind spot the bounded-list guard used to miss.
+    (tmp_path / "analyze_server.py").write_text("# ScreenScribe server\n", encoding="utf-8")
+    res = ssv.check_branding(tmp_path, _contract(tmp_path))
+    assert res.ok is False
+    assert "analyze_server.py" in res.detail
+
+
+def test_check_branding_honors_excludes(tmp_path: Path) -> None:
+    # Paths that legitimately NAME the brand they forbid (the guard's own
+    # machinery + churn/vendored) are excluded, so they never self-trip the gate.
+    for rel in ("Makefile", "scripts/ss_verify.py", "tests/test_branding_guard.py"):
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("mentions ScreenScribe and VetCoders\n", encoding="utf-8")
     res = ssv.check_branding(tmp_path, _contract(tmp_path))
     assert res.ok is True
 

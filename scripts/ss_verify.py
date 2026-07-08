@@ -49,28 +49,24 @@ DEFAULT_COVERAGE_FLOOR = 80
 DEFAULT_PACKAGE = "screenscribe"
 
 # ---------------------------------------------------------------------------
-# Branding guard (WARIANT A — public-surface paths only).
+# Branding guard (repo-wide).
 # ---------------------------------------------------------------------------
-# Public-facing files we scan for brand regressions. These are the surfaces a
-# reader of the open-source seed actually sees; the canonical public spelling is
-# the lowercase `screenscribe` package / `vetcoders` org. CamelCase `ScreenScribe`
-# / `VetCoders` here would be a brand regression. (Internal prose sweep over the
-# whole repo is future work — this guard is intentionally bounded to this list.)
-BRANDING_SCAN_PATHS = (
-    "README.md",
-    "USAGE.md",
-    "SECURITY.md",
-    "CONTRIBUTING.md",
-    "docs",  # docs/** text files (binary/build skipped at read time)
-    "pyproject.toml",
-    "screenscribe/cli.py",
-    "screenscribe/bootstrap.py",
-    "screenscribe/review_pipeline.py",
-    "screenscribe/report/markdown_report.py",
-    "screenscribe/shell/surface.py",
-    "screenscribe/shell/renderer.py",
-    "screenscribe/html_pro_assets/scripts/review_app.js",
-    "screenscribe/default_keywords.yaml",
+# The canonical public spelling is the lowercase `screenscribe` package /
+# `vetcoders` org. CamelCase `ScreenScribe` / `VetCoders` in any tracked text
+# file is a brand regression. The guard scans the WHOLE git-tracked tree so a
+# bare brand in a NEW file (a doc/module added after any hand-maintained list)
+# cannot slip through — the bounded-list blind spot is gone.
+#
+# A few tracked paths legitimately NAME the brand they forbid or are non-prose
+# churn/vendored, so they are excluded (prefix match on POSIX paths):
+BRANDING_SCAN_EXCLUDES = (
+    "scripts/ss_verify.py",  # this guard's own source declares the forbidden tokens
+    "tests/test_branding_guard.py",  # the guard's tests use the brand as fixtures
+    "Makefile",  # brand-scan help/comment text names the guard it drives
+    "uv.lock",  # resolver lockfile (no public prose; churny)
+    ".secrets.baseline",  # detect-secrets baseline (generated)
+    "screenscribe/html_pro_assets/vendor",  # vendored minified third-party
+    "site/demo",  # generated demo report (inlined JSZip + base64 assets)
 )
 
 # Allowlisted technical identifiers — these CONTAIN the camelCase brand but are
@@ -506,9 +502,15 @@ def check_semgrep(target: Path, contract: Contract) -> CheckResult:
     hook enforces is enforced at the gate — closing the gap where ``make
     verify``/CI reported READY while semgrep lived only in opt-in pre-commit.
 
-    Skips explicitly (never silently) when the ``semgrep.yml`` ruleset is not
-    present in the target, or when the semgrep binary cannot be resolved. A
-    nonzero semgrep run (``--error`` → findings) FAILS the check (fail-closed).
+    FAIL-CLOSED. ``semgrep`` is a declared dev dependency (pyproject dev group),
+    so once the target ships a ``semgrep.yml`` ruleset the scanner MUST resolve
+    and run. If the ruleset is declared but the toolchain cannot run it (uv or
+    semgrep unavailable), that is a broken security gate — reported as a FAIL,
+    never a silent skip that lets the whole ruleset go unenforced while the run
+    reports READY. A nonzero semgrep run (``--error`` → findings) also FAILS.
+
+    The ONLY skip is portability: a target with no ``semgrep.yml`` at all does
+    not declare a ruleset, so there is nothing to enforce (heuristic skip).
     """
     ruleset = target / SEMGREP_CONFIG
     if not ruleset.is_file():
@@ -529,18 +531,27 @@ def check_semgrep(target: Path, contract: Contract) -> CheckResult:
     try:
         cp = _run(cmd, cwd=target, timeout=900)
     except FileNotFoundError:
-        # `uv` itself missing — cannot run any check; surface as a skip, not a
-        # false pass (the other uv-backed checks fail-closed via _safe instead,
-        # but here a missing binary is the documented optional-tool path).
-        return CheckResult("semgrep", True, "semgrep binary unavailable; skipped", skipped=True)
+        # `uv` (hence semgrep) missing while a ruleset IS declared: the security
+        # gate cannot run. Fail-closed — a declared ruleset that cannot execute
+        # must never report READY.
+        return CheckResult(
+            "semgrep",
+            False,
+            f"{SEMGREP_CONFIG} declared but semgrep/uv unavailable (gate cannot run)",
+        )
     if cp.returncode == 0:
         return CheckResult("semgrep", True, f"semgrep clean ({SEMGREP_CONFIG})")
     combined = (cp.stdout + cp.stderr).strip()
-    # `uv run` reporting that the semgrep tool itself is missing is a SKIP, not a
-    # security FAIL — distinguish "no scanner" from "scanner found problems".
+    # `uv run` reporting that the semgrep tool itself is missing: with a declared
+    # ruleset this is fail-closed, not a skip — otherwise the entire security
+    # ruleset silently goes unenforced while the gate stays green.
     lowered = combined.lower()
     if ("no such" in lowered and "semgrep" in lowered) or "command not found" in lowered:
-        return CheckResult("semgrep", True, "semgrep binary unavailable; skipped", skipped=True)
+        return CheckResult(
+            "semgrep",
+            False,
+            f"{SEMGREP_CONFIG} declared but semgrep binary unavailable (unenforced)",
+        )
     tail = combined.splitlines()
     return CheckResult("semgrep", False, tail[-1] if tail else "semgrep reported findings")
 
@@ -776,30 +787,31 @@ def scan_text_for_brand(text: str) -> list[tuple[int, str, str]]:
 
 
 def _branding_scan_files(target: Path) -> list[str]:
-    """Resolve BRANDING_SCAN_PATHS to concrete relative text-file paths.
+    """Every tracked file in the target, minus the branding-machinery excludes.
 
-    Directory entries (``docs``) expand to their files. Missing entries are
-    skipped silently — the guard only judges what is actually present.
+    Uses the same tracked-or-walk resolution as the leak scan, then drops paths
+    that legitimately name the brand (the guard, its tests, Make help text) plus
+    non-prose churn/vendored trees (``BRANDING_SCAN_EXCLUDES``). Binary files are
+    NOT filtered here — the NUL-byte sniff in ``check_branding`` skips them at
+    read time (``grep -I`` parity).
     """
+    excludes = tuple(e.strip("/") for e in BRANDING_SCAN_EXCLUDES if e.strip())
     out: list[str] = []
-    for entry in BRANDING_SCAN_PATHS:
-        p = target / entry
-        if p.is_dir():
-            for root, dirs, files in os.walk(p):
-                dirs[:] = [d for d in dirs if d not in JUNK_NAMES and d != ".git"]
-                for f in files:
-                    out.append(os.path.relpath(os.path.join(root, f), target))
-        elif p.is_file():
-            out.append(entry)
+    for rel in _iter_scan_files(target):
+        posix = rel.replace(os.sep, "/")
+        if posix.startswith(excludes):
+            continue
+        out.append(rel)
     return sorted(set(out))
 
 
 def check_branding(target: Path, contract: Contract) -> CheckResult:
     """Fail on public-facing camelCase ``ScreenScribe`` / ``VetCoders`` brand.
 
-    Scans only the bounded public-surface path list (BRANDING_SCAN_PATHS).
-    Binary files are skipped (NUL-byte sniff, ``grep -I`` parity). Allowlisted
-    technical identifiers are exempt via ``scan_text_for_brand``.
+    Scans the whole git-tracked tree (minus ``BRANDING_SCAN_EXCLUDES``), so a
+    bare brand in ANY new file is caught, not just a hand-listed set. Binary
+    files are skipped (NUL-byte sniff, ``grep -I`` parity). Allowlisted technical
+    identifiers are exempt via ``scan_text_for_brand``.
     """
     offenders: list[str] = []
     for rel in _branding_scan_files(target):
@@ -817,9 +829,7 @@ def check_branding(target: Path, contract: Contract) -> CheckResult:
         head = "; ".join(offenders[:8])
         more = f" (+{len(offenders) - 8} more)" if len(offenders) > 8 else ""
         return CheckResult("branding", False, f"{head}{more}")
-    return CheckResult(
-        "branding", True, "no bare ScreenScribe/VetCoders brand in public-surface paths"
-    )
+    return CheckResult("branding", True, "no bare ScreenScribe/VetCoders brand in tracked tree")
 
 
 # ---------------------------------------------------------------------------
