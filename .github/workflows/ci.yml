@@ -55,8 +55,11 @@ jobs:
         run: uv sync --dev
 
       # ONE gate. `make verify` runs scripts/ss_verify.py against this checkout:
-      # no-junk · no-secrets · leak-scan · compiles · ruff check + ruff
-      # format --check + mypy · bandit security · pytest + coverage floor ·
+      # no-junk · no-secrets · leak-scan · branding · compiles · ruff check + ruff
+      # format --check + mypy · bandit security · semgrep static analysis
+      # (fail-closed: `semgrep` is a dev dep so `uv sync --dev` above installs it,
+      # and the declared semgrep.yml ruleset MUST run — a missing scanner FAILS,
+      # never silently skips) · pytest + coverage floor ·
       # build (sdist+wheel) · cli+effect-smoke (isolated wheel renders a
       # self-contained REVIEW report). This is a strict superset of the old
       # `make release-check` (lint · format · typecheck · security · tests ·

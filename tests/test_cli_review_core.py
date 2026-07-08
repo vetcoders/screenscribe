@@ -453,6 +453,12 @@ def test_serve_report_starts_server_and_opens_browser(tmp_path: Path, monkeypatc
     monkeypatch.setattr(review_server, "create_review_app", lambda **_k: _FakeApp())
     monkeypatch.setattr(server_security, "tokenized_url", lambda url, _t: url + "#tok")
 
+    # Pin the port probe so the assertion tests wiring, not the runner's global
+    # port state: production _serve_report fall-forwards off a busy port, so a
+    # process already on 9123 (parallel test / stray listener) would otherwise
+    # flake this "== 9123" assert. Identity probe = the preferred port is free.
+    monkeypatch.setattr(cli, "_find_available_port", lambda preferred, **_k: preferred)
+
     def fake_run(app_arg: Any, **kwargs: Any) -> None:
         served["port"] = kwargs.get("port")
         served["host"] = kwargs.get("host")
@@ -590,8 +596,8 @@ def test_config_set_key_saves_and_reports_path(tmp_path: Path, monkeypatch: Any)
     cfg_path = tmp_path / "cfg.env"
 
     class _Cfg(ScreenScribeConfig):
-        def save_default_config(self) -> Path:
-            saved["api_key"] = self.api_key
+        def save_api_key(self, api_key: str) -> Path:
+            saved["api_key"] = api_key
             return cfg_path
 
     # Build the token from parts so the literal never appears contiguously in

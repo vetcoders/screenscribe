@@ -57,6 +57,14 @@ MAX_FRAME_BASE64_CHARS = 20_000_000  # ~15 MB decoded frame payload cap
 JPEG_MAGIC = b"\xff\xd8\xff"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
+# Cap on the in-memory finalize-job registry. Each finalize run registers one
+# ``FinalizeJob`` (kept so the frontend can poll status + fetch the export
+# payload); nothing pruned them, so a long-lived server that finalized many
+# times grew the dict without bound (each completed job also retains its export
+# payload). Keep at most this many entries, evicting the oldest FINISHED jobs
+# first (running jobs are never evicted).
+MAX_FINALIZE_JOBS = 32
+
 
 class MarkFrameRequest(BaseModel):
     """Request body for marking a frame."""
@@ -468,6 +476,14 @@ def create_analyze_app(video_path: Path, config: ScreenScribeConfig) -> FastAPI:
             if marker_id not in session.markers:
                 raise HTTPException(status_code=404, detail="Marker not found")
             marker = session.markers[marker_id]
+            # Concurrent-analysis guard: a second analyze request for a marker
+            # whose VLM call is already in flight would double the VLM cost and
+            # race two writers onto one result. Reject the duplicate with 409.
+            # The batch finalize path demotes orphan "analyzing" markers to
+            # "pending" before it snapshots (P3-2), so this never self-blocks a
+            # finalize run.
+            if marker.status == "analyzing":
+                raise HTTPException(status_code=409, detail="Marker analysis already in progress")
             marker.status = "analyzing"
 
         segment = Segment(
@@ -703,6 +719,27 @@ def create_analyze_app(video_path: Path, config: ScreenScribeConfig) -> FastAPI:
         if not job:
             raise HTTPException(status_code=404, detail="Finalize job not found")
         return job
+
+    def _evict_stale_finalize_jobs() -> None:
+        """Bound the finalize-job registry so it can't grow without limit.
+
+        Must be called while holding ``session.lock`` (it mutates
+        ``session.finalize_jobs``). Keeps at most ``MAX_FINALIZE_JOBS`` entries by
+        evicting the OLDEST finished (completed/error) jobs first; a running job
+        is never evicted. The registry is only a status-poll + result-fetch
+        surface, so dropping the oldest finished jobs merely loses history a
+        client is no longer polling.
+        """
+        if len(session.finalize_jobs) <= MAX_FINALIZE_JOBS:
+            return
+        finished = sorted(
+            (job for job in session.finalize_jobs.values() if job.status != "running"),
+            key=lambda job: job.started_at,
+        )
+        for job in finished:
+            if len(session.finalize_jobs) <= MAX_FINALIZE_JOBS:
+                break
+            session.finalize_jobs.pop(job.job_id, None)
 
     def serialize_finalize_job(job: FinalizeJob) -> dict[str, Any]:
         """Serialize finalize job for frontend polling."""
@@ -1072,6 +1109,7 @@ def create_analyze_app(video_path: Path, config: ScreenScribeConfig) -> FastAPI:
             job_id = str(uuid.uuid4())[:12]
             job = FinalizeJob(job_id=job_id)
             session.finalize_jobs[job_id] = job
+            _evict_stale_finalize_jobs()
 
         thread = threading.Thread(
             target=run_finalize_job,

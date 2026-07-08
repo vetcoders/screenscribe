@@ -93,7 +93,7 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 | `--resume` | off | Resume from a previous checkpoint if available. |
 | `--force` | off | Force reprocessing and overwrite the existing review instead of versioning. |
 | `--estimate` | off | Show a time estimate (from video duration) without processing. |
-| `--dry-run` | off | Run transcription and detection only; show what would be processed. |
+| `--dry-run` | off | **Not free.** Still runs paid transcription (STT, unless `--local`) and LLM issue detection, then stops before writing reports. For a zero-cost preview use `--estimate` instead. |
 | `--skip-validation` | off | Skip the model-availability check (faster start, may fail mid-pipeline). |
 | `--serve` / `--no-serve` | **on** | Start an HTTP server and open the report in the browser after processing. |
 | `--port`, `-p` | `8765` | Port for the review HTTP server. |
@@ -470,9 +470,8 @@ two ways to do this:
 
 ### The `--local` flag
 
-`--local` is accepted by `screenscribe transcribe`, `screenscribe review`, and
-`screenscribe analyze`. When set, STT requests go to the hard-coded loopback
-endpoint:
+`--local` is accepted by `screenscribe transcribe` and `screenscribe review`.
+When set, STT requests go to the hard-coded loopback endpoint:
 
 ```
 http://localhost:7237/transcribe
@@ -706,8 +705,9 @@ manifest.
 
 `review` validates that the configured models are available before processing.
 Use `--skip-validation` for a faster start (at the risk of failing later in the
-pipeline), or `--estimate` / `--dry-run` to preview time and scope without
-running the full analysis.
+pipeline). Use `--estimate` for a zero-cost preview of time and scope (no API
+calls). `--dry-run` is **not** free — it still runs paid transcription and LLM
+detection, only skipping the report artifacts at the end.
 
 ---
 

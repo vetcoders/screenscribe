@@ -459,12 +459,14 @@ class TestProviderEnvPrecedence:
 
 
 class TestKeyEndpointMismatchWarning:
-    """validate() warns (never blocks/re-routes) on key<->endpoint provider mismatch.
+    """mismatch_warnings() flags (never blocks/re-routes) a key<->endpoint mismatch.
 
-    P1-1: OPENAI_API_KEY is mapped onto the LLM/Vision keys without changing the
-    endpoint, so an OpenAI `sk-` key can be silently sent to the default
+    P1-1 / finding 283: OPENAI_API_KEY is mapped onto the LLM/Vision keys without
+    changing the endpoint, so an OpenAI `sk-` key can be sent to the default
     LibraxisAI endpoint (or, the reverse, a non-OpenAI key to api.openai.com).
-    The contract is a WARNING only — routing is never altered here.
+    OpenAI-compatible gateways legitimately use `sk-` keys, so the contract is a
+    NON-blocking WARNING surfaced by mismatch_warnings() — routing is never
+    altered and the run continues.
     """
 
     def test_openai_key_on_libraxis_endpoint_warns(self) -> None:
@@ -473,18 +475,20 @@ class TestKeyEndpointMismatchWarning:
             vision_api_key="sk-openai-secret",  # pragma: allowlist secret
         )
         # Endpoints stay at the LibraxisAI defaults.
-        warnings = config.validate()
+        warnings = config.mismatch_warnings()
 
         joined = "\n".join(warnings)
         assert "sk-" not in joined  # the secret itself is never echoed
         assert any("libraxis" in w.lower() and "openai" in w.lower() for w in warnings)
+        # Non-blocking: validate() (the blocking gate) stays empty.
+        assert config.validate() == []
 
     def test_non_openai_key_on_openai_endpoint_warns(self) -> None:
         config = ScreenScribeConfig(
             llm_api_key="lx-libraxis-secret",  # pragma: allowlist secret
             llm_endpoint="https://api.openai.com/v1/responses",
         )
-        warnings = config.validate()
+        warnings = config.mismatch_warnings()
         assert any("openai.com" in w.lower() for w in warnings)
 
     def test_matching_openai_key_and_endpoint_does_not_warn(self) -> None:
@@ -494,47 +498,48 @@ class TestKeyEndpointMismatchWarning:
             llm_endpoint="https://api.openai.com/v1/responses",
             vision_endpoint="https://api.openai.com/v1/responses",
         )
-        warnings = config.validate()
+        warnings = config.mismatch_warnings()
         assert not any("mismatch" in w.lower() for w in warnings)
 
     def test_no_key_does_not_warn_about_mismatch(self) -> None:
         config = ScreenScribeConfig()  # defaults: libraxis endpoints, no keys
-        warnings = config.validate()
+        warnings = config.mismatch_warnings()
         assert not any("mismatch" in w.lower() for w in warnings)
 
     def test_analyze_scope_ignores_stale_llm_mismatch(self) -> None:
-        """Finding I: validate(providers={"vision","stt"}) skips an unused LLM
-        mismatch so analyze (vision + STT only) is not blocked by stale LLM config."""
+        """Finding I: mismatch_warnings(providers={"vision","stt"}) skips an unused
+        LLM mismatch so analyze (vision + STT only) is not warned about stale LLM
+        config."""
         config = ScreenScribeConfig(
             llm_api_key="sk-stale-openai",  # pragma: allowlist secret  (mismatch on libraxis LLM endpoint)
             vision_api_key="lx-vision-key",  # pragma: allowlist secret  (clean: non-sk key on libraxis vision)
         )
-        # Full validation (review path) still flags the LLM mismatch.
-        assert any("mismatch" in w.lower() for w in config.validate())
+        # Full check (review path) still flags the LLM mismatch.
+        assert any("mismatch" in w.lower() for w in config.mismatch_warnings())
         # analyze scope drops the unused LLM provider -> no mismatch warning.
-        scoped = config.validate(providers={"vision", "stt"})
+        scoped = config.mismatch_warnings(providers={"vision", "stt"})
         assert not any("mismatch" in w.lower() for w in scoped)
 
     def test_analyze_scope_still_flags_vision_mismatch(self) -> None:
-        """A mismatch on a provider analyze DOES use (vision) must still block."""
+        """A mismatch on a provider analyze DOES use (vision) must still be flagged."""
         config = ScreenScribeConfig(
             vision_api_key="sk-openai-secret",  # pragma: allowlist secret  (mismatch on libraxis vision)
         )
-        scoped = config.validate(providers={"vision", "stt"})
+        scoped = config.mismatch_warnings(providers={"vision", "stt"})
         assert any("mismatch" in w.lower() for w in scoped)
 
     def test_analyze_scope_flags_stt_mismatch(self) -> None:
         """Finding O1 (regression of I): analyze uses STT (voice notes), so an
-        STT key/endpoint mismatch MUST block. An sk- OpenAI key left on the
-        default LibraxisAI STT endpoint is the exact fail-closed case."""
+        STT key/endpoint mismatch is warned about. An sk- OpenAI key left on the
+        default LibraxisAI STT endpoint is the exact case (non-blocking)."""
         config = ScreenScribeConfig(
             stt_api_key="sk-openai-secret",  # pragma: allowlist secret  (mismatch on libraxis stt)
         )
-        scoped = config.validate(providers={"vision", "stt"})
+        scoped = config.mismatch_warnings(providers={"vision", "stt"})
         joined = "\n".join(scoped)
         assert "sk-" not in joined  # the secret itself is never echoed
         assert any("stt" in w.lower() and "mismatch" in w.lower() for w in scoped), (
-            "STT key/endpoint mismatch must block when stt is in scope"
+            "STT key/endpoint mismatch must warn when stt is in scope"
         )
 
     def test_stt_mismatch_via_generic_api_key_fallback(self) -> None:
@@ -543,7 +548,7 @@ class TestKeyEndpointMismatchWarning:
         config = ScreenScribeConfig(
             api_key="sk-openai-secret",  # pragma: allowlist secret  (falls back to stt)
         )
-        scoped = config.validate(providers={"vision", "stt"})
+        scoped = config.mismatch_warnings(providers={"vision", "stt"})
         assert any("stt" in w.lower() and "mismatch" in w.lower() for w in scoped)
 
     def test_clean_stt_key_does_not_warn(self) -> None:
@@ -551,33 +556,35 @@ class TestKeyEndpointMismatchWarning:
         config = ScreenScribeConfig(
             stt_api_key="lx-stt-key",  # pragma: allowlist secret  (clean on libraxis stt)
         )
-        scoped = config.validate(providers={"vision", "stt"})
+        scoped = config.mismatch_warnings(providers={"vision", "stt"})
         assert not any("stt" in w.lower() and "mismatch" in w.lower() for w in scoped)
 
     def test_stt_mismatch_out_of_scope_is_ignored(self) -> None:
-        """Scope discipline: an STT mismatch must NOT block a command that does
-        not use STT (e.g. validate(providers={"vision"}))."""
+        """Scope discipline: an STT mismatch must NOT be flagged for a command that
+        does not use STT (e.g. mismatch_warnings(providers={"vision"}))."""
         config = ScreenScribeConfig(
             stt_api_key="sk-openai-secret",  # pragma: allowlist secret
         )
-        scoped = config.validate(providers={"vision"})
+        scoped = config.mismatch_warnings(providers={"vision"})
         assert not any("stt" in w.lower() and "mismatch" in w.lower() for w in scoped)
 
-    def test_mismatch_message_is_actionable_and_blocks(self) -> None:
-        """D1 (P1-1): the mismatch message names key+endpoint and the concrete fix,
-        and remains blocking (a non-empty validate() result is what cli.py turns
-        into Exit(1) -- fail-closed for security)."""
+    def test_mismatch_message_is_actionable_and_warns(self) -> None:
+        """D1 (P1-1) / finding 283: the mismatch message names key+endpoint and the
+        concrete fix, and is NON-blocking -- mismatch_warnings() carries it while
+        validate() (the blocking gate) stays empty, so cli.py does NOT exit."""
         config = ScreenScribeConfig(
             llm_api_key="sk-openai-secret",  # pragma: allowlist secret
         )
-        warnings = config.validate()
+        warnings = config.mismatch_warnings()
 
-        # Still blocking: validate() returns at least one entry -> cli.py exits.
-        assert warnings, "key/endpoint mismatch must still block the run"
+        # Surfaced as a warning...
+        assert warnings, "key/endpoint mismatch must still be reported"
+        # ...but non-blocking: validate() returns nothing to exit on.
+        assert config.validate() == []
         msg = "\n".join(warnings)
 
-        # Actionable: states it blocks, names the offending pair, gives the fix.
-        assert "BLOCKS" in msg
+        # Actionable: warns (run continues), names the offending pair, gives the fix.
+        assert "warning" in msg.lower()
         assert "LLM" in msg
         assert "libraxis" in msg.lower()
         # The two concrete remediations are spelled out with the exact env vars.

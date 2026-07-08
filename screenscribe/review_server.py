@@ -474,6 +474,15 @@ def create_review_app(
             if marker_id not in session.markers:
                 raise HTTPException(status_code=404, detail="Manual frame not found")
             marker = session.markers[marker_id]
+            # Concurrent-analysis guard (mirror analyze-side): a second analyze
+            # request for a marker whose VLM call is already in flight would
+            # double the VLM cost and race two writers onto one result. Reject the
+            # duplicate with 409 instead of starting a second run; the in-flight
+            # analysis keeps ownership of the marker.
+            if marker.status == "analyzing":
+                raise HTTPException(
+                    status_code=409, detail="Manual frame analysis already in progress"
+                )
             marker.status = "analyzing"
             previous_response_id = session.last_response_id
 
@@ -494,12 +503,16 @@ def create_review_app(
             frame_bytes = base64.b64decode(marker.frame_base64, validate=True)
         except Exception as exc:
             with session.lock:
+                # BH48 mirror: a failed (re)analysis must not leave a stale
+                # completed result behind under an error marker.
+                session.results.pop(marker_id, None)
                 marker.status = "error"
             logger.warning("Manual frame %s base64 decode failed: %s", marker_id, exc)
             raise HTTPException(status_code=400, detail="Invalid base64 frame data.") from exc
 
         if not (frame_bytes.startswith(JPEG_MAGIC) or frame_bytes.startswith(PNG_MAGIC)):
             with session.lock:
+                session.results.pop(marker_id, None)
                 marker.status = "error"
             raise HTTPException(status_code=400, detail="Frame must be JPEG or PNG.")
 
@@ -517,8 +530,25 @@ def create_review_app(
 
             if not finding:
                 with session.lock:
+                    # BH48 mirror: drop any prior result so a failed re-analysis
+                    # can't leave a stale completed finding under an error marker.
+                    session.results.pop(marker_id, None)
                     marker.status = "error"
                 return {"marker_id": marker_id, "status": "error", "error": "Analysis failed"}
+
+            # BH48 mirror (analyze-side BH48): a finding the parser flagged
+            # ``confidence == "degraded"`` is a schema-drift / raw-text fallback,
+            # NOT a real analysis. Treat it as failure instead of persisting a
+            # falsely "completed" finding the reviewer would trust.
+            if getattr(finding, "confidence", "high") == "degraded":
+                with session.lock:
+                    session.results.pop(marker_id, None)
+                    marker.status = "error"
+                return {
+                    "marker_id": marker_id,
+                    "status": "error",
+                    "error": "Analysis degraded (parse failure)",
+                }
 
             result = ManualFrameResult(
                 marker_id=marker_id,
@@ -532,6 +562,18 @@ def create_review_app(
                 response_id=finding.response_id,
             )
             with session.lock:
+                # BH40 mirror: the marker can be deleted mid-flight
+                # (delete_manual_frame pops it under the same lock while the VLM
+                # call ran unlocked). Writing a result for an absent marker would
+                # resurrect a ghost finding in results/review-state/export.
+                # Re-check presence before persisting.
+                if marker_id not in session.markers:
+                    session.results.pop(marker_id, None)
+                    return {
+                        "marker_id": marker_id,
+                        "status": "error",
+                        "error": "Manual frame deleted during analysis",
+                    }
                 # R14 (mirror of analyze-side A7b / f3e482e): a reviewer priority
                 # override set on the marker (incl. the explicit "none" that
                 # clears it) wins over the freshly VLM-assigned severity. Re-apply
@@ -568,6 +610,9 @@ def create_review_app(
             }
         except Exception as exc:
             with session.lock:
+                # BH48 mirror: a raised re-analysis must not keep the previous
+                # completed result around.
+                session.results.pop(marker_id, None)
                 marker.status = "error"
             err = sanitized_error(exc, "marker_analysis_failed")
             return {
@@ -617,6 +662,14 @@ def create_review_app(
         audio_data = await read_upload_capped(audio, max_bytes=MAX_AUDIO_BYTES)
         if not audio_data:
             raise HTTPException(status_code=400, detail="Voice recording is empty.")
+        if len(audio_data) < 1024:
+            # Mirror analyze-side: a sub-1KB browser recording is too short to
+            # carry usable speech, so reject it before paying for a provider
+            # round-trip (and the ffmpeg-normalization fallback).
+            raise HTTPException(
+                status_code=400,
+                detail="Voice recording is too short. Hold to record longer.",
+            )
 
         filename = audio.filename or "recording.webm"
         content_type = audio.content_type or "audio/webm"
@@ -635,6 +688,15 @@ def create_review_app(
                 config=config,
             )
             quality_warning = validate_browser_stt_result(result)
+            with session.lock:
+                # BH46/BH49 mirror (analyze-side): only advance the shared
+                # conversation chain on a real STT response_id. An empty id would
+                # clobber the valid chain head with a blank, breaking the
+                # previous_response_id the next manual-frame analysis relies on.
+                # NOTE: STT and VLM still share one chain field here (as on the
+                # analyze side); full STT/VLM chain separation is deferred design.
+                if result.response_id:
+                    session.last_response_id = result.response_id
             return JSONResponse(
                 content=serialize_stt_result(result, quality_warning=quality_warning)
             )
@@ -904,6 +966,14 @@ def create_review_app(
             try:
                 with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
                     json.dump(report_data, f, indent=2, ensure_ascii=False)
+                    # Flush Python + OS buffers to the platter before the atomic
+                    # replace. Without fsync, os.replace can commit the rename
+                    # while the temp file's bytes are still in the OS page cache,
+                    # so a crash right after leaves report.json pointing at a
+                    # zero/short file — the exact data-loss os.replace is meant to
+                    # prevent.
+                    f.flush()
+                    os.fsync(f.fileno())
                 os.replace(tmp_name, json_path)
             except Exception:
                 Path(tmp_name).unlink(missing_ok=True)

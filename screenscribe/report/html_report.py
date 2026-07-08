@@ -6,14 +6,14 @@ from typing import Any
 
 from ..detect import Detection, format_timestamp
 from ..html_pro import render_html_report_pro
-from ..image_utils import encode_image_base64
+from ..image_utils import encode_image_base64, get_media_type
 from ..transcribe import Segment
 from .data import (
-    DEGRADED_MARKER_LABEL,
     UnifiedFindingResolver,
     _prepare_html_video_source,
     _serialize_unified_analysis,
     console,
+    degraded_marker_label,
     fold_screenshots,
 )
 
@@ -80,8 +80,14 @@ def save_html_report_pro(
             "text": detection.segment.text,
             "context": detection.context,
             "keywords": detection.keywords_found,
-            # Base64 for HTML display, file path for JSON export
-            "screenshot": f"data:image/png;base64,{screenshot_b64}" if screenshot_b64 else "",
+            # Base64 for HTML display, file path for JSON export. MIME is derived
+            # from the file suffix (frames ship as JPEG) so the data URI declares
+            # the true media type instead of a hardcoded image/png.
+            "screenshot": (
+                f"data:{get_media_type(screenshot_path)};base64,{screenshot_b64}"
+                if screenshot_b64
+                else ""
+            ),
             "screenshot_path": screenshot_path.name if screenshot_path.exists() else "",
             # Merged-away evidence frames (G6b); empty for un-merged findings.
             "merged_frames": [
@@ -116,7 +122,7 @@ def save_html_report_pro(
         # the embedded findings JSON for the interactive viewer.
         if unified_analysis.get("degraded"):
             existing_summary = unified_analysis.get("summary", "")
-            marker = f"[{DEGRADED_MARKER_LABEL}]"
+            marker = f"[{degraded_marker_label(language)}]"
             unified_analysis["summary"] = (
                 f"{marker} {existing_summary}".strip() if existing_summary else marker
             )

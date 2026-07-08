@@ -62,6 +62,11 @@ dev = [
     "mypy>=1.13.0",
     "pre-commit>=4.0.0",
     "bandit[toml]>=1.7.0",
+    # Security static analysis: the ss-verify semgrep gate is fail-closed, so the
+    # scanner must resolve via `uv run` in every dev/CI env. Pinned floor tracks
+    # the .pre-commit-config.yaml hook (rev v1.146.0) so gate + pre-commit enforce
+    # the SAME ruleset.
+    "semgrep>=1.146.0",
     "types-pyyaml>=6.0.0",
     "detect-secrets>=1.5.0",
     "playwright>=1.60.0",

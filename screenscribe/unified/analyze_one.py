@@ -150,120 +150,177 @@ def analyze_finding_unified_streaming(
             ),
         )
 
-        # Stream the response
-        collected_content = ""
-        response_id = ""
+        # Tracks whether a *prior* attempt already forwarded stream deltas to the
+        # consumer, so a retry does not feed it the same prefix twice (see the
+        # _run_stream docstring). Lives in the enclosing scope because
+        # retry_request re-invokes _run_stream across attempts.
+        emitted = False
 
-        with httpx.Client(timeout=120.0) as client:
-            with client.stream(
-                "POST",
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream",
-                },
-                json=payload,
-            ) as response:
-                response.raise_for_status()
+        def _run_stream() -> tuple[str, str]:
+            """Run one full streaming attempt -> ``(collected_content, response_id)``.
 
-                for line in response.iter_lines():
-                    if not line:
-                        continue
+            Wrapped in ``retry_request`` so a transient 429/5xx/transport drop on
+            the image-backed call is retried (honoring Retry-After) BEFORE
+            degrading to text-only, instead of discarding the visual signal on the
+            first blip -- the provider is known to cap concurrency and return 429.
 
-                    # Handle SSE format
-                    if line.startswith("event:"):
-                        continue
+            A retriable status error (429/5xx) is raised by ``raise_for_status()``
+            before the body is read, so no delta was emitted yet and the retry is
+            clean. But a retriable *transport* drop (ReadTimeout / NetworkError /
+            RemoteProtocolError) can fire mid-body, AFTER some ``on_content`` /
+            ``on_reasoning`` deltas were already forwarded. Re-running from the top
+            would replay that prefix and duplicate it for the consumer. To prevent
+            that, once any delta has been forwarded (``emitted``), later attempts
+            suppress the callbacks -- ``collected_content`` is still rebuilt from
+            scratch and returned correctly, only the live re-emission is dropped. A
+            provider error-event (RuntimeError) is non-retriable and propagates
+            straight to the outer fallback, matching the previous behavior.
+            """
+            nonlocal emitted
+            collected_content = ""
+            response_id = ""
 
-                    if line.startswith("data:"):
-                        line_data = line[5:].strip()
-                        if line_data == "[DONE]":
-                            break
+            # A retry that follows a mid-stream drop must not re-forward the
+            # prefix the failed attempt already streamed to the consumer.
+            suppress_callbacks = emitted
 
-                        try:
-                            chunk = json.loads(line_data)
+            def emit_content(text: str) -> None:
+                nonlocal emitted
+                if suppress_callbacks:
+                    return
+                if on_content:
+                    emitted = True
+                    on_content(text)
 
-                            # C6.5: json.loads only guarantees valid JSON, not the
-                            # expected SHAPE. A valid-JSON-but-non-dict chunk (a
-                            # list, number, bare string, null) would make every
-                            # helper's chunk.get(...) raise AttributeError/TypeError,
-                            # which is NOT a JSONDecodeError, so it used to bubble to
-                            # the outer handler and abort the WHOLE stream (losing
-                            # already-collected deltas). Skip the malformed chunk and
-                            # keep the stream alive instead.
-                            if not isinstance(chunk, dict):
+            def emit_reasoning(text: str) -> None:
+                nonlocal emitted
+                if suppress_callbacks:
+                    return
+                if on_reasoning:
+                    emitted = True
+                    on_reasoning(text)
+
+            with httpx.Client(timeout=120.0) as client:
+                with client.stream(
+                    "POST",
+                    endpoint,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                        "Accept": "text/event-stream",
+                    },
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+
+                    for line in response.iter_lines():
+                        if not line:
+                            continue
+
+                        # Handle SSE format
+                        if line.startswith("event:"):
+                            continue
+
+                        if line.startswith("data:"):
+                            line_data = line[5:].strip()
+                            if line_data == "[DONE]":
+                                break
+
+                            try:
+                                chunk = json.loads(line_data)
+
+                                # C6.5: json.loads only guarantees valid JSON, not
+                                # the expected SHAPE. A valid-JSON-but-non-dict chunk
+                                # (a list, number, bare string, null) would make every
+                                # helper's chunk.get(...) raise AttributeError/
+                                # TypeError, which is NOT a JSONDecodeError, so it used
+                                # to bubble to the outer handler and abort the WHOLE
+                                # stream (losing already-collected deltas). Skip the
+                                # malformed chunk and keep the stream alive instead.
+                                if not isinstance(chunk, dict):
+                                    continue
+
+                                stream_error = _extract_stream_error(chunk)
+                                if stream_error:
+                                    raise RuntimeError(stream_error)
+
+                                # Extract response ID FIRST, before any content
+                                # reconciliation. The canonical id often rides on the
+                                # same response.completed/response.done chunk that also
+                                # carries the final content; reconciling content first
+                                # used to `continue` past this extraction when the
+                                # final content was not longer than the collected
+                                # deltas, silently dropping the id (BH57).
+                                chunk_response_id = _extract_response_id_from_stream(chunk)
+                                if chunk_response_id:
+                                    response_id = chunk_response_id
+
+                                # Extract reasoning delta
+                                reasoning_delta = _extract_reasoning_delta(chunk)
+                                if reasoning_delta:
+                                    emit_reasoning(reasoning_delta)
+
+                                # Extract content delta
+                                content_delta, is_final_text = _extract_stream_delta(chunk)
+                                if content_delta:
+                                    if is_final_text and collected_content:
+                                        # Some providers emit the full final text
+                                        # after a delta stream. is_final_text is the
+                                        # provider's source-of-truth assertion, so
+                                        # honor it even when the final text is NOT
+                                        # longer than the deltas we already
+                                        # accumulated -- instead of silently dropping
+                                        # it (BH7). Only emit a positive tail to the
+                                        # callback (we cannot un-emit already-streamed
+                                        # text), but always reconcile collected_content
+                                        # to the authoritative final text.
+                                        if len(content_delta) > len(collected_content):
+                                            emit_content(content_delta[len(collected_content) :])
+                                        collected_content = content_delta
+                                    else:
+                                        collected_content += content_delta
+                                        emit_content(content_delta)
+
+                                # Some Responses-compatible providers deliver the
+                                # final content only in response.completed/done.
+                                if chunk.get("type") in (
+                                    "response.completed",
+                                    "response.done",
+                                ):
+                                    response_payload = chunk.get("response", {})
+                                    if isinstance(response_payload, dict):
+                                        final_content = extract_response_content(
+                                            response_payload,
+                                            endpoint=endpoint,
+                                        )
+                                        if final_content:
+                                            if len(final_content) <= len(collected_content):
+                                                continue
+                                            previous_content_length = len(collected_content)
+                                            collected_content = final_content
+                                            emit_content(final_content[previous_content_length:])
+
+                            except (json.JSONDecodeError, AttributeError, TypeError):
+                                # JSONDecodeError: not valid JSON. AttributeError/
+                                # TypeError: valid JSON whose nested shape is wrong
+                                # (e.g. {"choices": [42]} -> choices[0].get(...)), a
+                                # shape-error the top-level isinstance guard cannot
+                                # catch. Skip this one chunk; keep the stream alive.
+                                # A provider error-event raises RuntimeError, which is
+                                # deliberately NOT caught here so it still propagates.
                                 continue
 
-                            stream_error = _extract_stream_error(chunk)
-                            if stream_error:
-                                raise RuntimeError(stream_error)
+            return collected_content, response_id
 
-                            # Extract response ID FIRST, before any content
-                            # reconciliation. The canonical id often rides on the
-                            # same response.completed/response.done chunk that also
-                            # carries the final content; reconciling content first
-                            # used to `continue` past this extraction when the final
-                            # content was not longer than the collected deltas,
-                            # silently dropping the id (BH57).
-                            chunk_response_id = _extract_response_id_from_stream(chunk)
-                            if chunk_response_id:
-                                response_id = chunk_response_id
-
-                            # Extract reasoning delta
-                            reasoning_delta = _extract_reasoning_delta(chunk)
-                            if reasoning_delta and on_reasoning:
-                                on_reasoning(reasoning_delta)
-
-                            # Extract content delta
-                            content_delta, is_final_text = _extract_stream_delta(chunk)
-                            if content_delta:
-                                if is_final_text and collected_content:
-                                    # Some providers emit the full final text after
-                                    # a delta stream. is_final_text is the provider's
-                                    # source-of-truth assertion, so honor it even when
-                                    # the final text is NOT longer than the deltas we
-                                    # already accumulated -- instead of silently
-                                    # dropping it (BH7). Only emit a positive tail to
-                                    # the callback (we cannot un-emit already-streamed
-                                    # text), but always reconcile collected_content to
-                                    # the authoritative final text.
-                                    if on_content and len(content_delta) > len(collected_content):
-                                        on_content(content_delta[len(collected_content) :])
-                                    collected_content = content_delta
-                                else:
-                                    collected_content += content_delta
-                                    if on_content:
-                                        on_content(content_delta)
-
-                            # Some Responses-compatible providers deliver the
-                            # final content only in response.completed/response.done.
-                            if chunk.get("type") in (
-                                "response.completed",
-                                "response.done",
-                            ):
-                                response_payload = chunk.get("response", {})
-                                if isinstance(response_payload, dict):
-                                    final_content = extract_response_content(
-                                        response_payload,
-                                        endpoint=endpoint,
-                                    )
-                                    if final_content:
-                                        if len(final_content) <= len(collected_content):
-                                            continue
-                                        previous_content_length = len(collected_content)
-                                        collected_content = final_content
-                                        if on_content:
-                                            on_content(final_content[previous_content_length:])
-
-                        except (json.JSONDecodeError, AttributeError, TypeError):
-                            # JSONDecodeError: not valid JSON. AttributeError/
-                            # TypeError: valid JSON whose nested shape is wrong
-                            # (e.g. {"choices": [42]} -> choices[0].get(...)), a
-                            # shape-error the top-level isinstance guard cannot
-                            # catch. Skip this one chunk; keep the stream alive.
-                            # A provider error-event raises RuntimeError, which is
-                            # deliberately NOT caught here so it still propagates.
-                            continue
+        # Retry transient transport/HTTP failures (429/5xx/timeout/network,
+        # honoring Retry-After) on the image-backed call before degrading. A
+        # non-retriable error (400/401/403 or a provider RuntimeError) and an
+        # exhausted retry both propagate to the except below -> text-only /
+        # non-streaming fallback, exactly as before.
+        collected_content, response_id = retry_request(
+            _run_stream,
+            operation_name=f"Unified streaming analysis ({detection.segment.start:.1f}s)",
+        )
 
         if not collected_content:
             if has_screenshot and not use_text_only_backend:

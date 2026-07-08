@@ -375,6 +375,19 @@ def semantic_prefilter(
 
                                 try:
                                     chunk = json.loads(data)
+
+                                    # json.loads only guarantees valid JSON, not
+                                    # the expected SHAPE. A valid-JSON-but-non-dict
+                                    # chunk (list, number, bare string, null) makes
+                                    # chunk.get(...) raise AttributeError, which is
+                                    # NOT a JSONDecodeError, so it used to bubble to
+                                    # the outer handler and turn a fully-streamed
+                                    # prefilter into a hard stage failure (skipped
+                                    # video). Skip the odd chunk, keep the stream
+                                    # alive -- symmetric with analyze_one (C6.5).
+                                    if not isinstance(chunk, dict):
+                                        continue
+
                                     chunk_type = chunk.get("type", "")
 
                                     # Capture response_id for conversation chaining
@@ -424,7 +437,13 @@ def semantic_prefilter(
                                             # Just update stream preview
                                             progress.update(task_id, stream=f"...{display_text}")
 
-                                except json.JSONDecodeError:
+                                except (json.JSONDecodeError, AttributeError, TypeError):
+                                    # JSONDecodeError: not valid JSON. Attribute/
+                                    # TypeError: valid JSON with a wrong nested
+                                    # shape (e.g. {"choices": [42]} ->
+                                    # choices[0].get(...)) that the top-level
+                                    # isinstance guard cannot catch. Skip this one
+                                    # chunk; keep the stream alive.
                                     continue
 
             return content, response_id
@@ -573,8 +592,20 @@ def _parse_prefilter_response(
             raise
         return []
 
+    # {"points_of_interest": null} is a benign "found nothing" the model emits as
+    # valid JSON, and `.get(key, [])` returns None (not the default) when the key
+    # is present with a null value -- `for item in None` would then TypeError and
+    # abort the whole detection stage. Any non-list shape degrades to zero POIs.
+    raw_pois = data.get("points_of_interest")
+    if not isinstance(raw_pois, list):
+        raw_pois = []
+
     pois = []
-    for item in data.get("points_of_interest", []):
+    for item in raw_pois:
+        # A non-dict list entry (e.g. ["12s", {...}]) would make item.get(...)
+        # raise AttributeError; skip it per-element instead of failing the run.
+        if not isinstance(item, dict):
+            continue
         timestamp_start = _coerce_timestamp(item.get("timestamp_start", 0.0))
         timestamp_end = _coerce_timestamp(item.get("timestamp_end", 0.0))
         # A missing/zero timestamp_end (with a real start) is degraded to a
@@ -598,8 +629,11 @@ def _parse_prefilter_response(
             timestamp_end=timestamp_end,
             category=_validate_poi_category(item.get("category", "other")),
             confidence=_coerce_confidence(item.get("confidence", 0.5)),
-            reasoning=item.get("reasoning", ""),
-            transcript_excerpt=item.get("transcript_excerpt", ""),
+            # A present-but-null string field (``"reasoning": null``) survives
+            # ``.get(key, "")`` as None and later breaks ``None.strip()`` in
+            # deduplicate_pois; coerce to a real str at construction time.
+            reasoning=str(item.get("reasoning") or ""),
+            transcript_excerpt=str(item.get("transcript_excerpt") or ""),
             segment_ids=segment_ids,
         )
         pois.append(poi)
@@ -681,7 +715,14 @@ def deduplicate_pois(
         group.sort(key=lambda p: p.timestamp_start)
         best = max(group, key=lambda p: p.confidence)
 
-        excerpts = [p.transcript_excerpt.strip() for p in group if p.transcript_excerpt.strip()]
+        # ``or ""`` guards a POI constructed directly with a null string field
+        # (the parser now coerces, but direct callers may not) against
+        # ``None.strip()`` mid-merge.
+        excerpts = [
+            (p.transcript_excerpt or "").strip()
+            for p in group
+            if (p.transcript_excerpt or "").strip()
+        ]
         reasoning_parts = []
         seen_reasoning: set[str] = set()
         for p in group:
@@ -699,8 +740,12 @@ def deduplicate_pois(
             timestamp_end=max(p.timestamp_end for p in group),
             category=best.category,
             confidence=max(p.confidence for p in group),
-            reasoning=" | ".join(reasoning_parts) if reasoning_parts else group[0].reasoning,
-            transcript_excerpt=max(excerpts, key=len) if excerpts else group[0].transcript_excerpt,
+            reasoning=" | ".join(reasoning_parts)
+            if reasoning_parts
+            else (group[0].reasoning or ""),
+            transcript_excerpt=(
+                max(excerpts, key=len) if excerpts else (group[0].transcript_excerpt or "")
+            ),
             segment_ids=sorted({sid for p in group for sid in p.segment_ids}),
         )
         result.append(merged)

@@ -12,6 +12,11 @@ from screenscribe.config import ScreenScribeConfig
 from screenscribe.review_server import MAX_AUDIO_BYTES, create_review_app
 from screenscribe.transcribe import Segment, TranscriptionResult
 
+# A browser STT upload comfortably over the 1024-byte min-length guard, so these
+# STT tests exercise the transcription path rather than tripping the too-short
+# rejection (mirrors ``VALID_BROWSER_AUDIO`` in test_analyze_server_stt.py).
+VALID_BROWSER_AUDIO = b"voice-data" + (b"x" * 2048)
+
 
 @pytest.fixture
 def review_workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -118,7 +123,7 @@ def test_review_server_stt_uses_direct_browser_upload_path(
     output_dir, report_file, video_path = review_workspace
 
     def fake_transcribe_audio_bytes(*args: Any, **kwargs: Any) -> TranscriptionResult:
-        assert args[0] == b"voice-data"
+        assert args[0] == VALID_BROWSER_AUDIO
         assert args[1] == "recording.webm"
         assert kwargs["content_type"] == "audio/webm"
         return TranscriptionResult(
@@ -137,7 +142,7 @@ def test_review_server_stt_uses_direct_browser_upload_path(
 
     response = client.post(
         "/api/stt",
-        files={"audio": ("recording.webm", b"voice-data", "audio/webm")},
+        files={"audio": ("recording.webm", VALID_BROWSER_AUDIO, "audio/webm")},
     )
 
     assert response.status_code == 200
@@ -170,7 +175,7 @@ def test_review_server_stt_payload_matches_unified_key_set(
 
     response = client.post(
         "/api/stt",
-        files={"audio": ("recording.webm", b"voice-data", "audio/webm")},
+        files={"audio": ("recording.webm", VALID_BROWSER_AUDIO, "audio/webm")},
     )
 
     assert response.status_code == 200
@@ -1263,7 +1268,7 @@ def test_bh59_degraded_browser_stt_is_rejected(
 
     app = create_review_app(output_dir, report_file.name, video_path, _config())
     client = TestClient(app)
-    resp = client.post("/api/stt", files={"audio": ("a.webm", b"voice-data", "audio/webm")})
+    resp = client.post("/api/stt", files={"audio": ("a.webm", VALID_BROWSER_AUDIO, "audio/webm")})
     assert resp.status_code == 422, resp.text
 
 
@@ -1287,7 +1292,7 @@ def test_bh59_marginal_browser_stt_passes_with_quality_warning(
 
     app = create_review_app(output_dir, report_file.name, video_path, _config())
     client = TestClient(app)
-    resp = client.post("/api/stt", files={"audio": ("a.webm", b"voice-data", "audio/webm")})
+    resp = client.post("/api/stt", files={"audio": ("a.webm", VALID_BROWSER_AUDIO, "audio/webm")})
     assert resp.status_code == 200, resp.text
     assert resp.json().get("quality_warning")
 
@@ -1316,7 +1321,7 @@ def test_bh13_stt_offloaded_to_threadpool(
 
     app = create_review_app(output_dir, report_file.name, video_path, _config())
     client = TestClient(app)
-    resp = client.post("/api/stt", files={"audio": ("a.webm", b"voice-data", "audio/webm")})
+    resp = client.post("/api/stt", files={"audio": ("a.webm", VALID_BROWSER_AUDIO, "audio/webm")})
     assert resp.status_code == 200, resp.text
     assert "transcribe_browser_audio" in offloaded
 
