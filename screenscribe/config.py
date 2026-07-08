@@ -272,8 +272,34 @@ class ScreenScribeConfig:
                 if line and not line.startswith("#") and "=" in line:
                     key, value = line.split("=", 1)
                     key = key.strip()
-                    value = value.strip().strip('"').strip("'")
+                    value = self._parse_env_value(value)
                     self._set_from_key(key, value)
+
+    @staticmethod
+    def _parse_env_value(raw: str) -> str:
+        """Parse the right-hand side of a ``KEY=value`` config line.
+
+        Symmetric quotes: a value fully wrapped in matching ``'`` or ``"``
+        quotes yields the inner text verbatim, and any trailing inline comment
+        after the closing quote is dropped. Unquoted values have a trailing
+        inline `` #`` comment stripped (a leading space is required, so a bare
+        ``#`` inside a value -- e.g. a URL fragment or color -- is preserved).
+        A stray, unmatched quote is left untouched so pre-existing values keep
+        their exact meaning.
+        """
+        raw = raw.strip()
+        if not raw:
+            return ""
+        quote = raw[0]
+        if quote in ("'", '"'):
+            end = raw.find(quote, 1)
+            if end != -1:
+                return raw[1:end]
+            # Unterminated quote: fall through and treat the text literally.
+        hash_idx = raw.find(" #")
+        if hash_idx != -1:
+            raw = raw[:hash_idx]
+        return raw.strip()
 
     def _load_from_env(self) -> None:
         """Load configuration from environment variables."""
@@ -476,8 +502,26 @@ class ScreenScribeConfig:
             # LLM-merge pass is enabled unless explicitly turned off.
             self.llm_merge_enabled = value.lower() in ("true", "1", "yes")
 
+    def _emit_optional(self, var: str, value: str, placeholder: str) -> str:
+        """Emit ``VAR=value`` when ``value`` is set, else a commented hint.
+
+        Config regeneration must never silently drop a configured secret or
+        endpoint: any non-empty field is written as an ACTIVE line so a
+        subsequent load recovers it. Empty fields stay as documented, inert
+        ``# VAR=<placeholder>`` hints.
+        """
+        if value:
+            return f"{var}={value}"
+        return f"# {var}={placeholder}"
+
     def save_default_config(self) -> Path:
-        """Save default config to user's config directory."""
+        """Save the full config to the user's config directory.
+
+        Every non-empty field is emitted as an active line (per-endpoint keys,
+        the opt-in STT fallback triple, and a non-default ``api_base``), so a
+        regeneration round-trips without losing configured values. Empty fields
+        remain commented placeholders that document the available knobs.
+        """
         config_dir = Path.home() / ".config" / "screenscribe"
         config_dir.mkdir(parents=True, exist_ok=True)
         try:  # owner-only dir on POSIX (no-op on Windows)
@@ -486,55 +530,91 @@ class ScreenScribeConfig:
             pass
         config_path = config_dir / "config.env"
 
-        content = f"""# screenscribe configuration
-# Made with (งಠ_ಠ)ง by ⌜screenscribe⌟ © 2025-2026
-
-# =============================================================================
-# API KEY (required - pick one)
-# =============================================================================
-# Use any of these - first non-empty wins:
-SCREENSCRIBE_API_KEY={self.api_key}
-# OPENAI_API_KEY=YOUR_OPENAI_KEY
-# LIBRAXIS_API_KEY=YOUR_LIBRAXIS_KEY
-
-# =============================================================================
-# ENDPOINTS (explicit full URLs - recommended for clarity)
-# =============================================================================
-# STT: Speech-to-Text (OpenAI Whisper compatible)
-SCREENSCRIBE_STT_ENDPOINT={self.stt_endpoint}
-
-# Optional STT fallback (opt-in): a second provider tried ONLY if the primary
-# STT endpoint fails (e.g. rate limit / capacity). Set all three to enable.
-# Routes your audio to this provider on fallback, so it is off by default.
-# SCREENSCRIBE_STT_FALLBACK_ENDPOINT=https://api.openai.com/v1/audio/transcriptions
-# SCREENSCRIBE_STT_FALLBACK_API_KEY=YOUR_OPENAI_KEY
-# SCREENSCRIBE_STT_FALLBACK_MODEL=whisper-1
-
-# LLM: Language Model (Responses API - supports previous_response_id chaining)
-SCREENSCRIBE_LLM_ENDPOINT={self.llm_endpoint}
-
-# Vision: Vision Model (same as LLM for unified APIs)
-SCREENSCRIBE_VISION_ENDPOINT={self.vision_endpoint}
-
-# =============================================================================
-# ALTERNATIVE: Base URL (auto-derives endpoints with /v1/... paths)
-# =============================================================================
-# SCREENSCRIBE_API_BASE=https://api.openai.com
-# SCREENSCRIBE_API_BASE=https://api.libraxis.cloud
-
-# =============================================================================
-# MODELS
-# =============================================================================
-SCREENSCRIBE_STT_MODEL={self.stt_model}
-SCREENSCRIBE_LLM_MODEL={self.llm_model}
-SCREENSCRIBE_VISION_MODEL={self.vision_model}
-
-# =============================================================================
-# PROCESSING OPTIONS
-# =============================================================================
-SCREENSCRIBE_LANGUAGE={self.language}
-SCREENSCRIBE_VISION={str(self.use_vision_analysis).lower()}
-"""
+        sep = "# " + "=" * 77
+        lines = [
+            "# screenscribe configuration",
+            "# Made with (งಠ_ಠ)ง by ⌜screenscribe⌟ © 2025-2026",
+            "",
+            sep,
+            "# API KEY (required - pick one)",
+            sep,
+            "# Use any of these - first non-empty wins:",
+            f"SCREENSCRIBE_API_KEY={self.api_key}",
+            # Per-endpoint keys: only emitted actively when set (multi-provider
+            # setups). Otherwise they stay commented so a plain single-key file
+            # is not cluttered.
+            self._emit_optional(
+                "SCREENSCRIBE_STT_API_KEY", self.stt_api_key, "YOUR_STT_KEY"
+            ),
+            self._emit_optional(
+                "SCREENSCRIBE_LLM_API_KEY", self.llm_api_key, "YOUR_LLM_KEY"
+            ),
+            self._emit_optional(
+                "SCREENSCRIBE_VISION_API_KEY", self.vision_api_key, "YOUR_VISION_KEY"
+            ),
+            "# OPENAI_API_KEY=YOUR_OPENAI_KEY",
+            "# LIBRAXIS_API_KEY=YOUR_LIBRAXIS_KEY",
+            "",
+            sep,
+            "# ENDPOINTS (explicit full URLs - recommended for clarity)",
+            sep,
+            "# STT: Speech-to-Text (OpenAI Whisper compatible)",
+            f"SCREENSCRIBE_STT_ENDPOINT={self.stt_endpoint}",
+            "",
+            "# Optional STT fallback (opt-in): a second provider tried ONLY if the primary",
+            "# STT endpoint fails (e.g. rate limit / capacity). Set all three to enable.",
+            "# Routes your audio to this provider on fallback, so it is off by default.",
+            self._emit_optional(
+                "SCREENSCRIBE_STT_FALLBACK_ENDPOINT",
+                self.stt_fallback_endpoint,
+                "https://api.openai.com/v1/audio/transcriptions",
+            ),
+            self._emit_optional(
+                "SCREENSCRIBE_STT_FALLBACK_API_KEY",
+                self.stt_fallback_api_key,
+                "YOUR_OPENAI_KEY",
+            ),
+            self._emit_optional(
+                "SCREENSCRIBE_STT_FALLBACK_MODEL",
+                self.stt_fallback_model,
+                "whisper-1",
+            ),
+            "",
+            "# LLM: Language Model (Responses API - supports previous_response_id chaining)",
+            f"SCREENSCRIBE_LLM_ENDPOINT={self.llm_endpoint}",
+            "",
+            "# Vision: Vision Model (same as LLM for unified APIs)",
+            f"SCREENSCRIBE_VISION_ENDPOINT={self.vision_endpoint}",
+            "",
+            sep,
+            "# ALTERNATIVE: Base URL (auto-derives endpoints with /v1/... paths)",
+            sep,
+        ]
+        # api_base is emitted actively only when it diverges from the built-in
+        # default; the explicit endpoints above already win on reload, so this
+        # just preserves the operator's configured base for `config --show`.
+        if self.api_base and self.api_base != LIBRAXIS_API_BASE:
+            lines.append(f"SCREENSCRIBE_API_BASE={self.api_base}")
+        else:
+            lines.append("# SCREENSCRIBE_API_BASE=https://api.openai.com")
+            lines.append("# SCREENSCRIBE_API_BASE=https://api.libraxis.cloud")
+        lines += [
+            "",
+            sep,
+            "# MODELS",
+            sep,
+            f"SCREENSCRIBE_STT_MODEL={self.stt_model}",
+            f"SCREENSCRIBE_LLM_MODEL={self.llm_model}",
+            f"SCREENSCRIBE_VISION_MODEL={self.vision_model}",
+            "",
+            sep,
+            "# PROCESSING OPTIONS",
+            sep,
+            f"SCREENSCRIBE_LANGUAGE={self.language}",
+            f"SCREENSCRIBE_VISION={str(self.use_vision_analysis).lower()}",
+            "",
+        ]
+        content = "\n".join(lines)
 
         # The config holds the API key, so create it owner-only (0600). os.open
         # with the mode sets it at creation (no world-readable window for a new
@@ -548,3 +628,70 @@ SCREENSCRIBE_VISION={str(self.use_vision_analysis).lower()}
             pass
 
         return config_path
+
+    def save_api_key(self, api_key: str) -> Path:
+        """Persist a new primary API key without discarding other config.
+
+        When a config file already exists, ONLY the ``SCREENSCRIBE_API_KEY``
+        line is rewritten in place -- every other line (per-endpoint keys, the
+        STT fallback, ``api_base``, and any user comments) survives byte-for-
+        byte. A ``config.env.bak`` snapshot (0600) is taken first so the prior
+        state is always recoverable. When no config file exists yet, the full
+        default template is written (which now emits every non-empty field).
+        """
+        self.api_key = api_key
+        config_path = Path.home() / ".config" / "screenscribe" / "config.env"
+        if not config_path.exists():
+            return self.save_default_config()
+        self._backup_config(config_path)
+        self._rewrite_api_key_line(config_path, api_key)
+        return config_path
+
+    @staticmethod
+    def _backup_config(config_path: Path) -> Path:
+        """Copy the current config to ``config.env.bak`` (owner-only 0600)."""
+        backup_path = config_path.with_name(config_path.name + ".bak")
+        data = config_path.read_bytes()
+        fd = os.open(backup_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        try:  # tighten an existing backup too (no-op on Windows)
+            os.chmod(backup_path, 0o600)
+        except OSError:
+            pass
+        return backup_path
+
+    @staticmethod
+    def _rewrite_api_key_line(config_path: Path, api_key: str) -> None:
+        """Replace the active ``SCREENSCRIBE_API_KEY=`` line in place.
+
+        Only the first uncommented ``SCREENSCRIBE_API_KEY`` line is rewritten
+        (exact key match, so ``SCREENSCRIBE_STT_API_KEY`` and friends are never
+        touched); the original newline style is preserved. When the file has no
+        active line, one is appended.
+        """
+        lines = config_path.read_text().splitlines(keepends=True)
+        new_value = f"SCREENSCRIBE_API_KEY={api_key}"
+        replaced = False
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("#") or "=" not in stripped:
+                continue
+            if stripped.split("=", 1)[0].strip() == "SCREENSCRIBE_API_KEY":
+                newline = line[len(line.rstrip("\r\n")) :] or "\n"
+                lines[i] = new_value + newline
+                replaced = True
+                break
+        if not replaced:
+            if lines and not lines[-1].endswith(("\n", "\r")):
+                lines[-1] += "\n"
+            lines.append(new_value + "\n")
+        content = "".join(lines)
+
+        fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        try:  # tighten an existing file too (no-op on Windows)
+            os.chmod(config_path, 0o600)
+        except OSError:
+            pass

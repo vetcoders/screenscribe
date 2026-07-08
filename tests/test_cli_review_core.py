@@ -590,8 +590,8 @@ def test_config_set_key_saves_and_reports_path(tmp_path: Path, monkeypatch: Any)
     cfg_path = tmp_path / "cfg.env"
 
     class _Cfg(ScreenScribeConfig):
-        def save_default_config(self) -> Path:
-            saved["api_key"] = self.api_key
+        def save_api_key(self, api_key: str) -> Path:
+            saved["api_key"] = api_key
             return cfg_path
 
     # Build the token from parts so the literal never appears contiguously in

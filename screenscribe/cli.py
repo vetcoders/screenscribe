@@ -1101,8 +1101,10 @@ def config(
     cfg = ScreenScribeConfig.load()
 
     if set_key:
-        cfg.api_key = set_key
-        path = cfg.save_default_config()
+        # In-place update: rewrite only the SCREENSCRIBE_API_KEY line and keep
+        # every other configured value (per-endpoint keys, STT fallback,
+        # api_base, user comments). A config.env.bak snapshot is taken first.
+        path = cfg.save_api_key(set_key)
         console.print(f"[green]API key saved to:[/] [link=file://{path}]{path}[/link]")
         return
 
