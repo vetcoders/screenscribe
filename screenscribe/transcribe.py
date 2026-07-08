@@ -179,7 +179,7 @@ def _build_transcription_result(payload: dict[str, Any], language: str) -> Trans
                 start=_coerce_segment_float(seg.get("start", 0.0)),
                 end=_coerce_segment_float(seg.get("end", 0.0)),
                 text=str(seg.get("text", "")).strip(),
-                no_speech_prob=seg.get("no_speech_prob", 0.0),
+                no_speech_prob=_coerce_segment_float(seg.get("no_speech_prob", 0.0)),
                 avg_logprob=_coerce_segment_float(seg.get("avg_logprob", 0.0)),
                 compression_ratio=_coerce_segment_float(seg.get("compression_ratio", 0.0)),
             )
