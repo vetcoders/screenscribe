@@ -64,6 +64,12 @@
                 behavior: reduceMotion ? "auto" : "smooth",
                 block: "start"
             });
+            /* preventDefault cancels the native focus move, so restore it for
+               programmatically-focusable targets (e.g. the skip-link's main).
+               Keeps keyboard focus in sync with the scroll position. */
+            if (target.hasAttribute("tabindex")) {
+                target.focus({ preventScroll: true });
+            }
         });
     });
 

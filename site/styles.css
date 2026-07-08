@@ -207,6 +207,33 @@ h1, h2, h3 { color: var(--text-primary); font-weight: 600; }
 }
 
 /* --------------------------------------------------------------------------
+   Skip link (keyboard: first Tab reveals it, jumps focus into <main>)
+   -------------------------------------------------------------------------- */
+.skip-link {
+    position: fixed;
+    top: var(--space-sm);
+    left: var(--space-sm);
+    z-index: 100;
+    padding: var(--space-sm) var(--space-md);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--text-primary);
+    background: var(--surface-elevated);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-150%);
+    transition: transform var(--motion-fast) var(--ease-out);
+}
+.skip-link:focus { transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+    .skip-link { transition: none; }
+}
+/* Skip target is a wrapper, not an interactive control — suppress the box
+   outline once focus lands so the visual stays clean. */
+main:focus { outline: none; }
+
+/* --------------------------------------------------------------------------
    Site header
    -------------------------------------------------------------------------- */
 .site-header {
