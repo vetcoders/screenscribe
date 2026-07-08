@@ -274,7 +274,7 @@ class ScreenScribeConfig:
     def _load_from_file(self, path: Path) -> None:
         """Load configuration from .env file."""
         self._warn_if_world_readable(path)
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
@@ -624,7 +624,7 @@ class ScreenScribeConfig:
         # with the mode sets it at creation (no world-readable window for a new
         # file); the explicit chmod also tightens an already-existing config.
         fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
         try:  # tighten an existing file too (no-op on Windows)
             os.chmod(config_path, 0o600)
@@ -674,7 +674,7 @@ class ScreenScribeConfig:
         touched); the original newline style is preserved. When the file has no
         active line, one is appended.
         """
-        lines = config_path.read_text().splitlines(keepends=True)
+        lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
         new_value = f"SCREENSCRIBE_API_KEY={api_key}"
         replaced = False
         for i, line in enumerate(lines):
@@ -693,7 +693,7 @@ class ScreenScribeConfig:
         content = "".join(lines)
 
         fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
         try:  # tighten an existing file too (no-op on Windows)
             os.chmod(config_path, 0o600)

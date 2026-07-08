@@ -219,6 +219,57 @@ class TestTemplateFullEmission:
         assert "# SCREENSCRIBE_API_BASE=" in text
 
 
+class TestNonAsciiEncoding:
+    """Config I/O must pin UTF-8 explicitly.
+
+    The default template header carries non-ASCII glyphs (Polish characters,
+    ``©``, box-drawing brackets, a kaomoji), and users may add non-ASCII
+    comments. Reading/writing config.env without an explicit ``encoding`` picks
+    up the platform default (e.g. cp1252 on Windows), which raises
+    UnicodeDecodeError/UnicodeEncodeError on those bytes. Every text read/write
+    on this path must therefore pass ``encoding="utf-8"``.
+    """
+
+    _HEADER = (
+        "# screenscribe configuration — zażółć gęślą jaźń ⌜©⌝ (งಠ_ಠ)ง\n"
+        "# notatka operatora: zmień klucz w środę\n"
+    )
+
+    def test_set_key_preserves_non_ascii_header(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = _home(monkeypatch, tmp_path)
+        config_path.parent.mkdir(parents=True)
+        original = (
+            self._HEADER + "SCREENSCRIBE_API_KEY=old-key\n"  # pragma: allowlist secret
+        )
+        config_path.write_text(original, encoding="utf-8")
+
+        cfg = ScreenScribeConfig()
+        path = cfg.save_api_key("new-key")  # pragma: allowlist secret
+
+        # On-disk bytes must decode as UTF-8 with the header intact.
+        text = path.read_bytes().decode("utf-8")
+        assert self._HEADER in text
+        assert "SCREENSCRIBE_API_KEY=new-key" in text  # pragma: allowlist secret
+        assert "old-key" not in text  # pragma: allowlist secret
+
+    def test_default_template_round_trips_non_ascii(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = _home(monkeypatch, tmp_path)
+        cfg = ScreenScribeConfig(api_key="fresh-key")  # pragma: allowlist secret
+        written = cfg.save_default_config()
+
+        # The template's own non-ASCII header is written as valid UTF-8...
+        header_bytes = written.read_bytes()
+        assert "©" in header_bytes.decode("utf-8")
+        # ...and reloads cleanly through the UTF-8 file loader.
+        reloaded = ScreenScribeConfig()
+        reloaded._load_from_file(config_path)
+        assert reloaded.api_key == "fresh-key"  # pragma: allowlist secret
+
+
 class TestEnvValueParsing:
     """Symmetric quote handling and inline-comment stripping in the loader."""
 
