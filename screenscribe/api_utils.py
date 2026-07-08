@@ -69,8 +69,16 @@ def is_retriable_error(error: Exception) -> bool:
     if isinstance(error, httpx.TimeoutException):
         return True
 
-    # Connection errors are retriable
-    if isinstance(error, httpx.ConnectError):
+    # Transport/network drops are transient. A concurrency-capped STT endpoint
+    # tears connections mid-upload, which surfaces as ReadError/WriteError/
+    # RemoteProtocolError rather than a clean ConnectError -- none of which the
+    # old ConnectError-only check retried, so a single mid-transfer drop killed
+    # the whole transcription. httpx.NetworkError covers ConnectError/ReadError/
+    # WriteError/CloseError; RemoteProtocolError (peer spoke malformed HTTP or
+    # closed the stream early) is a sibling worth retrying. LocalProtocolError is
+    # a client-side bug, not transient, so it stays non-retriable (it is a
+    # ProtocolError but NOT a RemoteProtocolError, so this check excludes it).
+    if isinstance(error, (httpx.NetworkError, httpx.RemoteProtocolError)):
         return True
 
     # HTTP status errors - check the status code
