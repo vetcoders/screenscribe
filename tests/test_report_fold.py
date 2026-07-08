@@ -307,16 +307,18 @@ def test_empty_unified_findings_degrades_to_all_screenshots(tmp_path: Path) -> N
     assert data["summary"]["total"] == 3
 
 
-def test_html_merged_member_screenshot_uses_loadable_path(tmp_path: Path) -> None:
-    """L1 (P2): merged-evidence thumbnails must reference a loadable path.
+def test_html_merged_member_screenshot_embeds_base64(tmp_path: Path) -> None:
+    """Finding 610: merged-evidence thumbnails embed base64 (single-file promise).
 
-    Screenshots are written to ``<report-root>/screenshots/`` while the HTML
-    report lives at the report root. The main finding thumbnails embed the frame
-    inline as base64, but merged-away member frames are rendered from their
-    ``screenshot_path`` ref. Stripping that ref to the bare ``<file>.png`` makes
-    the renderer emit ``<img src="<file>.png">`` which resolves to
-    ``report-root/<file>.png`` — a 404. The ref must carry the ``screenshots/``
-    prefix so the merged-evidence thumbnail actually loads.
+    The main finding thumbnails embed the frame inline as a data URI so the
+    report stays self-contained. Merged-away member frames must follow the same
+    rule: when the member frame exists on disk, its thumbnail renders as a
+    ``data:image/...;base64,...`` source rather than a ``screenshots/<file>``
+    path ref — otherwise the single-file report leaks an external dependency and
+    the thumbnail 404s once the report is moved away from its ``screenshots/``
+    directory. (The ``screenshots/<file>`` path is kept in the finding dict as a
+    fallback for members whose file is missing; that path is exercised by
+    ``test_report_merged_frames_render.py``.)
     """
     detections, screenshots, findings = _build_10_to_7(tmp_path)
     html_out = tmp_path / "report.html"
@@ -334,7 +336,13 @@ def test_html_merged_member_screenshot_uses_loadable_path(tmp_path: Path) -> Non
     thumbs = re.findall(r'<img class="merged-frame-thumb" src="([^"]*)"', html)
     assert thumbs, "no merged-frame thumbnails were rendered"
     for src in thumbs:
-        assert src.startswith("screenshots/"), (
-            f"merged-evidence thumbnail points at non-loadable path {src!r}; "
-            "expected a 'screenshots/<file>' ref"
+        assert src.startswith("data:image/"), (
+            f"merged-evidence thumbnail is not self-contained: {src!r}; "
+            "expected an embedded 'data:image/...;base64,...' source"
         )
+    # With every member frame present on disk, no thumbnail should fall back to
+    # an external "screenshots/<file>" reference in the rendered HTML.
+    assert 'src="screenshots/' not in html, (
+        "rendered HTML still references external screenshots/ paths; "
+        "single-file promise broken"
+    )
