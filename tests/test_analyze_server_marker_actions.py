@@ -9,6 +9,7 @@ Each finding kafelek in the analyze dashboard exposes three actions:
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -789,3 +790,106 @@ def test_export_does_not_leak_absolute_video_path(sample_video: Path) -> None:
     assert payload["video"] == sample_video.name
     assert "/" not in payload["video"]
     assert str(sample_video) not in response.text
+
+
+def test_concurrent_analysis_of_one_marker_returns_409(
+    sample_video: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second /api/analyze for a marker whose VLM call is already in flight
+    must 409, invoke the VLM exactly once, and leave exactly one result.
+
+    Without the concurrent-analysis guard the duplicate request would start a
+    second VLM run (double cost) and race two writers onto ``session.results``.
+    """
+    app = create_analyze_app(sample_video, _config())
+    client = TestClient(app)
+    marker_id = _mark_one(client)
+
+    started = threading.Event()
+    release = threading.Event()
+    calls = {"n": 0}
+
+    def fake_analyze(
+        detection: Any,
+        screenshot_path: Path | None,
+        config: Any,
+        previous_response_id: str | None = None,
+        force_text_only: bool = False,
+    ) -> Any:
+        calls["n"] += 1
+        started.set()
+        assert release.wait(timeout=5)
+        from screenscribe.unified_analysis import UnifiedFinding
+
+        return UnifiedFinding(
+            detection_id=0,
+            screenshot_path=screenshot_path,
+            timestamp=0.0,
+            category="ui",
+            is_issue=True,
+            sentiment="problem",
+            severity="medium",
+            summary="only-run",
+            action_items=[],
+            affected_components=[],
+            suggested_fix="",
+            ui_elements=[],
+            issues_detected=[],
+            accessibility_notes=[],
+            design_feedback="",
+            technical_observations="",
+            response_id="resp",
+        )
+
+    monkeypatch.setattr("screenscribe.unified_analysis.analyze_finding_unified", fake_analyze)
+
+    holder: dict[str, Any] = {}
+
+    def first() -> None:
+        holder["r1"] = client.post(f"/api/analyze/{marker_id}")
+
+    worker = threading.Thread(target=first)
+    worker.start()
+    try:
+        # First VLM call is now in flight; the marker is "analyzing".
+        assert started.wait(timeout=5)
+        # Duplicate request while the first is in flight must be rejected.
+        r2 = client.post(f"/api/analyze/{marker_id}")
+        assert r2.status_code == 409
+    finally:
+        release.set()
+        worker.join(timeout=5)
+
+    assert holder["r1"].status_code == 200
+    assert holder["r1"].json()["status"] == "completed"
+    assert calls["n"] == 1  # VLM invoked exactly once, not twice
+
+    markers = client.get("/api/markers").json()
+    assert len(markers) == 1
+    assert markers[0]["result"]["summary"] == "only-run"
+
+
+def test_finalize_jobs_registry_is_bounded(sample_video: Path) -> None:
+    """The finalize-job registry must not grow without limit: registering a new
+    job evicts the oldest FINISHED jobs down to ``MAX_FINALIZE_JOBS``."""
+    from screenscribe.analyze_server import MAX_FINALIZE_JOBS, FinalizeJob
+
+    app = create_analyze_app(sample_video, _config())
+    session = app.state.session
+
+    # Pre-fill with more than the cap of finished jobs, ascending age.
+    for i in range(MAX_FINALIZE_JOBS + 10):
+        job = FinalizeJob(job_id=f"job-{i}")
+        job.status = "completed"
+        job.started_at = float(i)
+        session.finalize_jobs[job.job_id] = job
+
+    client = TestClient(app)
+    # Starting a finalize registers a fresh job and triggers eviction under lock.
+    resp = client.post("/api/finalize/start")
+    assert resp.status_code == 200
+
+    assert len(session.finalize_jobs) <= MAX_FINALIZE_JOBS
+    # Oldest finished jobs were evicted; the newest pre-filled ones survive.
+    assert "job-0" not in session.finalize_jobs
+    assert f"job-{MAX_FINALIZE_JOBS + 9}" in session.finalize_jobs
