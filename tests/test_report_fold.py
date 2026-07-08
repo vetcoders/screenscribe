@@ -343,6 +343,5 @@ def test_html_merged_member_screenshot_embeds_base64(tmp_path: Path) -> None:
     # With every member frame present on disk, no thumbnail should fall back to
     # an external "screenshots/<file>" reference in the rendered HTML.
     assert 'src="screenshots/' not in html, (
-        "rendered HTML still references external screenshots/ paths; "
-        "single-file promise broken"
+        "rendered HTML still references external screenshots/ paths; single-file promise broken"
     )
