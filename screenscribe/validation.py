@@ -256,12 +256,21 @@ def _check_stt_model(config: ScreenScribeConfig) -> bool:
 def validate_models(
     config: ScreenScribeConfig,
     use_vision: bool = True,
+    validate_stt: bool = True,
+    validate_llm: bool = True,
 ) -> None:
     """Validate model availability before pipeline starts.
 
     Args:
         config: screenscribe configuration
         use_vision: Whether the unified VLM (visual/screenshot) analysis will run
+        validate_stt: Whether to probe the STT endpoint. ``review --local`` runs
+            transcription on a LOCAL Whisper server, so the cloud STT endpoint is
+            never contacted and must not be probed -- but the LLM/Vision stages
+            still hit the cloud and stay validated. ``analyze`` uses STT for voice
+            notes, so it keeps this on.
+        validate_llm: Whether to probe the LLM endpoint. ``analyze`` never calls
+            the LLM (frame analysis is Vision-only), so it turns this off.
 
     Raises:
         APIKeyError: If API key is missing or invalid
@@ -282,21 +291,25 @@ def validate_models(
 
     validation_results: list[tuple[str, str, bool]] = []
 
-    # Always validate STT + LLM: transcription and the semantic LLM pre-filter
-    # are BOTH core to every review. --no-vision only skips the visual (VLM)
-    # stage, so it must never silently degrade into a transcribe-only run with
-    # an empty report (the prefilter would otherwise fail open downstream).
-    try:
-        stt_ok = _check_stt_model(config)
-        validation_results.append(("STT", config.stt_model, stt_ok))
-    except (APIKeyError, ModelValidationError):
-        raise
+    # STT + LLM are BOTH core to a full review: transcription and the semantic
+    # LLM pre-filter. --no-vision only skips the visual (VLM) stage, so it must
+    # never silently degrade into a transcribe-only run with an empty report (the
+    # prefilter would otherwise fail open downstream). The two flags gate the
+    # probes per-stage so a run that legitimately does NOT hit one of these
+    # endpoints (STT under --local, the LLM under analyze) is not probed for it.
+    if validate_stt:
+        try:
+            stt_ok = _check_stt_model(config)
+            validation_results.append(("STT", config.stt_model, stt_ok))
+        except (APIKeyError, ModelValidationError):
+            raise
 
-    try:
-        llm_ok = _check_llm_model(config, config.llm_model, "LLM")
-        validation_results.append(("LLM", config.llm_model, llm_ok))
-    except (APIKeyError, ModelValidationError):
-        raise
+    if validate_llm:
+        try:
+            llm_ok = _check_llm_model(config, config.llm_model, "LLM")
+            validation_results.append(("LLM", config.llm_model, llm_ok))
+        except (APIKeyError, ModelValidationError):
+            raise
 
     # Vision model is only required when the visual (VLM) analysis will run.
     if use_vision:

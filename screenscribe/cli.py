@@ -595,8 +595,31 @@ def review(
     # Check FFmpeg is installed (shared guard — identical message across commands)
     _check_ffmpeg_or_exit()
 
-    for video in videos:
-        _require_audio_or_exit(video)
+    # --estimate is a zero-cost preview that only needs the container duration,
+    # not a decoded audio stream. Requiring audio here would exit an estimate on
+    # an audioless clip; skip the audio guard in estimate mode (run_review reads
+    # the duration defensively and still renders the table).
+    if not estimate:
+        for video in videos:
+            _require_audio_or_exit(video)
+
+    # --embed-video inlines the clip as base64, but the HTML renderer silently
+    # falls back to a file reference for anything >=50MB. Warn up front so the
+    # degradation is not a surprise (the report would otherwise just not embed).
+    if embed_video:
+        embed_video_max_bytes = 50 * 1024 * 1024
+        for video in videos:
+            try:
+                size_bytes = video.stat().st_size
+            except OSError:
+                continue
+            if size_bytes >= embed_video_max_bytes:
+                size_mb = size_bytes / (1024 * 1024)
+                console.print(
+                    f"[yellow]Warning:[/] {video.name} is ~{size_mb:.0f}MB (>=50MB); "
+                    "--embed-video will fall back to a file reference instead of "
+                    "embedding the video in the HTML report."
+                )
 
     # Load configuration
     config = ScreenScribeConfig.load()
@@ -607,17 +630,25 @@ def review(
     config.verbose = verbose
     config.analysis_prompt_override = (prompt or "").strip()
 
-    # Validate endpoint configuration (fail fast on common mistakes)
-    config_warnings = config.validate()
-    if config_warnings:
-        for warning in config_warnings:
-            console.print(f"[red]Config Error:[/] {warning}")
+    # Non-blocking key<->endpoint mismatch warnings (sk- gateways are legit, so
+    # a prefix mismatch is surfaced, not blocked).
+    for warning in config.mismatch_warnings():
+        console.print(f"[yellow]Config Warning:[/] {warning}")
+
+    # Validate endpoint configuration (fail fast on genuinely fatal mistakes)
+    config_errors = config.validate()
+    if config_errors:
+        for error in config_errors:
+            console.print(f"[red]Config Error:[/] {error}")
         raise typer.Exit(1)
 
-    # Validate model availability (fail fast)
-    if not skip_validation and not local and not estimate:
+    # Validate model availability (fail fast). --local only reroutes STT to a
+    # LOCAL Whisper server; the LLM pre-filter and the Vision stage still hit the
+    # cloud, so they must be validated even under --local -- only the STT probe is
+    # skipped. --estimate is a zero-cost preview and skips validation entirely.
+    if not skip_validation and not estimate:
         try:
-            validate_models(config, use_vision=vision)
+            validate_models(config, use_vision=vision, validate_stt=not local)
         except APIKeyError as e:
             console.print(f"[red]API Key Error:[/] {e}")
             raise typer.Exit(1) from None
@@ -771,17 +802,19 @@ def analyze(
     if language is not None:
         config.language = language
 
-    # Validate endpoint configuration (fail fast on common mistakes) — mirrors
-    # the `review` command. Catches key<->endpoint mismatch (e.g. an OpenAI
-    # sk-... key pointed at a non-OpenAI endpoint), which the presence-only key
-    # check below would otherwise wave through, leaking the secret to the wrong
-    # provider. C5.5. Scoped to the providers `analyze` actually uses — vision
-    # (frame analysis) + STT (voice notes); it never contacts the LLM, so a
-    # stale/unused LLM mismatch must not block the dashboard (finding I).
-    config_warnings = config.validate(providers={"vision", "stt"})
-    if config_warnings:
-        for warning in config_warnings:
-            console.print(f"[red]Config Error:[/] {warning}")
+    # Endpoint configuration checks — mirror the `review` command, scoped to the
+    # providers `analyze` actually uses: vision (frame analysis) + STT (voice
+    # notes); it never contacts the LLM, so a stale/unused LLM mismatch must not
+    # be considered (finding I). A key<->endpoint mismatch (e.g. an sk- key on a
+    # non-OpenAI endpoint) is a NON-blocking warning -- OpenAI-compatible
+    # gateways legitimately use sk- keys (finding 283).
+    for warning in config.mismatch_warnings(providers={"vision", "stt"}):
+        console.print(f"[yellow]Config Warning:[/] {warning}")
+
+    config_errors = config.validate(providers={"vision", "stt"})
+    if config_errors:
+        for error in config_errors:
+            console.print(f"[red]Config Error:[/] {error}")
         raise typer.Exit(1)
 
     # Load the active keyword vocabulary (explicit --keywords-file, else global
@@ -798,6 +831,23 @@ def analyze(
             "[dim]Set SCREENSCRIBE_API_KEY or run: uv run screenscribe config --set-key YOUR_KEY[/]"
         )
         raise typer.Exit(1)
+
+    # Validate model availability up front — mirrors `review` so a dead key or an
+    # unreachable model fails at pre-flight with a clear message instead of deep
+    # inside the first frame analysis. analyze uses Vision (frame analysis) + STT
+    # (voice notes) and never the LLM, so the LLM probe is skipped.
+    try:
+        validate_models(config, use_vision=True, validate_stt=True, validate_llm=False)
+    except APIKeyError as e:
+        console.print(f"[red]API Key Error:[/] {e}")
+        raise typer.Exit(1) from None
+    except ModelValidationError as e:
+        console.print(f"[red]Model Error:[/] {e}")
+        console.print(
+            f"[dim]Tip: Check SCREENSCRIBE_{e.model_type.upper()}_MODEL in "
+            "~/.config/screenscribe/config.env[/]"
+        )
+        raise typer.Exit(1) from None
 
     # Pick a free port (bind-probe on 127.0.0.1, same host uvicorn binds) so a
     # busy default no longer crashes with a raw OSError. The resolved port flows
@@ -921,6 +971,16 @@ def transcribe(
 
     # Output
     if output:
+        # Create the target directory tree so `-o some/new/dir/transcript.txt`
+        # succeeds instead of crashing with a raw FileNotFoundError traceback.
+        try:
+            output.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            console.print(
+                f"[red]Error:[/] Cannot create output directory "
+                f"[link=file://{output.parent}]{output.parent}[/link]: {e}"
+            )
+            raise typer.Exit(1) from None
         with open(output, "w", encoding="utf-8") as f:
             f.write(result.text)
         console.print(f"[green]Transcript saved:[/] [link=file://{output}]{output}[/link]")

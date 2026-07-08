@@ -230,6 +230,7 @@ def test_analyze_uses_config_language_unless_lang_overrides(
         "screenscribe.cli.webbrowser", type("W", (), {"open": staticmethod(lambda _u: None)})
     )
     monkeypatch.setattr("uvicorn.run", lambda *_a, **_k: None)
+    monkeypatch.setattr("screenscribe.cli.validate_models", lambda *_a, **_k: None)
 
     runner = CliRunner()
 
@@ -275,6 +276,7 @@ def test_analyze_keywords_file_reaches_server_config(monkeypatch: Any, tmp_path:
         "screenscribe.cli.webbrowser", type("W", (), {"open": staticmethod(lambda _u: None)})
     )
     monkeypatch.setattr("uvicorn.run", lambda *_a, **_k: None)
+    monkeypatch.setattr("screenscribe.cli.validate_models", lambda *_a, **_k: None)
 
     result = CliRunner().invoke(app, ["analyze", str(video), "--keywords-file", str(keywords_path)])
     assert result.exit_code == 0, result.output
@@ -302,14 +304,17 @@ def _stub_analyze_server_side_effects(monkeypatch: Any, recorded: list[ScreenScr
         "screenscribe.cli.webbrowser", type("W", (), {"open": staticmethod(lambda _u: None)})
     )
     monkeypatch.setattr("uvicorn.run", lambda *_a, **_k: None)
+    # analyze now runs a model-availability pre-flight; stub it out so the headless
+    # drive never touches the network.
+    monkeypatch.setattr("screenscribe.cli.validate_models", lambda *_a, **_k: None)
 
 
-def test_analyze_blocks_on_key_endpoint_mismatch(monkeypatch: Any, tmp_path: Path) -> None:
-    """C5.5: `analyze` must fail-closed on a key<->endpoint mismatch (mirror review).
+def test_analyze_warns_on_key_endpoint_mismatch(monkeypatch: Any, tmp_path: Path) -> None:
+    """Finding 283: a key<->endpoint mismatch is a NON-blocking warning, not a block.
 
-    An OpenAI ``sk-`` key against the default LibraxisAI endpoint is "present"
-    (the presence-only key check would pass) but would leak the secret to the
-    wrong provider. ``config.validate()`` must block before the server starts.
+    An OpenAI ``sk-`` key against the default LibraxisAI endpoint used to hard-block,
+    but OpenAI-compatible gateways legitimately use ``sk-`` keys -- so analyze now
+    warns and starts the server anyway. The secret is still never echoed.
     """
     video = tmp_path / "sample.mov"
     video.write_bytes(b"fake-video")
@@ -327,11 +332,11 @@ def test_analyze_blocks_on_key_endpoint_mismatch(monkeypatch: Any, tmp_path: Pat
 
     result = CliRunner().invoke(app, ["analyze", str(video)])
 
-    assert result.exit_code == 1, result.output
-    assert not recorded, "create_analyze_app must NOT run on a blocked config"
+    assert result.exit_code == 0, result.output
+    assert recorded, "create_analyze_app must run despite a (warned) mismatch"
     out = _plain(result.output)
-    assert "Config Error:" in out
-    assert "BLOCKS the run" in out or "mismatch" in out.lower()
+    assert "Config Warning:" in out
+    assert "mismatch" in out.lower()
     assert "sk-openai-secret" not in result.output  # secret never echoed
 
 

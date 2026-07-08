@@ -134,18 +134,25 @@ class ScreenScribeConfig:
         return self.stt_fallback_model or "whisper-1"
 
     def validate(self, providers: set[str] | None = None) -> list[str]:
-        """Validate config and return list of warnings.
+        """Return BLOCKING configuration errors (empty when the config is usable).
+
+        Only genuinely fatal misconfigurations are returned here -- currently an
+        endpoint pointed at the wrong API path (a LibraxisAI host using
+        ``/v1/chat/completions`` instead of ``/v1/responses``), which fails every
+        request. Callers turn a non-empty result into ``Exit(1)``.
+
+        Softer key<->endpoint provider mismatches are NON-blocking and returned
+        separately by :meth:`mismatch_warnings` -- OpenAI-compatible gateways
+        legitimately use ``sk-`` keys, so a prefix that disagrees with the
+        endpoint host is a warning, not a hard block (finding 283).
 
         ``providers`` scopes the check to the named providers ("llm", "vision",
         "stt"). When ``None`` (the default, used by ``review``) every provider is
-        validated. ``analyze`` uses only vision (frame analysis) + stt (voice
-        notes) and never contacts the LLM, so it passes ``{"vision", "stt"}`` --
-        an unrelated/stale LLM key<->endpoint mismatch then no longer blocks a
-        run that never touches the LLM (finding I).
+        checked.
         """
         if providers is None:
             providers = {"llm", "vision", "stt"}
-        warnings = []
+        errors = []
 
         # Check for endpoint/provider mismatch
         # Note: Both OpenAI and LibraxisAI support /v1/responses (Responses API)
@@ -159,20 +166,13 @@ class ScreenScribeConfig:
         ]
         for ep in libraxis_endpoints:
             if "/v1/chat/completions" in ep:
-                warnings.append(
+                errors.append(
                     f"Invalid endpoint: {ep}\n"
                     "  LibraxisAI uses /v1/responses, not /v1/chat/completions\n"
                     "  Fix in: ~/.config/screenscribe/config.env"
                 )
 
-        # Key<->endpoint provider mismatch (P1-1). An OPENAI_API_KEY is mapped
-        # onto llm_api_key/vision_api_key WITHOUT changing the endpoint, so an
-        # OpenAI key can silently be sent to the default LibraxisAI endpoint (or
-        # the reverse). This is a WARNING only: routing is never altered here and
-        # the secret itself is never echoed.
-        warnings.extend(self._key_endpoint_mismatch_warnings(providers))
-
-        return warnings
+        return errors
 
     @staticmethod
     def _endpoint_provider(endpoint: str) -> str | None:
@@ -196,13 +196,19 @@ class ScreenScribeConfig:
             return "openai"
         return None
 
-    def _key_endpoint_mismatch_warnings(self, providers: set[str]) -> list[str]:
-        """Warn when a per-endpoint key's provider disagrees with its endpoint.
+    def mismatch_warnings(self, providers: set[str] | None = None) -> list[str]:
+        """Non-blocking key<->endpoint provider mismatch warnings.
 
-        Only the providers named in ``providers`` are checked, so a command can
-        scope validation to the endpoints it actually uses (finding I).
-        Pure detection — no re-routing, no hard block. Secrets are never echoed.
+        An ``sk-`` key on a non-OpenAI endpoint (or a non-``sk-`` key on
+        openai.com) is surfaced as a WARNING, never a hard block: OpenAI-compatible
+        gateways legitimately accept ``sk-`` keys, so a prefix that disagrees with
+        the endpoint host may be entirely intentional (finding 283). Pure
+        detection -- no re-routing, no block, and the secret itself is never
+        echoed. ``providers`` scopes the check to the endpoints a command actually
+        uses (``analyze`` passes ``{"vision", "stt"}``); ``None`` checks all.
         """
+        if providers is None:
+            providers = {"llm", "vision", "stt"}
         warnings: list[str] = []
         pairs = (
             ("llm", "LLM", self.get_llm_api_key(), self.llm_endpoint),
@@ -230,18 +236,20 @@ class ScreenScribeConfig:
                 continue
             env_endpoint_var = f"SCREENSCRIBE_{label.upper()}_ENDPOINT"
             env_key_var = f"SCREENSCRIBE_{label.upper()}_API_KEY"
-            # Fail-closed (security): a provider mismatch would ship your key to
-            # the wrong provider, so the run is BLOCKED until config is fixed.
-            # The message names the exact key/endpoint pair and the two concrete
-            # ways to resolve it -- the secret itself is never echoed.
+            # Non-blocking warning: OpenAI-compatible gateways legitimately use
+            # sk- keys, so this may be intentional. We flag it (the key would go
+            # to a provider its prefix does not match) but let the run proceed --
+            # the message names the exact key/endpoint pair and the two concrete
+            # ways to silence it. The secret itself is never echoed.
             warnings.append(
-                f"{label} key/endpoint mismatch -- this BLOCKS the run.\n"
+                f"{label} key/endpoint mismatch (warning -- run continues).\n"
                 f"  What: {detail}\n"
                 f"  Endpoint in use: {endpoint}\n"
-                "  Why blocked: your API key would be sent to a provider it does "
-                "not belong to.\n"
-                "  Fix ONE of these in ~/.config/screenscribe/config.env (or as "
-                "an env var):\n"
+                "  Note: OpenAI-compatible gateways legitimately use OpenAI-style "
+                "keys, so this may be intentional. If it is not, your key would be "
+                "sent to a provider it does not belong to.\n"
+                "  To silence this, align config in ~/.config/screenscribe/config.env "
+                "(or as an env var):\n"
                 f"    - point the endpoint at the key's provider: set {env_endpoint_var}\n"
                 f"    - use the endpoint's matching key: set {env_key_var}"
             )

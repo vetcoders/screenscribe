@@ -114,6 +114,9 @@ def _stub_analyze(monkeypatch: Any, recorded: dict[str, Any]) -> None:
     monkeypatch.setattr(
         "screenscribe.cli.webbrowser", type("W", (), {"open": staticmethod(lambda _u: None)})
     )
+    # analyze now runs a model-availability pre-flight; stub it so the port tests
+    # never touch the network.
+    monkeypatch.setattr("screenscribe.cli.validate_models", lambda *_a, **_k: None)
 
     def _sniff(*_args: Any, **kwargs: Any) -> None:
         recorded["port"] = kwargs.get("port")
