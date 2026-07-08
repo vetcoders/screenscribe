@@ -19,7 +19,7 @@ from screenscribe.report import (
     save_enhanced_markdown_report,
     save_html_report_pro,
 )
-from screenscribe.report.data import DEGRADED_MARKER_LABEL
+from screenscribe.report.data import DEGRADED_MARKER_LABEL, DEGRADED_MARKER_LABEL_PL
 from screenscribe.transcribe import Segment
 from screenscribe.unified_analysis import UnifiedFinding
 
@@ -190,6 +190,28 @@ def test_html_marks_degraded_finding_visibly(tmp_path: Path) -> None:
     # Visible marker rendered into the summary the Pro template displays.
     assert DEGRADED_MARKER_LABEL in html_text
     # Machine-readable flag survives in the embedded findings JSON.
+    findings = _embedded_findings(html_text)
+    assert findings[0]["unified_analysis"]["degraded"] is True
+
+
+def test_html_degraded_marker_is_localized_pl(tmp_path: Path) -> None:
+    """A PL report shows the PL marker, never the raw EN chrome string."""
+    detection = _detection(1, 10.0)
+    shot = _png(tmp_path / "shot.png")
+
+    out = tmp_path / "r.html"
+    save_html_report_pro(
+        detections=[detection],
+        screenshots=[(detection, shot)],
+        video_path=tmp_path / "v.mov",
+        output_path=out,
+        unified_findings=[_finding(detection, confidence="degraded")],
+        language="pl",
+    )
+    html_text = out.read_text("utf-8")
+    assert DEGRADED_MARKER_LABEL_PL in html_text
+    # The English chrome string must not leak into the localized summary.
+    assert DEGRADED_MARKER_LABEL not in html_text
     findings = _embedded_findings(html_text)
     assert findings[0]["unified_analysis"]["degraded"] is True
 

@@ -505,10 +505,13 @@ def render_html_report_pro(
                     video_path_obj.name if video_path_obj.is_absolute() else str(video_path_obj)
                 )
         else:
-            if video_path_obj.exists():
-                video_src = (
-                    video_path_obj.name if video_path_obj.is_absolute() else str(video_path_obj)
-                )
+            # Reduce an absolute path to its basename whether or not the source
+            # video exists at render time: a shareable report must never embed an
+            # absolute local path (home dir / project structure fingerprint) into
+            # the <video src="..."> attribute. Mirrors the is_absolute() guard the
+            # exists() and embed branches already apply.
+            if video_path_obj.is_absolute():
+                video_src = video_path_obj.name
             else:
                 video_src = video_path
 

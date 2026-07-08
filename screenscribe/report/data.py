@@ -15,7 +15,10 @@ console = Console()
 def _prepare_html_video_source(video_path: Path, output_path: Path) -> str:
     """Ensure report can load video via relative path (file:// and http:// friendly)."""
     if not video_path.exists():
-        return str(video_path)
+        # Basename only: never leak an absolute local path (home dir / project
+        # structure fingerprint) into a shareable report when the source video is
+        # absent at render time. Consistent with the existing-file branch below.
+        return video_path.name
 
     output_dir = output_path.parent
     target_video = output_dir / video_path.name
@@ -208,8 +211,25 @@ def fold_screenshots(
 
 
 # Operator-visible marker for low-confidence / degraded model output (D7).
-# Kept in one place so JSON/HTML/Markdown agree on the exact wording.
+# Kept in one place so JSON/HTML/Markdown agree on the exact wording. The EN
+# label is the canonical/default (JSON + Markdown are EN by design); the HTML
+# report is fully localized, so it selects the language-matched variant via
+# ``degraded_marker_label`` instead of always emitting the EN string.
 DEGRADED_MARKER_LABEL = "UNVERIFIED — degraded model output"
+DEGRADED_MARKER_LABEL_PL = "NIEZWERYFIKOWANE — obniżona jakość wyniku modelu"
+
+
+def degraded_marker_label(language: str | None) -> str:
+    """Return the degraded-output marker localized to ``language``.
+
+    Only the languages the HTML report ships (pl/en) are distinguished; anything
+    else falls back to the canonical EN label so no report is ever left without a
+    marker. Keeps the PL report from leaking an EN chrome string inside an
+    otherwise fully-localized summary.
+    """
+    if language and str(language).lower().startswith("pl"):
+        return DEGRADED_MARKER_LABEL_PL
+    return DEGRADED_MARKER_LABEL
 
 
 def _is_degraded_analysis(finding: Any | None) -> bool:
