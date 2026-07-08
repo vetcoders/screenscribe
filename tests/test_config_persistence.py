@@ -40,7 +40,9 @@ class TestSetKeyPreservesConfig:
         assert "SCREENSCRIBE_API_KEY=new-key" in text  # pragma: allowlist secret
         assert "old-key" not in text  # pragma: allowlist secret
         # Every other configured value survives.
-        assert "SCREENSCRIBE_STT_FALLBACK_API_KEY=fallback-secret" in text  # pragma: allowlist secret
+        assert (
+            "SCREENSCRIBE_STT_FALLBACK_API_KEY=fallback-secret" in text
+        )  # pragma: allowlist secret
         assert (
             "SCREENSCRIBE_STT_FALLBACK_ENDPOINT=https://api.openai.com/v1/audio/transcriptions"
             in text
@@ -143,9 +145,7 @@ class TestSetKeyBackup:
         assert not config_path.with_name("config.env.bak").exists()
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file permissions")
-    def test_both_files_owner_only(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_both_files_owner_only(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         config_path = _home(monkeypatch, tmp_path)
         config_path.parent.mkdir(parents=True)
         config_path.write_text("SCREENSCRIBE_API_KEY=old-key\n")  # pragma: allowlist secret

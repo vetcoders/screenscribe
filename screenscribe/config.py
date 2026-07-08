@@ -551,12 +551,8 @@ class ScreenScribeConfig:
             # Per-endpoint keys: only emitted actively when set (multi-provider
             # setups). Otherwise they stay commented so a plain single-key file
             # is not cluttered.
-            self._emit_optional(
-                "SCREENSCRIBE_STT_API_KEY", self.stt_api_key, "YOUR_STT_KEY"
-            ),
-            self._emit_optional(
-                "SCREENSCRIBE_LLM_API_KEY", self.llm_api_key, "YOUR_LLM_KEY"
-            ),
+            self._emit_optional("SCREENSCRIBE_STT_API_KEY", self.stt_api_key, "YOUR_STT_KEY"),
+            self._emit_optional("SCREENSCRIBE_LLM_API_KEY", self.llm_api_key, "YOUR_LLM_KEY"),
             self._emit_optional(
                 "SCREENSCRIBE_VISION_API_KEY", self.vision_api_key, "YOUR_VISION_KEY"
             ),

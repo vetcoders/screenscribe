@@ -159,9 +159,7 @@ def test_analyze_preflight_skips_llm_probe(tmp_path: Path, monkeypatch: Any) -> 
 # --------------------------------------------------------------------------- #
 
 
-def test_transcribe_creates_missing_output_parent_dirs(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_transcribe_creates_missing_output_parent_dirs(tmp_path: Path, monkeypatch: Any) -> None:
     """`transcribe -o a/b/c.txt` where a/b does not exist must succeed (the parent
     tree is created) instead of crashing with a raw FileNotFoundError traceback."""
     video = _mkvideo(tmp_path)
@@ -191,9 +189,7 @@ def test_transcribe_creates_missing_output_parent_dirs(
 # --------------------------------------------------------------------------- #
 
 
-def test_review_warns_but_does_not_block_on_sk_mismatch(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_review_warns_but_does_not_block_on_sk_mismatch(tmp_path: Path, monkeypatch: Any) -> None:
     """An sk- key on the default (LibraxisAI) endpoint used to hard-block the run.
     OpenAI-compatible gateways legitimately use sk- keys, so review now warns and
     proceeds."""
