@@ -328,9 +328,10 @@ def transcribe_audio_chunked(
     drops segments duplicated across the overlap zone. Short audio takes the
     ordinary single-shot path unchanged.
 
-    Per-chunk transcription is delegated to ``transcribe_audio`` (via the CLI
-    namespace, which is the patch surface used across the codebase), so the STT
-    endpoint/key resolution stays driven by the caller's config.
+    Per-chunk transcription is delegated to the module-level ``transcribe_audio``
+    (resolved at call time, so ``monkeypatch.setattr("screenscribe.transcribe.
+    transcribe_audio", ...)`` intercepts it), so the STT endpoint/key resolution
+    stays driven by the caller's config.
 
     Args:
         audio_path: Path to audio file.
@@ -345,10 +346,6 @@ def transcribe_audio_chunked(
     Returns:
         TranscriptionResult with timestamp-accurate, merged segments.
     """
-    # Lazy imports avoid an import cycle (cli imports transcribe) and keep the
-    # CLI namespace as the single patch surface for STT.
-    import screenscribe.cli as cli
-
     from . import audio
 
     try:
@@ -361,7 +358,7 @@ def transcribe_audio_chunked(
 
     # Short audio (or unknown duration) does not benefit from chunking.
     if duration is None or duration <= chunk_duration:
-        return cli.transcribe_audio(
+        return transcribe_audio(
             audio_path,
             language=language,
             use_local=use_local,
@@ -384,7 +381,7 @@ def transcribe_audio_chunked(
         console.print(
             f"[yellow]Chunked split failed ({exc}); falling back to single-shot transcription[/]"
         )
-        return cli.transcribe_audio(
+        return transcribe_audio(
             audio_path,
             language=language,
             use_local=use_local,
@@ -401,7 +398,7 @@ def transcribe_audio_chunked(
         for index, (chunk_path, offset) in enumerate(chunks):
             console.print(f"[dim]  Chunk {index + 1}/{len(chunks)} (offset {offset:.0f}s)...[/]")
 
-            result = cli.transcribe_audio(
+            result = transcribe_audio(
                 chunk_path,
                 language=language,
                 use_local=use_local,

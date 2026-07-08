@@ -57,7 +57,7 @@ def _patch_stt_pipeline(
     # Real audio end is 46.37s: the phantom's 59.98s end is past it -> dropped.
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 46.37)
     monkeypatch.setattr(
-        "screenscribe.cli.transcribe_audio",
+        "screenscribe.transcribe.transcribe_audio",
         lambda *args, **kwargs: result,
     )
     monkeypatch.setattr(

@@ -130,7 +130,7 @@ def test_fresh_regen_does_not_carry_manual_frames_or_markers(
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 29.0)
     monkeypatch.setattr(
-        "screenscribe.cli.transcribe_audio",
+        "screenscribe.transcribe.transcribe_audio",
         lambda *args, **kwargs: _transcription(),
     )
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)

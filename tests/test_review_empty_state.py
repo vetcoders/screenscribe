@@ -84,7 +84,7 @@ def test_review_writes_all_three_reports_when_prefilter_returns_zero_pois(
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 29.0)
     monkeypatch.setattr(
-        "screenscribe.cli.transcribe_audio",
+        "screenscribe.transcribe.transcribe_audio",
         lambda *args, **kwargs: _empty_state_transcription(),
     )
     # Skip model availability probe (no API calls in the test).
@@ -164,7 +164,7 @@ def _run_review_with_failed_prefilter(
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 29.0)
     monkeypatch.setattr(
-        "screenscribe.cli.transcribe_audio",
+        "screenscribe.transcribe.transcribe_audio",
         lambda *args, **kwargs: _empty_state_transcription(),
     )
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)
@@ -236,7 +236,7 @@ def test_review_dry_run_writes_no_reports_on_empty_state(
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 29.0)
     monkeypatch.setattr(
-        "screenscribe.cli.transcribe_audio",
+        "screenscribe.transcribe.transcribe_audio",
         lambda *args, **kwargs: _empty_state_transcription(),
     )
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)
@@ -316,7 +316,7 @@ def test_review_reports_friendly_message_on_stt_429(
     monkeypatch.setattr("screenscribe.cli.check_ffmpeg_installed", lambda: None)
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 29.0)
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", raise_429)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", raise_429)
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)
     monkeypatch.setattr(
         ScreenScribeConfig,
@@ -360,7 +360,7 @@ def test_review_handles_stt_runtime_error(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.setattr("screenscribe.cli.check_ffmpeg_installed", lambda: None)
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 29.0)
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", raise_runtime)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", raise_runtime)
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)
     monkeypatch.setattr(
         ScreenScribeConfig,
@@ -416,7 +416,7 @@ def test_review_uses_stt_fallback_when_primary_fails(
     monkeypatch.setattr("screenscribe.cli.check_ffmpeg_installed", lambda: None)
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 29.0)
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", fake_transcribe)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", fake_transcribe)
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)
     monkeypatch.setattr(
         "screenscribe.cli.semantic_prefilter",
@@ -459,7 +459,7 @@ def test_review_reports_failure_when_primary_and_fallback_both_fail(
     monkeypatch.setattr("screenscribe.cli.check_ffmpeg_installed", lambda: None)
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 29.0)
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", always_429)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", always_429)
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)
     monkeypatch.setattr(ScreenScribeConfig, "load", classmethod(lambda cls: cfg))
 
@@ -543,7 +543,7 @@ def _run_low_coverage_review(
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 502.0)
     monkeypatch.setattr(
-        "screenscribe.cli.transcribe_audio",
+        "screenscribe.transcribe.transcribe_audio",
         lambda *args, **kwargs: _compressed_timeline_transcription(),
     )
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)
@@ -680,7 +680,7 @@ def _run_review_with_one_poi(
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 29.0)
     monkeypatch.setattr(
-        "screenscribe.cli.transcribe_audio",
+        "screenscribe.transcribe.transcribe_audio",
         lambda *args, **kwargs: _poi_transcription(),
     )
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)
@@ -878,7 +878,7 @@ def test_review_persists_pruned_screenshots_after_dedup(
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 29.0)
     monkeypatch.setattr(
-        "screenscribe.cli.transcribe_audio",
+        "screenscribe.transcribe.transcribe_audio",
         lambda *args, **kwargs: _poi_transcription(),
     )
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)
@@ -955,7 +955,7 @@ def test_review_unified_hard_failure_keeps_resumable_checkpoint(
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 29.0)
     monkeypatch.setattr(
-        "screenscribe.cli.transcribe_audio",
+        "screenscribe.transcribe.transcribe_audio",
         lambda *args, **kwargs: _poi_transcription(),
     )
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)
