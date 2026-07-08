@@ -1,5 +1,6 @@
 """Audio extraction from video files using FFmpeg."""
 
+import os
 import re
 import shutil
 import subprocess
@@ -10,6 +11,37 @@ from pathlib import Path
 from rich.console import Console
 
 console = Console()
+
+# ffprobe metadata reads are near-instant; a minute is already generous and only
+# trips when the tool wedges on a corrupt container or an unresponsive mount.
+_FFPROBE_TIMEOUT_SECONDS = 60.0
+
+# Full-decode ffmpeg passes (transcode, silence/volume analysis, chunk split) can
+# legitimately run for a while on long recordings, so this ceiling is a safety
+# net against an infinite hang, not a tight performance bound.
+_FFMPEG_TIMEOUT_SECONDS = 3600.0
+
+
+def _run_media_command(
+    cmd: list[str],
+    *,
+    timeout: float,
+    tool: str,
+) -> "subprocess.CompletedProcess[str]":
+    """Run an ffmpeg/ffprobe command with a hard timeout.
+
+    A malformed container, a non-terminating stream, or a stalled network mount
+    can make ffmpeg/ffprobe block forever. Without a timeout the whole CLI hangs
+    with no recovery and no message. Convert the timeout into a readable
+    RuntimeError instead of letting the process wedge indefinitely.
+    """
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"{tool} timed out after {timeout:.0f}s. The input may be corrupt, a "
+            "non-terminating stream, or on an unresponsive mount."
+        ) from exc
 
 
 class FFmpegNotFoundError(Exception):
@@ -68,7 +100,7 @@ def _transcode_input_to_mp3(input_path: Path, output_path: Path) -> Path:
         str(output_path),
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = _run_media_command(cmd, timeout=_FFMPEG_TIMEOUT_SECONDS, tool="ffmpeg")
     if result.returncode != 0:
         _raise_ffmpeg_error(input_path, result.stderr)
     return output_path
@@ -120,15 +152,28 @@ def extract_audio(video_path: Path, output_path: Path | None = None) -> Path:
     if not video_path.exists():
         raise FileNotFoundError(f"Video file not found: {video_path}")
 
-    if output_path is None:
-        # Create temp file with .mp3 extension
-        temp_dir = Path(tempfile.gettempdir())
-        output_path = temp_dir / f"screenscribe_{video_path.stem}.mp3"
-
     require_audio_stream(video_path)
 
+    created_temp = False
+    if output_path is None:
+        # A fixed ``screenscribe_<stem>.mp3`` name let two concurrent runs of
+        # files with the same stem clobber each other's audio (ffmpeg -y) and
+        # leaked a predictable temp file. mkstemp mints a unique, atomically
+        # created path per call, matching the split_audio_chunks fix (M4).
+        fd, temp_name = tempfile.mkstemp(prefix=f"screenscribe_{video_path.stem}_", suffix=".mp3")
+        os.close(fd)
+        output_path = Path(temp_name)
+        created_temp = True
+
     console.print(f"[blue]Extracting audio from:[/] {video_path.name}")
-    _transcode_input_to_mp3(video_path, output_path)
+    try:
+        _transcode_input_to_mp3(video_path, output_path)
+    except BaseException:
+        # Do not leak the placeholder we created when the transcode fails or is
+        # interrupted. A caller-supplied output_path is left untouched.
+        if created_temp:
+            output_path.unlink(missing_ok=True)
+        raise
 
     console.print(f"[green]Audio extracted:[/] {output_path}")
     return output_path
@@ -168,7 +213,7 @@ def has_audio_stream(video_path: Path) -> bool:
         "csv=p=0",
         str(video_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = _run_media_command(cmd, timeout=_FFPROBE_TIMEOUT_SECONDS, tool="ffprobe")
     if result.returncode != 0:
         return True
     return bool(result.stdout.strip())
@@ -202,7 +247,7 @@ def get_video_duration(video_path: Path) -> float:
         str(video_path),
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = _run_media_command(cmd, timeout=_FFPROBE_TIMEOUT_SECONDS, tool="ffprobe")
 
     if result.returncode != 0:
         raise RuntimeError(f"FFprobe failed: {result.stderr}")
@@ -264,7 +309,12 @@ def tail_is_silent(
         "-",
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # TimeoutExpired is a SubprocessError subclass, so a wedged volumedetect
+        # is caught here and reported as "cannot measure" (None), matching the
+        # other unmeasurable cases -- callers then fall back to a warning.
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT_SECONDS
+        )
     except (OSError, subprocess.SubprocessError):
         return None
 
@@ -287,7 +337,7 @@ def get_audio_duration(audio_path: Path) -> float:
         "default=noprint_wrappers=1:nokey=1",
         str(audio_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = _run_media_command(cmd, timeout=_FFPROBE_TIMEOUT_SECONDS, tool="ffprobe")
     if result.returncode != 0:
         raise RuntimeError(f"FFprobe failed: {result.stderr}")
 
@@ -328,7 +378,7 @@ def detect_silence_boundaries(
         "null",
         "-",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = _run_media_command(cmd, timeout=_FFMPEG_TIMEOUT_SECONDS, tool="ffmpeg")
 
     boundaries: list[float] = []
     silence_start: float | None = None
@@ -346,6 +396,16 @@ def detect_silence_boundaries(
             silence_start = None
 
     return sorted(boundaries)
+
+
+def _discard_partial_chunks(chunks: list[tuple[Path, float]], temp_dir: Path) -> None:
+    """Remove already-written chunk WAVs and their temp dir after a split abort."""
+    for made_path, _offset in chunks:
+        made_path.unlink(missing_ok=True)
+    try:
+        temp_dir.rmdir()
+    except OSError:
+        pass
 
 
 def split_audio_chunks(
@@ -451,20 +511,24 @@ def split_audio_chunks(
             "-y",
             str(chunk_path),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # A mid-recording split failure (nonzero exit OR a wedged ffmpeg that
+        # trips the timeout) must NOT silently return the chunks produced so far:
+        # the caller would transcribe that prefix and report success, dropping the
+        # rest of a long recording from the transcript and every downstream
+        # finding. Clean up what we made and raise so transcribe_audio_chunked
+        # falls back to a single-shot transcription of the whole file instead of
+        # shipping a partial as complete.
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT_SECONDS
+            )
+        except subprocess.TimeoutExpired as exc:
+            _discard_partial_chunks(chunks, temp_dir)
+            raise RuntimeError(
+                f"chunk {chunk_idx} split timed out after {_FFMPEG_TIMEOUT_SECONDS:.0f}s"
+            ) from exc
         if result.returncode != 0:
-            # A mid-recording split failure must NOT silently return the chunks
-            # produced so far: the caller would transcribe that prefix and report
-            # success, dropping the rest of a long recording from the transcript
-            # and every downstream finding. Clean up what we made and raise so
-            # transcribe_audio_chunked falls back to a single-shot transcription
-            # of the whole file instead of shipping a partial as complete.
-            for made_path, _offset in chunks:
-                made_path.unlink(missing_ok=True)
-            try:
-                temp_dir.rmdir()
-            except OSError:
-                pass
+            _discard_partial_chunks(chunks, temp_dir)
             raise RuntimeError(f"chunk {chunk_idx} split failed: {result.stderr[:200]}")
 
         chunks.append((chunk_path, offset))
