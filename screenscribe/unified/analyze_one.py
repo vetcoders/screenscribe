@@ -150,6 +150,12 @@ def analyze_finding_unified_streaming(
             ),
         )
 
+        # Tracks whether a *prior* attempt already forwarded stream deltas to the
+        # consumer, so a retry does not feed it the same prefix twice (see the
+        # _run_stream docstring). Lives in the enclosing scope because
+        # retry_request re-invokes _run_stream across attempts.
+        emitted = False
+
         def _run_stream() -> tuple[str, str]:
             """Run one full streaming attempt -> ``(collected_content, response_id)``.
 
@@ -157,14 +163,42 @@ def analyze_finding_unified_streaming(
             the image-backed call is retried (honoring Retry-After) BEFORE
             degrading to text-only, instead of discarding the visual signal on the
             first blip -- the provider is known to cap concurrency and return 429.
-            ``raise_for_status()`` fires before any delta is emitted, so a retried
-            status error never double-emits to ``on_content``; each attempt starts
-            from fresh accumulators, so no delta is duplicated or lost. A provider
-            error-event (RuntimeError) is non-retriable and propagates straight to
-            the outer fallback, matching the previous behavior.
+
+            A retriable status error (429/5xx) is raised by ``raise_for_status()``
+            before the body is read, so no delta was emitted yet and the retry is
+            clean. But a retriable *transport* drop (ReadTimeout / NetworkError /
+            RemoteProtocolError) can fire mid-body, AFTER some ``on_content`` /
+            ``on_reasoning`` deltas were already forwarded. Re-running from the top
+            would replay that prefix and duplicate it for the consumer. To prevent
+            that, once any delta has been forwarded (``emitted``), later attempts
+            suppress the callbacks -- ``collected_content`` is still rebuilt from
+            scratch and returned correctly, only the live re-emission is dropped. A
+            provider error-event (RuntimeError) is non-retriable and propagates
+            straight to the outer fallback, matching the previous behavior.
             """
+            nonlocal emitted
             collected_content = ""
             response_id = ""
+
+            # A retry that follows a mid-stream drop must not re-forward the
+            # prefix the failed attempt already streamed to the consumer.
+            suppress_callbacks = emitted
+
+            def emit_content(text: str) -> None:
+                nonlocal emitted
+                if suppress_callbacks:
+                    return
+                emitted = True
+                if on_content:
+                    on_content(text)
+
+            def emit_reasoning(text: str) -> None:
+                nonlocal emitted
+                if suppress_callbacks:
+                    return
+                emitted = True
+                if on_reasoning:
+                    on_reasoning(text)
 
             with httpx.Client(timeout=120.0) as client:
                 with client.stream(
@@ -223,8 +257,8 @@ def analyze_finding_unified_streaming(
 
                                 # Extract reasoning delta
                                 reasoning_delta = _extract_reasoning_delta(chunk)
-                                if reasoning_delta and on_reasoning:
-                                    on_reasoning(reasoning_delta)
+                                if reasoning_delta:
+                                    emit_reasoning(reasoning_delta)
 
                                 # Extract content delta
                                 content_delta, is_final_text = _extract_stream_delta(chunk)
@@ -240,15 +274,12 @@ def analyze_finding_unified_streaming(
                                         # callback (we cannot un-emit already-streamed
                                         # text), but always reconcile collected_content
                                         # to the authoritative final text.
-                                        if on_content and len(content_delta) > len(
-                                            collected_content
-                                        ):
-                                            on_content(content_delta[len(collected_content) :])
+                                        if len(content_delta) > len(collected_content):
+                                            emit_content(content_delta[len(collected_content) :])
                                         collected_content = content_delta
                                     else:
                                         collected_content += content_delta
-                                        if on_content:
-                                            on_content(content_delta)
+                                        emit_content(content_delta)
 
                                 # Some Responses-compatible providers deliver the
                                 # final content only in response.completed/done.
@@ -267,8 +298,7 @@ def analyze_finding_unified_streaming(
                                                 continue
                                             previous_content_length = len(collected_content)
                                             collected_content = final_content
-                                            if on_content:
-                                                on_content(final_content[previous_content_length:])
+                                            emit_content(final_content[previous_content_length:])
 
                             except (json.JSONDecodeError, AttributeError, TypeError):
                                 # JSONDecodeError: not valid JSON. AttributeError/

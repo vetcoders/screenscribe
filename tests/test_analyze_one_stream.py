@@ -22,6 +22,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal
 
+import httpx
 import pytest
 
 from screenscribe.config import ScreenScribeConfig
@@ -296,3 +297,83 @@ def test_provider_error_event_still_aborts_stream(monkeypatch: pytest.MonkeyPatc
     # error would instead build a finding from "X" (result is not None).
     result = analyze_finding_unified_streaming(_detection(), None, _config())
     assert result is None
+
+
+# --- retry after a mid-stream transport drop must not duplicate output --------
+
+
+class _DropThenDoneResponse:
+    """iter_lines yields ``lines`` then, if ``drop_after`` is set, raises a
+    retriable transport error right after that index (simulating a connection
+    dropped mid-body, AFTER some deltas were already emitted)."""
+
+    def __init__(self, lines: list[str], drop_after: int | None = None) -> None:
+        self._lines = lines
+        self._drop_after = drop_after
+
+    def __enter__(self) -> "_DropThenDoneResponse":
+        return self
+
+    def __exit__(self, *a: object) -> Literal[False]:
+        return False
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def iter_lines(self) -> Iterator[str]:
+        for idx, line in enumerate(self._lines):
+            yield line
+            if self._drop_after is not None and idx == self._drop_after:
+                raise httpx.RemoteProtocolError("peer closed connection mid-stream")
+
+
+class _DropThenDoneClient:
+    def __init__(self, response: _DropThenDoneResponse) -> None:
+        self._response = response
+
+    def __enter__(self) -> "_DropThenDoneClient":
+        return self
+
+    def __exit__(self, *a: object) -> Literal[False]:
+        return False
+
+    def stream(self, *args: Any, **kwargs: Any) -> _DropThenDoneResponse:
+        return self._response
+
+
+def test_midstream_drop_retry_does_not_duplicate_emitted_deltas(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A retriable transport drop mid-stream is retried, but the deltas the first
+    attempt already forwarded must NOT be re-emitted on the retry.
+
+    First attempt streams "A" and "B" then drops (RemoteProtocolError, retriable);
+    the retry replays the full clean stream. Without callback suppression the
+    consumer would see ["A", "B", "A", "B"]; with it, only ["A", "B"].
+    """
+    screenshot = tmp_path / "shot.jpg"
+    screenshot.write_bytes(b"fake-image")
+
+    deltas = [_delta_line("A"), _delta_line("B")]
+    attempts = {"n": 0}
+
+    def _client_factory(*args: Any, **kwargs: Any) -> _DropThenDoneClient:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            # Emit both deltas, then drop after the second one (index 1).
+            return _DropThenDoneClient(_DropThenDoneResponse(deltas, drop_after=1))
+        # Retry: full clean stream, terminated properly.
+        return _DropThenDoneClient(_DropThenDoneResponse([*deltas, "data: [DONE]"]))
+
+    monkeypatch.setattr("screenscribe.unified_analysis.httpx.Client", _client_factory)
+    # Keep the retry backoff instant.
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda *_a, **_k: None)
+
+    captured: list[str] = []
+    result = analyze_finding_unified_streaming(
+        _detection(), screenshot, _config(), on_content=captured.append
+    )
+
+    assert attempts["n"] == 2, "the mid-stream drop should have been retried"
+    assert captured == ["A", "B"], f"retry duplicated already-emitted deltas: {captured}"
+    assert result is not None
