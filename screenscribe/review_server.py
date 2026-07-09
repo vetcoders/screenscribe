@@ -695,6 +695,11 @@ def create_review_app(
         """Return the source video via a stable local endpoint."""
         return selected_video_response()
 
+    @app.get(f"/{video_path.name}")
+    async def serve_selected_video_by_filename() -> FileResponse:
+        """Keep generated report video URLs working without following arbitrary symlinks."""
+        return selected_video_response()
+
     @app.get(f"/{report_filename}")
     async def serve_report() -> HTMLResponse:
         """Serve the generated report with the ``<video src>`` signed for the guard.

@@ -104,6 +104,36 @@ def test_video_by_filename_accepts_signed_token(
     assert resp.content == video_path.read_bytes()
 
 
+def test_video_by_filename_serves_video_outside_output_dir(tmp_path: Path) -> None:
+    """Regression (cut F): the by-filename route must serve a source video that
+    lives OUTSIDE output_dir. StaticFiles is mounted on output_dir, so it can
+    only cover an in-tree video; without the explicit route a *signed* request
+    for an out-of-tree video 404s. This is the case the in-tree fixture (which
+    StaticFiles happens to serve) cannot exercise."""
+    output_dir = tmp_path / "review"
+    output_dir.mkdir()
+    report_file = output_dir / "screen_report.html"
+    report_file.write_text("<html><body>report</body></html>", encoding="utf-8")
+    # Video lives OUTSIDE output_dir — StaticFiles cannot reach it.
+    video_path = tmp_path / "sources" / "recording.mov"
+    video_path.parent.mkdir()
+    video_path.write_bytes(b"\x00\x00\x00\x14ftypmp42\x00\x00\x00\x00mp42")
+
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    client = TestClient(app)
+
+    # Signed request → 200 with the video bytes (proves the route exists; a
+    # StaticFiles miss on the out-of-tree path would 404).
+    signed = video_access_token(app.state.session_token)
+    ok = client.get(f"/{video_path.name}?st={signed}", headers={"X-ScreenScribe-Token": ""})
+    assert ok.status_code == 200
+    assert ok.content == video_path.read_bytes()
+
+    # Without the signed token the guard rejects before routing.
+    denied = client.get(f"/{video_path.name}", headers={"X-ScreenScribe-Token": ""})
+    assert denied.status_code == 403
+
+
 def test_served_report_signs_video_src(tmp_path: Path) -> None:
     """The served report's <video src> is rewritten to the guarded, signed URL,
     while the on-disk report (shareable via file://) keeps its bare filename."""
