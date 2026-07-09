@@ -200,16 +200,18 @@ leak-scan:
 brand-scan:
 	$(PYTHON) scripts/ss_verify.py . --branding-only
 
-# Baseline-aware secrets scan (same engine as the pre-commit hook). Vendored
-# JSZip and the GENERATED site/demo report are excluded like in
-# .pre-commit-config.yaml / .screenscribe-verify.yml (benign high-entropy
-# assets). Lightweight by design. semgrep is now part of THE gate (`make
-# verify` runs the semgrep.yml ruleset); this target stays focused on the
-# detect-secrets baseline. The rest of the pre-commit suite can be run manually
-# via `make precommit-check`.
+# Baseline-aware secrets scan (same engine as the pre-commit hook). Only the
+# vendored minified JSZip is excluded (entropy false positive), matching
+# .pre-commit-config.yaml / .screenscribe-verify.yml. site/demo is NOT
+# excluded: a real secret pushed into the generated demo report must be caught
+# (fail-closed); its benign assets are pinned per-file in .secrets.baseline.
+# Lightweight by design. semgrep is now part of THE gate (`make verify` runs
+# the semgrep.yml ruleset); this target stays focused on the detect-secrets
+# baseline. The rest of the pre-commit suite can be run manually via
+# `make precommit-check`.
 secrets-check:
 	@printf '%s\n' 'detect-secrets (baseline) ...'
-	@git ls-files -z -- . ':(exclude)screenscribe/html_pro_assets/vendor' ':(exclude)site/demo' | xargs -0 uv run detect-secrets-hook --baseline .secrets.baseline && printf '%s\n' '  no new secrets vs baseline'
+	@git ls-files -z -- . ':(exclude)screenscribe/html_pro_assets/vendor' | xargs -0 uv run detect-secrets-hook --baseline .secrets.baseline && printf '%s\n' '  no new secrets vs baseline'
 
 precommit-check:
 	uv run pre-commit run --all-files

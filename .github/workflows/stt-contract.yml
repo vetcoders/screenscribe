@@ -1,0 +1,76 @@
+name: STT Contract
+
+# Nightly contract check against the LIVE providers (api.libraxis.cloud).
+# This is a DRIFT DETECTOR, not a PR gate: it runs the integration suite
+# (`-m integration`, which ci.yml deliberately deselects) so that a change in
+# the real STT/LLM API surface reddens HERE — on a schedule — before it can
+# reach a user. It never blocks a pull request and is intentionally NOT a
+# required check (do not wire it into branch protection).
+on:
+  schedule:
+    # 03:00 UTC nightly. Low-traffic window; one run/day keeps API cost bounded.
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: stt-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege GITHUB_TOKEN: this workflow only reads the repo.
+# Third-party actions are pinned to full commit SHAs (supply-chain hardening);
+# the trailing comment records the human-readable version, mirroring ci.yml.
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: STT contract (live api.libraxis.cloud)
+    runs-on: ubuntu-latest
+    env:
+      # The integration fixtures read the key straight from the environment:
+      # config.py maps LIBRAXIS_API_KEY -> stt_api_key (and, when unset, the
+      # generic api_key), so config_with_api.get_llm_api_key() resolves to this
+      # value and the tests do NOT skip. Set the secret in
+      # Settings -> Secrets and variables -> Actions.
+      LIBRAXIS_API_KEY: ${{ secrets.LIBRAXIS_API_KEY }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      # Fail EARLY and READABLY when the secret is missing, instead of letting
+      # every integration test skip (fixture: pytest.skip on no key) and turn a
+      # no-op run green. This makes an unconfigured secret an obvious red, not a
+      # silent pass.
+      - name: Require LIBRAXIS_API_KEY secret
+        shell: bash
+        run: |
+          if [ -z "${LIBRAXIS_API_KEY}" ]; then
+            echo "::error::secret LIBRAXIS_API_KEY not configured — add it in repo settings (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
+        with:
+          python-version: "3.13"
+
+      # The `integration` marker bucket also carries two ss_verify repo-ready
+      # tests that shell out to the full verifier (node JS-runtime smoke +
+      # ffmpeg probes). Provision both, mirroring ci.yml, so those tests run for
+      # real instead of failing on a missing toolchain.
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "20"
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Sync dependencies
+        run: uv sync --dev
+
+      # `--run-integration` is REQUIRED: conftest.py skips every integration test
+      # by default, so without this flag the suite would collect the tests and
+      # skip all of them — a green no-op. This flag is what makes the run hit the
+      # real endpoint.
+      - name: STT contract tests (live API, -m integration)
+        run: uv run pytest -m integration --run-integration -q

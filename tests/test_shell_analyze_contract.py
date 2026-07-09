@@ -15,6 +15,9 @@ def _render_analyze() -> str:
             "ui_language": "pl",
             "video_name": "kontrakt-demo.mp4",
             "video_name_escaped": "kontrakt-demo.mp4",
+            # The live analyze server always signs the source-video URL for the
+            # localhost guard (server_security.video_access_token); mirror that.
+            "video_query": "?st=" + "a" * 64,
             "speech_lang_label": "PL",
             "body_mode": "analyze",
             "body_default_lang": "pl",
@@ -80,7 +83,11 @@ def test_analyze_shell_dom_contract() -> None:
     ):
         assert f'id="{critical_id}"' in html
 
-    assert re.search(r'<video[^>]+id="videoPlayer"[^>]+controls[^>]+src="/video"', html)
+    # The analyze surface signs the source-video URL for the localhost guard:
+    # <video src> can't carry the token header, so it rides the ``st`` query.
+    assert re.search(
+        r'<video[^>]+id="videoPlayer"[^>]+controls[^>]+src="/video\?st=[0-9a-f]+"', html
+    )
     assert 'id="videoControls"' not in html
     assert 'class="video-controls-pro"' not in html
     assert 'id="detachReviewBtn"' not in html

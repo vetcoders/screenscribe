@@ -484,7 +484,18 @@ class TestAnalyzeServer:
     def test_analyze_page_has_theme_support(
         self, config_with_api: ScreenScribeConfig, sample_video: Path
     ) -> None:
-        """Page has CSS variables for theming (light/dark mode support)."""
+        """Page ships its theme via inline CSS custom properties (design tokens).
+
+        Theming is delivered by the shared shell: ``renderer._head`` inlines
+        ``report-pro.css`` + ``screenscribe-theme.css`` into a single ``<style>``
+        block. The screenscribe identity theme is a token layer — ``:root``
+        defines the design tokens (e.g. ``--surface-primary`` as the page
+        background surface) and the base stylesheet consumes them via
+        ``var(--surface-primary)``. There is no light/dark ``prefers-color-scheme``
+        toggle today; the assertion therefore checks the mechanism that actually
+        exists (defined + consumed tokens) so it still fails if the theme layer
+        is dropped or the shell stops inlining it — not a loosened status check.
+        """
         from fastapi.testclient import TestClient
 
         from screenscribe.analyze_server import create_analyze_app
@@ -495,8 +506,14 @@ class TestAnalyzeServer:
         response = client.get("/")
         html = response.text
 
-        # CSS custom properties for theming
-        assert "--bg" in html or "--background" in html or "prefers-color-scheme" in html
+        # Design tokens are declared (:root) and the primary background-surface
+        # token is both defined and consumed — proof the theme is actually wired,
+        # not dead CSS.
+        assert ":root" in html, "theme token :root block missing from analyze page"
+        assert "--surface-primary" in html, "background-surface design token not defined"
+        assert "var(--surface-primary)" in html, (
+            "background-surface token declared but never consumed"
+        )
 
     def test_analyze_page_has_voicerecorder_js(
         self, config_with_api: ScreenScribeConfig, sample_video: Path

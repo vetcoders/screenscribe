@@ -28,6 +28,17 @@ cross-site page cannot compute it without the session token, so the endpoint
 stays as unforgeable as the header path while remaining ``<img>``-loadable.
 Every other ``/api/*`` request (and any non-GET on the frame path) still
 requires the header.
+
+* **Session token (video paths)** — the source-video endpoints (``/video`` and,
+  on the review server, the by-filename twin) serve media into a ``<video src>``
+  element, which — exactly like ``<img src>`` — cannot carry a custom header.
+  Callers register those exact paths through ``install_security(video_paths=...)``
+  and each such URL carries a signature in the same ``st`` query parameter, an
+  HMAC-SHA256 of a fixed ``"video"`` label keyed by the session token (see
+  :func:`video_access_token`). A cross-site page cannot forge it, and unlike the
+  raw session token the signature never appears verbatim in a URL, so it stays
+  out of the browser history / access logs. The header path still works for
+  non-browser clients.
 """
 
 from __future__ import annotations
@@ -89,6 +100,29 @@ def _frame_query_token_ok(request: Request, token: str) -> bool:
     return bool(supplied) and hmac.compare_digest(supplied, expected)
 
 
+def video_access_token(session_token: str) -> str:
+    """Derive the signature carried by ``<video src>`` URLs.
+
+    HMAC-SHA256 keyed by the per-process session token over a fixed ``"video"``
+    label: valid only for this process, and only useful on the video GET paths
+    the guard scopes it to. A ``<video src>`` cannot carry the session-token
+    header (same browser constraint as ``<img src>``), so the URL carries this
+    signature instead. Unlike the raw session token it never appears verbatim in
+    a URL, so it stays out of the browser history / access logs.
+    """
+    return hmac.new(session_token.encode(), b"video", hashlib.sha256).hexdigest()
+
+
+def _video_query_token_ok(request: Request, expected_signature: str) -> bool:
+    """True only for a GET carrying a valid ``st`` video signature. The caller
+    scopes this to the registered video paths; the signature is process-wide (one
+    source video per session), not path-derived."""
+    if request.method != "GET":
+        return False
+    supplied = request.query_params.get("st", "")
+    return bool(supplied) and hmac.compare_digest(supplied, expected_signature)
+
+
 def _normalize_host(host: str) -> str:
     """Case-fold and strip the trailing FQDN dot — ``LOCALHOST`` and
     ``localhost.`` are the same host as ``localhost``."""
@@ -120,15 +154,26 @@ def _is_api_path(path: str) -> bool:
     return path == "/api" or path.startswith("/api/")
 
 
-def install_security(app: FastAPI, token: str) -> None:
-    """Attach the localhost guard middleware and record the token on app.state."""
+def install_security(
+    app: FastAPI, token: str, *, video_paths: frozenset[str] = frozenset()
+) -> None:
+    """Attach the localhost guard middleware and record the token on app.state.
+
+    ``video_paths`` names the exact GET paths that serve the source video into a
+    ``<video src>`` element (e.g. ``/video`` and, on the review server, the
+    by-filename twin). Those cannot carry the session-token header, so a GET on
+    one of them authenticates via the signed ``st`` query parameter
+    (:func:`video_access_token`) — or the header, for non-browser clients.
+    """
     app.state.session_token = token
+    expected_video_signature = video_access_token(token)
 
     @app.middleware("http")
     async def _guard(request: Request, call_next):  # type: ignore[no-untyped-def]
         if not _host_is_local(request):
             return JSONResponse(status_code=403, content={"detail": "Forbidden: non-local Host"})
-        if _is_api_path(request.url.path):
+        path = request.url.path
+        if _is_api_path(path):
             if not _origin_is_local(request):
                 return JSONResponse(
                     status_code=403, content={"detail": "Forbidden: cross-origin request"}
@@ -136,6 +181,14 @@ def install_security(app: FastAPI, token: str) -> None:
             supplied = request.headers.get("X-ScreenScribe-Token", "")
             header_ok = bool(supplied) and secrets.compare_digest(supplied, token)
             if not (header_ok or _frame_query_token_ok(request, token)):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Forbidden: missing or invalid session token"},
+                )
+        elif path in video_paths:
+            supplied = request.headers.get("X-ScreenScribe-Token", "")
+            header_ok = bool(supplied) and secrets.compare_digest(supplied, token)
+            if not (header_ok or _video_query_token_ok(request, expected_video_signature)):
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "Forbidden: missing or invalid session token"},

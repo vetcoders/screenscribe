@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from screenscribe.config import ScreenScribeConfig
 from screenscribe.review_server import MAX_AUDIO_BYTES, create_review_app
+from screenscribe.server_security import video_access_token
 from screenscribe.transcribe import Segment, TranscriptionResult
 
 # A browser STT upload comfortably over the 1024-byte min-length guard, so these
@@ -66,9 +67,114 @@ def test_review_server_serves_only_selected_video_symlink(
     secret_response = client.get("/secret-link.txt")
     assert secret_response.status_code == 404
 
-    video_response = client.get("/video")
+    signed = video_access_token(app.state.session_token)
+    video_response = client.get(f"/video?st={signed}", headers={"X-ScreenScribe-Token": ""})
     assert video_response.status_code == 200
     assert video_response.content == video_path.read_bytes()
+
+
+def test_video_endpoints_require_signed_token(
+    review_workspace: tuple[Path, Path, Path],
+) -> None:
+    """Both source-video endpoints (``/video`` and the by-filename twin) reject a
+    request without the signed ``st`` — the <video src> the browser makes."""
+    output_dir, report_file, video_path = review_workspace
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    client = TestClient(app)
+
+    for path in ("/video", f"/{video_path.name}"):
+        # No token at all: 403 (empty header suppresses any conftest auto-token).
+        assert client.get(path, headers={"X-ScreenScribe-Token": ""}).status_code == 403
+        # Forged signature: still 403.
+        forged = client.get(f"{path}?st={'0' * 64}", headers={"X-ScreenScribe-Token": ""})
+        assert forged.status_code == 403
+
+
+def test_video_by_filename_accepts_signed_token(
+    review_workspace: tuple[Path, Path, Path],
+) -> None:
+    """The by-filename twin serves the video when the signed ``st`` is present."""
+    output_dir, report_file, video_path = review_workspace
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    client = TestClient(app)
+
+    signed = video_access_token(app.state.session_token)
+    resp = client.get(f"/{video_path.name}?st={signed}", headers={"X-ScreenScribe-Token": ""})
+    assert resp.status_code == 200
+    assert resp.content == video_path.read_bytes()
+
+
+def test_video_by_filename_serves_video_outside_output_dir(tmp_path: Path) -> None:
+    """Regression (cut F): the by-filename route must serve a source video that
+    lives OUTSIDE output_dir. StaticFiles is mounted on output_dir, so it can
+    only cover an in-tree video; without the explicit route a *signed* request
+    for an out-of-tree video 404s. This is the case the in-tree fixture (which
+    StaticFiles happens to serve) cannot exercise."""
+    output_dir = tmp_path / "review"
+    output_dir.mkdir()
+    report_file = output_dir / "screen_report.html"
+    report_file.write_text("<html><body>report</body></html>", encoding="utf-8")
+    # Video lives OUTSIDE output_dir — StaticFiles cannot reach it.
+    video_path = tmp_path / "sources" / "recording.mov"
+    video_path.parent.mkdir()
+    video_path.write_bytes(b"\x00\x00\x00\x14ftypmp42\x00\x00\x00\x00mp42")
+
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    client = TestClient(app)
+
+    # Signed request → 200 with the video bytes (proves the route exists; a
+    # StaticFiles miss on the out-of-tree path would 404).
+    signed = video_access_token(app.state.session_token)
+    ok = client.get(f"/{video_path.name}?st={signed}", headers={"X-ScreenScribe-Token": ""})
+    assert ok.status_code == 200
+    assert ok.content == video_path.read_bytes()
+
+    # Without the signed token the guard rejects before routing.
+    denied = client.get(f"/{video_path.name}", headers={"X-ScreenScribe-Token": ""})
+    assert denied.status_code == 403
+
+
+def test_served_report_signs_video_src(tmp_path: Path) -> None:
+    """The served report's <video src> is rewritten to the guarded, signed URL,
+    while the on-disk report (shareable via file://) keeps its bare filename."""
+    output_dir = tmp_path / "review"
+    output_dir.mkdir()
+    video_path = output_dir / "clip.mov"
+    video_path.write_bytes(b"\x00\x00\x00\x14ftypmp42\x00\x00\x00\x00mp42")
+    report_file = output_dir / "clip_report.html"
+    on_disk = f'<html><body><video id="videoPlayer" controls src="{video_path.name}"></video></body></html>'
+    report_file.write_text(on_disk, encoding="utf-8")
+
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    client = TestClient(app)
+
+    resp = client.get(f"/{report_file.name}")
+    assert resp.status_code == 200
+    signed = video_access_token(app.state.session_token)
+    assert f'src="/video?st={signed}"' in resp.text
+    assert f'src="{video_path.name}"' not in resp.text
+    # On-disk report is untouched — standalone file:// still points at the sibling.
+    assert f'src="{video_path.name}"' in report_file.read_text(encoding="utf-8")
+
+
+def test_served_report_leaves_base64_video_untouched(tmp_path: Path) -> None:
+    """A data: embedded video needs no server round-trip, so it is left as-is."""
+    output_dir = tmp_path / "review"
+    output_dir.mkdir()
+    video_path = output_dir / "clip.mov"
+    video_path.write_bytes(b"\x00\x00\x00\x14ftypmp42\x00\x00\x00\x00mp42")
+    report_file = output_dir / "clip_report.html"
+    data_url = "data:video/mp4;base64,AAAA"
+    report_file.write_text(
+        f'<html><body><video id="videoPlayer" controls src="{data_url}"></video></body></html>',
+        encoding="utf-8",
+    )
+
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    resp = TestClient(app).get(f"/{report_file.name}")
+    assert resp.status_code == 200
+    assert f'src="{data_url}"' in resp.text
+    assert "?st=" not in resp.text
 
 
 def test_review_server_manual_frame_analysis(

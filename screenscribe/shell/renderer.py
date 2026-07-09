@@ -397,7 +397,12 @@ def _surface_context(config: SurfaceConfig, context: Mapping[str, Any]) -> dict[
         for key, value in _SERVER_I18N[language].get(namespace, {}).items():
             surface_context[f"t_{key}"] = html.escape(value, quote=True)
     if config.features.get("native_video"):
-        surface_context["video_src_attr"] = 'src="/video"'
+        # Append the signed ``st`` query when the caller supplies one (the live
+        # analyze server does; the token-free demo surface leaves it empty and
+        # renders a bare ``/video``). See server_security.video_access_token.
+        video_query = str(surface_context.get("video_query", ""))
+        video_src = "/video" + video_query
+        surface_context["video_src_attr"] = f'src="{html.escape(video_src, quote=True)}"'
         surface_context["vtt_track"] = ""
         surface_context["no_html5_video_text"] = html.escape(
             _t(config, context, "noHtml5Video", namespace="media")
