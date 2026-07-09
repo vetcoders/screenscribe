@@ -42,14 +42,14 @@ unintended destination, or writes secrets into an artifact (report, log, ZIP).
 The review and analyze servers bind only to `127.0.0.1` and reject any request
 whose Host header is non-local (a DNS-rebinding guard on every path); `/api/*`
 routes additionally require a per-process session token and a local Origin. The
-source-video endpoints (`/video`, and on the review server its by-filename twin)
+source-video endpoints (`/video`, and on the review server, its by-filename twin)
 are token-guarded too: a `<video src>` element cannot attach a custom header, so
 each video URL instead carries an HMAC-SHA256 signature — keyed by the session
 token — in an `st` query parameter, and a GET without a valid signature (or the
 header, for non-browser clients) is rejected with `403`. The analyze dashboard
 signs these URLs as it renders; the review server injects the signature into the
 report bytes it serves, so the report saved on disk stays token-free and remains
-shareable (opened via `file://` its bare-filename `<video src>` still loads the
+shareable (when opened via `file://`, its bare-filename `<video src>` still loads the
 sibling video).
 
 ## Accepted risks
