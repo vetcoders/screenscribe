@@ -32,8 +32,8 @@ critical_assets:
 # detect-secrets hook exclude the same paths. Declared here so the script stays
 # portable (no hardcode).
 #   - html_pro_assets/vendor: vendored minified JSZip (entropy false positive).
-#   - site/demo: GENERATED demo report (inlined JSZip + embedded base64 assets);
-#     excluded by path so the baseline does not churn on every regeneration.
+# site/demo is deliberately NOT excluded: a real secret pushed into the
+# generated demo report must be caught (fail-closed). Its benign high-entropy
+# assets are pinned per-file in .secrets.baseline instead of blanket-excluded.
 secrets_exclude:
   - "screenscribe/html_pro_assets/vendor"
-  - "site/demo/"

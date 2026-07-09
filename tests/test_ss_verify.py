@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -195,6 +196,10 @@ _PROVIDER_TOKEN_LEAK = "ghp" + "_" + ("a" * 36)  # matches ghp_[A-Za-z0-9]{30,}
 # LibraxisAI is an OpenAI-compatible gateway (/v1/responses), so a hardcoded
 # LibraxisAI key takes the `sk-` form covered by LEAK_CONTENT_RE.
 _OPENAI_COMPAT_KEY_LEAK = "sk" + "-" + ("b" * 40)  # matches sk-[A-Za-z0-9_-]{20,}
+# AWS access-key shape (AKIA + 16 upper/digits), split so the literal never
+# appears contiguously in this source file — otherwise detect-secrets would
+# flag the test itself. Not a real key.
+_AWS_KEY_LEAK = "AKIA" + "Z7XVW3RTLK4NQ2PB"
 
 
 def test_leak_scan_fails_on_local_user_path(tmp_path: Path) -> None:
@@ -445,6 +450,132 @@ def test_repo_contract_matches_real_values() -> None:
     assert c.tests == "not integration"
     assert c.coverage_floor == 80
     assert "screenscribe/html_pro_assets/vendor" in c.secrets_exclude
+    # site/demo is deliberately NOT excluded from the secrets scan: a real
+    # secret pushed into the generated demo report must be caught (fail-closed).
+    assert not any(e.strip("/") == "site/demo" for e in c.secrets_exclude), (
+        "site/demo must NOT be blanket-excluded from the no-secrets scan"
+    )
+
+
+# ---------------------------------------------------------------------------
+# no-secrets scan narrowing: site/demo is scanned (fail-closed), vendor stays
+# excluded. The planted-secret proof is the point of the narrowing — without
+# it the change would be a claim, not a fact.
+# ---------------------------------------------------------------------------
+
+
+def _narrowed_contract() -> ssv.Contract:
+    """Contract mirroring the repo after the site/demo exclude was dropped."""
+    return ssv.Contract(
+        tests="not integration",
+        coverage_floor=80,
+        runtime_command=None,
+        critical_assets=[],
+        secrets_exclude=["screenscribe/html_pro_assets/vendor"],
+        source="config",
+    )
+
+
+def test_no_secrets_routes_site_demo_into_scan_after_narrowing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With site/demo removed from the exclude list, the generated demo report
+    reaches the detect-secrets scanner; the vendored bundle stays excluded."""
+    (tmp_path / ".secrets.baseline").write_text("{}\n")
+    demo = tmp_path / "site" / "demo"
+    demo.mkdir(parents=True)
+    (demo / "report.html").write_text("<html>ok</html>\n")
+    vendor = tmp_path / "screenscribe" / "html_pro_assets" / "vendor"
+    vendor.mkdir(parents=True)
+    (vendor / "jszip.min.js").write_text("var a=1;\n")
+    (tmp_path / "app.py").write_text("x = 1\n")
+
+    captured: list[list[str]] = []
+    real_run = ssv._run
+
+    def fake_run(cmd, cwd=None, env=None, timeout=900):
+        # Intercept only the detect-secrets-hook invocation; let real git run.
+        if len(cmd) >= 3 and cmd[:3] == ["uv", "run", "detect-secrets-hook"]:
+            captured.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return real_run(cmd, cwd=cwd, env=env, timeout=timeout)
+
+    monkeypatch.setattr(ssv, "_run", fake_run)
+
+    res = ssv.check_no_secrets(tmp_path, _narrowed_contract())
+    assert res.ok is True  # fake hook returns clean
+    assert captured, "detect-secrets-hook was never invoked"
+    scanned = [f.replace(os.sep, "/") for f in captured[0]]
+    assert "site/demo/report.html" in scanned, scanned
+    assert not any("html_pro_assets/vendor" in f for f in scanned), scanned
+
+
+def test_no_secrets_keeps_vendor_excluded_when_still_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exclude mechanism still drops a listed path (guards vendor)."""
+    (tmp_path / ".secrets.baseline").write_text("{}\n")
+    vendor = tmp_path / "screenscribe" / "html_pro_assets" / "vendor"
+    vendor.mkdir(parents=True)
+    (vendor / "jszip.min.js").write_text("var a=1;\n")
+    (tmp_path / "app.py").write_text("x = 1\n")
+
+    captured: list[list[str]] = []
+    real_run = ssv._run
+
+    def fake_run(cmd, cwd=None, env=None, timeout=900):
+        if len(cmd) >= 3 and cmd[:3] == ["uv", "run", "detect-secrets-hook"]:
+            captured.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return real_run(cmd, cwd=cwd, env=env, timeout=timeout)
+
+    monkeypatch.setattr(ssv, "_run", fake_run)
+
+    res = ssv.check_no_secrets(tmp_path, _narrowed_contract())
+    assert res.ok is True
+    assert captured, "detect-secrets-hook was never invoked"
+    scanned = [f.replace(os.sep, "/") for f in captured[0]]
+    assert not any("html_pro_assets/vendor" in f for f in scanned), scanned
+    assert "app.py" in scanned
+
+
+def test_detect_secrets_flags_planted_key_in_demo_file(tmp_path: Path) -> None:
+    """The engine that now sees site/demo catches a real secret shape: an AWS
+    access key planted into a demo report is flagged (fail-closed proof)."""
+    from detect_secrets.core.scan import scan_line
+    from detect_secrets.settings import transient_settings
+
+    demo = tmp_path / "site" / "demo"
+    demo.mkdir(parents=True)
+    (demo / "report.html").write_text(f"<html><body>{_AWS_KEY_LEAK}</body></html>\n")
+
+    with transient_settings({"plugins_used": [{"name": "AWSKeyDetector"}]}):
+        text = (demo / "report.html").read_text()
+        found = {s.type for line in text.splitlines() for s in scan_line(line)}
+    assert "AWS Access Key" in found, found
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_no_secrets_end_to_end_catches_demo_secret(tmp_path: Path) -> None:
+    """Full path through check_no_secrets: a real secret in a git-tracked
+    site/demo file makes the no-secrets check FAIL, now that site/demo is not
+    excluded. Integration-marked: needs the uv-resolvable detect-secrets-hook."""
+    # A git repo so check_no_secrets takes its git-tracked branch (the real
+    # path); `git ls-files` sees staged files, so no commit is needed. `git` is
+    # a trusted system tool here (S607 partial-path is the intended test setup).
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)  # noqa: S607
+    (tmp_path / ".secrets.baseline").write_text(
+        (REPO_ROOT / ".secrets.baseline").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    demo = tmp_path / "site" / "demo"
+    demo.mkdir(parents=True)
+    (demo / "report.html").write_text(f"<html><body>{_AWS_KEY_LEAK}</body></html>\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)  # noqa: S607
+
+    res = ssv.check_no_secrets(tmp_path, _narrowed_contract())
+    assert res.ok is False, res.detail
 
 
 # ---------------------------------------------------------------------------
