@@ -12,6 +12,7 @@ import base64
 import logging
 import mimetypes
 import os
+import re
 import tempfile
 import threading
 import uuid
@@ -21,7 +22,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -49,6 +50,11 @@ logger = logging.getLogger(__name__)
 MAX_FRAME_BASE64_CHARS = 20_000_000  # ~15 MB decoded frame payload cap
 JPEG_MAGIC = b"\xff\xd8\xff"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+# The generated report's <video src="..."> — captured so the review server can
+# sign it at serve time (see serve_report). Groups: (prefix incl. src="), value,
+# (closing quote). Lazy [^>]*? keeps the match inside the single <video> tag.
+_VIDEO_SRC_RE = re.compile(r'(<video\b[^>]*?\bsrc=")([^"]*)(")', re.IGNORECASE)
 
 
 class ManualFrameRequest(BaseModel):
@@ -335,10 +341,16 @@ def create_review_app(
     )
 
     # Localhost-only security: per-process session token + Host/Origin guards on
-    # /api/* (the token is handed to the UI via the URL fragment).
-    from .server_security import generate_session_token, install_security
+    # /api/* (the token is handed to the UI via the URL fragment). The source
+    # video is served into a <video src>, which can't carry the token header, so
+    # both video paths authenticate via the signed ``st`` query parameter.
+    from .server_security import generate_session_token, install_security, video_access_token
 
-    install_security(app, generate_session_token())
+    install_security(
+        app,
+        generate_session_token(),
+        video_paths=frozenset({"/video", f"/{video_path.name}"}),
+    )
 
     install_stt_upload_cap(app)
 
@@ -683,10 +695,32 @@ def create_review_app(
         """Return the source video via a stable local endpoint."""
         return selected_video_response()
 
-    @app.get(f"/{video_path.name}")
-    async def serve_selected_video_by_filename() -> FileResponse:
-        """Keep generated report video URLs working without following arbitrary symlinks."""
-        return selected_video_response()
+    @app.get(f"/{report_filename}")
+    async def serve_report() -> HTMLResponse:
+        """Serve the generated report with the ``<video src>`` signed for the guard.
+
+        The on-disk report is untouched (it stays shareable: opened via
+        ``file://`` its bare-filename ``<video src>`` still loads the sibling
+        video). When served through this authenticated server, the source video
+        endpoints require the signed ``st`` query — which a pre-generated,
+        token-free report cannot bake — so the signature is injected into the
+        served bytes here (a ``data:`` embed needs no server round-trip and is
+        left as-is).
+        """
+        report_path = session.output_dir / report_filename
+        if not report_path.exists():
+            raise HTTPException(status_code=404, detail="Report not found.")
+        html_text = report_path.read_text(encoding="utf-8")
+        signed_src = f"/video?st={video_access_token(app.state.session_token)}"
+
+        def _sign(match: re.Match[str]) -> str:
+            current = match.group(2)
+            if not current or current.startswith("data:"):
+                return match.group(0)
+            return f"{match.group(1)}{signed_src}{match.group(3)}"
+
+        html_text = _VIDEO_SRC_RE.sub(_sign, html_text, count=1)
+        return HTMLResponse(content=html_text)
 
     @app.post("/api/stt")
     async def transcribe_voice(

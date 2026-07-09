@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from screenscribe.analyze_server import create_analyze_app
 from screenscribe.config import ScreenScribeConfig
+from screenscribe.server_security import video_access_token
 
 
 @pytest.fixture
@@ -204,6 +205,55 @@ def test_signed_query_token_does_not_unlock_other_api_paths(sample_video: Path) 
     assert resp.status_code == 403
     # Non-GET on the frame path itself: still 403, even with a valid signature.
     resp = client.post(marked["frame_url"], headers={"X-ScreenScribe-Token": ""})
+    assert resp.status_code == 403
+
+
+# --- Signed query token for the source-video <video> request ----------------
+# <video src> can't carry the session-token header any more than <img src> can,
+# so GET /video authenticates via the signed "?st=" video signature.
+
+
+def test_video_get_accepts_signed_query_token_without_header(sample_video: Path) -> None:
+    """The exact request a <video src> makes: signed URL, no token header."""
+    app, token = _app(sample_video)
+    client = TestClient(app)
+    resp = client.get(
+        f"/video?st={video_access_token(token)}",
+        headers={"X-ScreenScribe-Token": ""},
+    )
+    assert resp.status_code == 200
+
+
+def test_video_get_rejects_missing_signature_without_header(sample_video: Path) -> None:
+    app, _ = _app(sample_video)
+    resp = TestClient(app).get("/video", headers={"X-ScreenScribe-Token": ""})
+    assert resp.status_code == 403
+
+
+def test_video_get_rejects_forged_signature(sample_video: Path) -> None:
+    app, _ = _app(sample_video)
+    resp = TestClient(app).get(
+        f"/video?st={'0' * 64}",
+        headers={"X-ScreenScribe-Token": ""},
+    )
+    assert resp.status_code == 403
+
+
+def test_video_get_accepts_session_token_header(sample_video: Path) -> None:
+    """A non-browser client may still authenticate with the header instead."""
+    app, token = _app(sample_video)
+    resp = TestClient(app).get("/video", headers={"X-ScreenScribe-Token": token})
+    assert resp.status_code == 200
+
+
+def test_video_signature_does_not_unlock_api_paths(sample_video: Path) -> None:
+    """The video signature is scoped to the video paths — it must not weaken the
+    guard for any /api/* path."""
+    app, token = _app(sample_video)
+    resp = TestClient(app).get(
+        f"/api/markers?st={video_access_token(token)}",
+        headers={"X-ScreenScribe-Token": ""},
+    )
     assert resp.status_code == 403
 
 

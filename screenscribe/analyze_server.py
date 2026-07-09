@@ -220,9 +220,14 @@ def create_analyze_app(video_path: Path, config: ScreenScribeConfig) -> FastAPI:
 
     # Localhost-only security: per-process session token + Host/Origin guards on
     # /api/* (the token is handed to the UI via the URL fragment; see index()).
-    from .server_security import frame_access_token, generate_session_token, install_security
+    from .server_security import (
+        frame_access_token,
+        generate_session_token,
+        install_security,
+        video_access_token,
+    )
 
-    install_security(app, generate_session_token())
+    install_security(app, generate_session_token(), video_paths=frozenset({"/video"}))
 
     def marker_frame_url(marker: FrameMarker) -> str | None:
         """Frame URL for ``<img src>``: image requests can't carry the session
@@ -815,11 +820,15 @@ def create_analyze_app(video_path: Path, config: ScreenScribeConfig) -> FastAPI:
         from .shell import ANALYZE_SURFACE, render_surface
 
         lang = config.language[:2].lower()  # "pl" or "en"
+        # The <video src> can't carry the session-token header, so hand the guard
+        # its signature in the query string (same idiom as the frame <img> URLs).
+        video_query = f"?st={video_access_token(app.state.session_token)}"
         context = {
             "document_language": html.escape(lang),
             "ui_language": html.escape(lang),
             "video_name": video_path.name,
             "video_name_escaped": html.escape(video_path.name),
+            "video_query": video_query,
             "speech_lang_label": html.escape(lang.upper()),
             "body_mode": "analyze",
             "body_default_lang": lang,
