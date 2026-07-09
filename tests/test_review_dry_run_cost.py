@@ -48,7 +48,9 @@ def _run_dry_run(
     monkeypatch.setattr("screenscribe.cli.check_ffmpeg_installed", lambda: None)
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 29.0)
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", lambda *a, **kw: _transcription())
+    monkeypatch.setattr(
+        "screenscribe.transcribe.transcribe_audio", lambda *a, **kw: _transcription()
+    )
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)
     monkeypatch.setattr(
         "screenscribe.cli.semantic_prefilter",

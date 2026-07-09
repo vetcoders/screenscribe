@@ -48,7 +48,7 @@ def test_chunked_short_audio_uses_single_shot(
     def _boom(*_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("short audio must not be chunked")
 
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", _fake_transcribe)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", _fake_transcribe)
     monkeypatch.setattr("screenscribe.audio.split_audio_chunks", _boom)
 
     result = transcribe_audio_chunked(audio, chunk_duration=60.0)
@@ -87,7 +87,7 @@ def test_chunked_long_audio_offsets_and_dedups(
             response_id="r1",
         )
 
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", _fake_transcribe)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", _fake_transcribe)
 
     result = transcribe_audio_chunked(audio, chunk_duration=60.0)
 
@@ -136,7 +136,7 @@ def test_chunked_keeps_overlap_segment_extending_past_seam(
             response_id="r1",
         )
 
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", _fake_transcribe)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", _fake_transcribe)
 
     result = transcribe_audio_chunked(audio, chunk_duration=60.0)
 
@@ -171,7 +171,7 @@ def test_chunked_falls_back_to_single_shot_when_duration_unprobeable(
         calls.append(path)
         return _result([Segment(0, 0.0, 1.0, "ok")], text="ok")
 
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", _fake_transcribe)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", _fake_transcribe)
 
     result = transcribe_audio_chunked(audio, chunk_duration=60.0)
 
@@ -219,7 +219,7 @@ def test_chunked_merge_propagates_synthetic_flag(
             timestamps_are_synthetic=True,
         )
 
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", _fake_transcribe)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", _fake_transcribe)
 
     result = transcribe_audio_chunked(audio, chunk_duration=60.0)
 
@@ -244,7 +244,7 @@ def test_chunked_merge_keeps_synthetic_false_when_all_real(
     def _fake_transcribe(path: Path, **_kwargs: Any) -> TranscriptionResult:
         return _result([Segment(0, 0.0, 5.0, "x")], text="x", response_id="r")
 
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", _fake_transcribe)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", _fake_transcribe)
 
     result = transcribe_audio_chunked(audio, chunk_duration=60.0)
 
@@ -293,7 +293,7 @@ def test_chunked_synthetic_chunks_keep_text_despite_overlap(
             timestamps_are_synthetic=True,
         )
 
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", _fake_transcribe)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", _fake_transcribe)
 
     result = transcribe_audio_chunked(audio, chunk_duration=60.0)
 

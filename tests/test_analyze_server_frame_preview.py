@@ -104,6 +104,40 @@ def test_mark_frame_preserves_browser_jpeg_mime(sample_video: Path) -> None:
     assert frame.content == JPEG_FRAME_BYTES
 
 
+def test_mark_frame_drops_base64_but_preview_still_serves(sample_video: Path) -> None:
+    """412: after a successful persist the up-to-20 MB base64 copy is dropped
+    from the in-memory marker (the on-disk file is the source of truth), yet the
+    frame preview endpoint still serves the image from that file."""
+    app = create_analyze_app(sample_video, _config())
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/mark",
+        json={
+            "timestamp": 7.0,
+            "frame_base64": PNG_1X1_BASE64,
+            "transcript": "drop base64",
+            "notes": "",
+        },
+    )
+    assert response.status_code == 200
+    marker_id = response.json()["marker_id"]
+
+    # The persisted file — not the in-memory base64 — is now the source of
+    # truth, so the marker stored in the session carries an empty frame_base64.
+    marker = app.state.session.markers[marker_id]
+    assert marker.frame_base64 == ""
+    assert marker.frame_path is not None
+    assert marker.frame_path.exists()
+
+    # The preview endpoint still serves the exact bytes, straight from disk
+    # (conftest injects the session auth token like the other preview tests).
+    frame = client.get(f"/api/marker/{marker_id}/frame")
+    assert frame.status_code == 200
+    assert frame.headers["content-type"].startswith("image/png")
+    assert frame.content == base64.b64decode(PNG_1X1_BASE64)
+
+
 @pytest.mark.parametrize(
     ("frame_base64", "expected_detail"),
     [

@@ -103,7 +103,7 @@ def _install_real_report_stubs(
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 29.0)
     monkeypatch.setattr(
-        "screenscribe.cli.transcribe_audio",
+        "screenscribe.transcribe.transcribe_audio",
         lambda *a, **kw: _three_segment_transcription(),
     )
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)

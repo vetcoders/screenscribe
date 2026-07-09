@@ -380,6 +380,53 @@ def _mark_one_frame(client: TestClient, *, transcript: str = "", notes: str = ""
     return mark.json()["marker_id"]
 
 
+def test_save_sweeps_orphan_manual_frame_but_keeps_live_pending(
+    review_workspace: tuple[Path, Path, Path],
+) -> None:
+    """finding 156: /api/save sweeps an abandoned manual-frame image while a live
+    pending marker's image survives.
+
+    A capture is written to disk at mark time so it survives a cold load. If it is
+    then never saved into report.json and never explicitly deleted (e.g. left
+    behind by a prior process whose in-memory marker is gone), the file lingers
+    forever — HTTP-reachable via the static mount (privacy leak) and disk litter.
+    The save-time sweep removes it, but the keep-set is the union of report.json
+    frame_paths and EVERY live session marker, so a marked-but-unsaved (pending,
+    unanalyzed) capture must NOT be swept: that would be the data-loss regression
+    this cut most risks.
+    """
+    import json
+
+    output_dir, report_file, video_path = review_workspace
+    json_path = output_dir / "screen_report.json"
+    json_path.write_text(json.dumps({"video": "screen.mov", "findings": []}), encoding="utf-8")
+
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    client = TestClient(app)
+
+    # A live pending marker: marked this session, never analyzed and never in a
+    # save body. Its on-disk image must survive the sweep purely because the
+    # marker is still live in the session.
+    live_marker_id = _mark_one_frame(client)
+    frames_dir = output_dir / "manual_frames"
+    live_files = list(frames_dir.glob(f"{live_marker_id}.*"))
+    assert len(live_files) == 1, "mark should have written the live frame to disk"
+    live_file = live_files[0]
+
+    # An orphaned capture: a real JPEG left under manual_frames/ with no live
+    # marker and no report.json reference (an abandoned mark). Written directly to
+    # mimic a file whose in-memory marker is already gone.
+    orphan_file = frames_dir / "orphan-abandoned.jpg"
+    orphan_file.write_bytes(bytes.fromhex("FFD8FF") + b"stale-capture-bytes")
+    assert orphan_file.is_file()
+
+    save_response = client.post("/api/save")
+    assert save_response.status_code == 200, save_response.text
+
+    assert not orphan_file.exists(), "orphaned manual frame should be swept on save"
+    assert live_file.exists(), "live pending marker's frame must survive the sweep"
+
+
 def test_update_manual_frame_persists_notes_and_transcript_for_reload(
     review_workspace: tuple[Path, Path, Path],
 ) -> None:
@@ -635,6 +682,49 @@ def test_review_server_stt_upload_cap_rejects_declared_oversize(
 
     assert response.status_code == 413
     assert "25 MB" in response.json()["detail"]
+
+
+def test_review_server_stt_rejects_empty_upload(
+    review_workspace: tuple[Path, Path, Path],
+) -> None:
+    """An empty browser STT upload is rejected 400 with the shared detail string
+    (byte-identical to analyze_server via validate_browser_stt_upload)."""
+    output_dir, report_file, video_path = review_workspace
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/stt",
+        files={"audio": ("recording.webm", b"", "audio/webm")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Voice recording is empty."
+
+
+def test_review_server_stt_rejects_tiny_browser_recording_before_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    review_workspace: tuple[Path, Path, Path],
+) -> None:
+    """A sub-1KB browser recording is rejected 400 before any STT provider call,
+    with the shared detail string (byte-identical to analyze_server)."""
+
+    def fail_transcribe(*args: Any, **kwargs: Any) -> TranscriptionResult:
+        raise AssertionError("Tiny browser recordings should not reach STT provider")
+
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio_bytes", fail_transcribe)
+
+    output_dir, report_file, video_path = review_workspace
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/stt",
+        files={"audio": ("recording.webm", b"\x1aE\xdf\xa3", "audio/webm")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Voice recording is too short. Hold to record longer."
 
 
 def test_review_server_mark_rejects_oversize_base64(

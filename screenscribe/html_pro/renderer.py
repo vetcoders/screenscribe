@@ -335,7 +335,7 @@ def _render_finding(f: dict[str, Any], index: int, language: str = "en") -> str:
                 continue
             member_ts = html.escape(str(member.get("timestamp_formatted", "00:00")))
             member_text = html.escape(str(member.get("text", "")))
-            member_src = member.get("screenshot_path") or member.get("screenshot") or ""
+            member_src = member.get("screenshot") or member.get("screenshot_path") or ""
             member_thumb = ""
             if member_src:
                 escaped_member_src = html.escape(str(member_src))

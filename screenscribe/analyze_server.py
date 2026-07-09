@@ -43,6 +43,7 @@ from .server_common import (
     serialize_stt_result,
     transcribe_browser_audio,
     validate_browser_stt_result,
+    validate_browser_stt_upload,
 )
 from .work_item import from_analyze_marker
 
@@ -853,13 +854,7 @@ def create_analyze_app(video_path: Path, config: ScreenScribeConfig) -> FastAPI:
         filename = audio.filename or "recording.webm"
         content_type = audio.content_type or "audio/webm"
 
-        if not content:
-            raise HTTPException(status_code=400, detail="Voice recording is empty.")
-        if len(content) < 1024:
-            raise HTTPException(
-                status_code=400,
-                detail="Voice recording is too short. Hold to record longer.",
-            )
+        validate_browser_stt_upload(content)
 
         try:
             # BH13: transcribe_browser_audio makes blocking HTTP STT calls (plus
@@ -950,13 +945,26 @@ def create_analyze_app(video_path: Path, config: ScreenScribeConfig) -> FastAPI:
             status="pending",
         )
         try:
-            persist_marker_frame(marker)
+            # 394: base64 decode (up to ~15 MB) + write_bytes are blocking; run
+            # them in the threadpool like STT/analyze/finalize so the event loop
+            # stays free. The exception mapping is unchanged: InvalidMarkerFrame
+            # and the inner HTTPException(500) propagate through run_in_threadpool
+            # exactly as if called inline.
+            await run_in_threadpool(persist_marker_frame, marker)
         except InvalidMarkerFrame as exc:
             # C5.2 residue: the full diagnostic (incl. the chained decoder error
             # and decoded byte prefix) goes to the log only; the client receives
             # the authored, cause-free validation message — never str(exc).
             logger.info("Rejected /api/mark frame (400): %s", exc)
             raise HTTPException(status_code=400, detail=exc.client_detail) from exc
+        # 412: once the frame is persisted, the file on disk is the source of
+        # truth (analyze_single_marker and get_marker_frame both read
+        # frame_path). Drop the up-to-20 MB base64 copy so it doesn't sit in
+        # session.markers for the marker's whole lifetime. Gated on a successful
+        # persist (frame_path set) so the analyze_single_marker fallback still
+        # has base64 to decode when persistence never happened.
+        if marker.frame_path is not None:
+            marker.frame_base64 = ""
         with session.lock:
             session.markers[marker_id] = marker
         return JSONResponse(
@@ -1181,7 +1189,10 @@ def create_analyze_app(video_path: Path, config: ScreenScribeConfig) -> FastAPI:
         Content-Disposition: attachment so browsers offer "Save as".
         """
         try:
-            md_text = build_markdown_report()
+            # 448: build_markdown_report takes session.lock, spins a
+            # TemporaryDirectory, renders and read_text()s — all blocking. Offload
+            # to the threadpool so the event loop isn't held for the whole build.
+            md_text = await run_in_threadpool(build_markdown_report)
         except Exception as exc:
             logger.exception("Failed to build markdown report")
             raise HTTPException(

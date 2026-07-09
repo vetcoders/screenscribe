@@ -109,7 +109,7 @@ def test_preprocess_command_builds_bundle(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 64.2)
     monkeypatch.setattr(
-        "screenscribe.cli.transcribe_audio",
+        "screenscribe.transcribe.transcribe_audio",
         lambda *args, **kwargs: _sample_transcription(language="pl"),
     )
     monkeypatch.setattr(
@@ -152,7 +152,7 @@ def test_preprocess_auth_error_is_friendly(
     monkeypatch.setattr("screenscribe.cli.check_ffmpeg_installed", lambda: None)
     monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _: extracted_audio)
     monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _: 64.2)
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", raise_403)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", raise_403)
     monkeypatch.setattr(
         ScreenScribeConfig,
         "load",

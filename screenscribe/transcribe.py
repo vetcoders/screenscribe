@@ -1,6 +1,5 @@
 """Transcription using LibraxisAI STT API."""
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -11,12 +10,36 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from .api_utils import retry_request
 from .config import LIBRAXIS_STT_ENDPOINT
 
+# Value types and timeline helpers live in the leaf ``transcribe_types`` module.
+# They are re-exported here (``X as X``) so the ~35 consumers importing them from
+# ``screenscribe.transcribe`` keep working unchanged, and so this transport module
+# still owns Segment/TranscriptionResult construction.
+from .transcribe_types import (
+    MIN_TIMELINE_GUARD_VIDEO_SECONDS as MIN_TIMELINE_GUARD_VIDEO_SECONDS,
+)
+from .transcribe_types import (
+    MIN_TRANSCRIPT_TIMELINE_COVERAGE as MIN_TRANSCRIPT_TIMELINE_COVERAGE,
+)
+from .transcribe_types import (
+    Segment as Segment,
+)
+from .transcribe_types import (
+    TranscriptionResult as TranscriptionResult,
+)
+from .transcribe_types import (
+    calculate_transcript_timeline_coverage as calculate_transcript_timeline_coverage,
+)
+from .transcribe_types import (
+    transcript_last_segment_end as transcript_last_segment_end,
+)
+from .transcribe_types import (
+    transcript_timeline_coverage_is_safe as transcript_timeline_coverage_is_safe,
+)
+
 console = Console()
 
 # Default LibraxisAI STT endpoint (used if not configured otherwise)
 LOCAL_STT_URL = "http://localhost:7237/transcribe"
-MIN_TIMELINE_GUARD_VIDEO_SECONDS = 5 * 60
-MIN_TRANSCRIPT_TIMELINE_COVERAGE = 0.80
 
 # --- Anti-hallucination segment filter (FW-09) -----------------------------
 # Whisper-family STT fabricates plausible outro captions ("thanks for watching")
@@ -56,80 +79,6 @@ MIME_TYPES = {
     ".flac": "audio/flac",
     ".webm": "audio/webm",
 }
-
-
-@dataclass
-class Segment:
-    """A transcription segment with timing info."""
-
-    id: int
-    start: float
-    end: float
-    text: str
-    no_speech_prob: float = 0.0  # Probability that segment contains no speech (0.0-1.0)
-    # Whisper decode-confidence metadata (verbose_json), used by the
-    # anti-hallucination filter. Defaults are inert: 0.0 never trips the
-    # avg_logprob < -1.0 or compression_ratio > 2.4 gates, so old checkpoints and
-    # synthetic segments pass through untouched.
-    avg_logprob: float = 0.0  # Mean token log-probability (higher = more confident)
-    compression_ratio: float = 0.0  # gzip ratio of the text (high = repetitive)
-
-
-@dataclass
-class TranscriptionResult:
-    """Full transcription result with segments."""
-
-    text: str
-    segments: list[Segment]
-    language: str
-    response_id: str = ""  # API response ID for conversation chaining to LLM
-    # True when the only segment is a synthetic one whose end is estimated from
-    # a speaking-rate heuristic (no real STT timestamps). Such timing must not
-    # feed the timeline-coverage guard (P3-4).
-    timestamps_are_synthetic: bool = False
-    # True when filter_hallucinated_segments removed at least one segment. Lets
-    # the pipeline tell a genuinely no-speech recording (music/landscape) apart
-    # from empty/corrupt audio, so it reports "no speech" instead of an error.
-    hallucinations_filtered: bool = False
-
-
-def transcript_last_segment_end(result: TranscriptionResult) -> float | None:
-    """Return the latest STT segment end timestamp, if any."""
-    if not result.segments:
-        return None
-    return max(segment.end for segment in result.segments)
-
-
-def calculate_transcript_timeline_coverage(
-    result: TranscriptionResult,
-    duration_seconds: float | None,
-) -> float | None:
-    """Calculate how much of the video timeline the STT timestamps cover."""
-    if duration_seconds is None or duration_seconds <= 0:
-        return None
-    # Synthetic segment timestamps are estimated from word count, not real STT
-    # timing, so a coverage ratio against them is meaningless and would fire a
-    # false "compressed STT timeline" warning (P3-4).
-    if result.timestamps_are_synthetic:
-        return None
-    last_segment_end = transcript_last_segment_end(result)
-    if last_segment_end is None:
-        return None
-    return last_segment_end / duration_seconds
-
-
-def transcript_timeline_coverage_is_safe(
-    result: TranscriptionResult,
-    duration_seconds: float | None,
-    *,
-    min_coverage: float = MIN_TRANSCRIPT_TIMELINE_COVERAGE,
-    min_video_seconds: float = MIN_TIMELINE_GUARD_VIDEO_SECONDS,
-) -> bool:
-    """Guard timestamp-based review on long videos against compressed STT timelines."""
-    if duration_seconds is None or duration_seconds <= min_video_seconds:
-        return True
-    coverage = calculate_transcript_timeline_coverage(result, duration_seconds)
-    return coverage is None or coverage >= min_coverage
 
 
 def _resolve_stt_url(use_local: bool, stt_endpoint: str | None) -> str:
@@ -379,9 +328,10 @@ def transcribe_audio_chunked(
     drops segments duplicated across the overlap zone. Short audio takes the
     ordinary single-shot path unchanged.
 
-    Per-chunk transcription is delegated to ``transcribe_audio`` (via the CLI
-    namespace, which is the patch surface used across the codebase), so the STT
-    endpoint/key resolution stays driven by the caller's config.
+    Per-chunk transcription is delegated to the module-level ``transcribe_audio``
+    (resolved at call time, so ``monkeypatch.setattr("screenscribe.transcribe.
+    transcribe_audio", ...)`` intercepts it), so the STT endpoint/key resolution
+    stays driven by the caller's config.
 
     Args:
         audio_path: Path to audio file.
@@ -396,10 +346,6 @@ def transcribe_audio_chunked(
     Returns:
         TranscriptionResult with timestamp-accurate, merged segments.
     """
-    # Lazy imports avoid an import cycle (cli imports transcribe) and keep the
-    # CLI namespace as the single patch surface for STT.
-    import screenscribe.cli as cli
-
     from . import audio
 
     try:
@@ -412,7 +358,7 @@ def transcribe_audio_chunked(
 
     # Short audio (or unknown duration) does not benefit from chunking.
     if duration is None or duration <= chunk_duration:
-        return cli.transcribe_audio(
+        return transcribe_audio(
             audio_path,
             language=language,
             use_local=use_local,
@@ -435,7 +381,7 @@ def transcribe_audio_chunked(
         console.print(
             f"[yellow]Chunked split failed ({exc}); falling back to single-shot transcription[/]"
         )
-        return cli.transcribe_audio(
+        return transcribe_audio(
             audio_path,
             language=language,
             use_local=use_local,
@@ -452,7 +398,7 @@ def transcribe_audio_chunked(
         for index, (chunk_path, offset) in enumerate(chunks):
             console.print(f"[dim]  Chunk {index + 1}/{len(chunks)} (offset {offset:.0f}s)...[/]")
 
-            result = cli.transcribe_audio(
+            result = transcribe_audio(
                 chunk_path,
                 language=language,
                 use_local=use_local,

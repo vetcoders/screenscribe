@@ -123,7 +123,7 @@ def test_transcribe_uses_config_language_unless_lang_overrides(
         recorded_languages.append(language)
         return TranscriptionResult(text=f"language={language}", segments=[], language=language)
 
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", fake_transcribe_audio)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", fake_transcribe_audio)
 
     runner = CliRunner()
 
@@ -156,7 +156,7 @@ def test_transcribe_auth_error_is_friendly(monkeypatch: Any, tmp_path: Path) -> 
         lambda: ScreenScribeConfig(api_key="bad-key"),
     )
     monkeypatch.setattr("screenscribe.cli._extract_audio_or_exit", lambda _video: audio)
-    monkeypatch.setattr("screenscribe.cli.transcribe_audio", raise_401)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", raise_401)
 
     result = CliRunner().invoke(app, ["transcribe", str(video)])
     normalized_output = _plain(result.output)

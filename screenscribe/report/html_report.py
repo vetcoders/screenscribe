@@ -96,12 +96,17 @@ def save_html_report_pro(
                     "timestamp_formatted": format_timestamp(member_det.segment.start),
                     "timestamp": member_det.segment.start,
                     "text": member_det.segment.text,
-                    # Screenshots ship under "<report-root>/screenshots/" while
-                    # the HTML report lives at the report root, and the merged-
-                    # evidence thumbnail is rendered straight from this ref (the
-                    # main thumbnails embed base64 instead). A bare ".name"
-                    # resolves to "report-root/<file>" → 404, so keep the
-                    # loadable "screenshots/<file>" prefix.
+                    # Single-file promise (finding 610): embed the merged-
+                    # evidence thumbnail as a data URI just like the primary
+                    # screenshots, so the report stays self-contained. The
+                    # "screenshots/<file>" path stays as a loadable fallback for
+                    # frames whose file is missing on disk (a bare ".name" would
+                    # resolve to "report-root/<file>" → 404, hence the prefix).
+                    "screenshot": (
+                        f"data:{get_media_type(member_path)};base64,{encode_image_base64(member_path)}"
+                        if member_path and member_path.exists()
+                        else ""
+                    ),
                     "screenshot_path": f"screenshots/{member_path.name}" if member_path else "",
                 }
                 for member_det, member_path in row.members
