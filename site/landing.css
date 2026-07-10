@@ -389,6 +389,10 @@ main:focus { outline: none; }
     text-align: center;
 }
 
+.section-title--stack span {
+    display: block;
+}
+
 .section-lead {
     max-width: 800px;
     margin: 24px auto 0;
