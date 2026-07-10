@@ -286,7 +286,7 @@ def test_f0_review_export_speaks_verdict_not_confirmed() -> None:
 def test_f0_original_findings_embed_malformed_does_not_crash() -> None:
     """getOriginalFindingsList degrades to [] on a bad #original-findings embed.
 
-    P3-05 (PrView PR #1): a corrupted or non-array server embed used to throw
+    P3-05: a corrupted or non-array server embed used to throw
     out of a raw ``JSON.parse(el.textContent)`` and abort viewer init. The guard
     routes every consumer through ``getOriginalFindingsList()`` (try/catch -> []
     + non-array guard). This pins that contract so a future un-guarding regresses
