@@ -735,9 +735,12 @@ main:focus { outline: none; }
     background: color-mix(in srgb, var(--acc) 8%, transparent);
 }
 
-.fix-box .mono-label,
 .accent {
     color: var(--acc);
+}
+
+.section--anatomy .mono-label {
+    color: var(--text-strong);
 }
 
 .legend-list > p {
@@ -762,7 +765,7 @@ main:focus { outline: none; }
 
 .legend-list dt {
     min-width: 104px;
-    color: var(--acc);
+    color: var(--text-strong);
     font-family: var(--mono);
     font-size: 12px;
 }
