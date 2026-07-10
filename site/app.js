@@ -160,6 +160,13 @@
         var index = 0;
         var paused = false;
         var timer = null;
+        var started = false;
+
+        function startPipeline() {
+            if (started) { return; }
+            started = true;
+            tick();
+        }
 
         function setActive(activeIndex) {
             nodes.forEach(function (node, i) {
@@ -188,7 +195,9 @@
             node.addEventListener("mouseleave", function () {
                 paused = false;
                 window.clearTimeout(timer);
-                timer = window.setTimeout(tick, 260);
+                if (started) {
+                    timer = window.setTimeout(tick, 260);
+                }
             });
         });
 
@@ -196,14 +205,14 @@
             var observer = new IntersectionObserver(function (entries, obs) {
                 entries.forEach(function (entry) {
                     if (entry.isIntersecting) {
-                        tick();
+                        startPipeline();
                         obs.unobserve(entry.target);
                     }
                 });
             }, { threshold: 0.3 });
             observer.observe(pipeline);
         } else {
-            tick();
+            startPipeline();
         }
     }
 
