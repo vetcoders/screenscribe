@@ -254,10 +254,23 @@
             var body = item.querySelector("[data-feat-body]");
             if (!head || !body) { return; }
 
+            var panelId = body.id || "feature-panel-" + index;
+            body.id = panelId;
+            body.setAttribute("role", "region");
+            head.setAttribute("aria-controls", panelId);
+
             function setOpen(open) {
                 item.classList.toggle("is-open", open);
                 head.setAttribute("aria-expanded", open ? "true" : "false");
-                body.style.maxHeight = open ? body.scrollHeight + "px" : "0px";
+                if (open) {
+                    body.hidden = false;
+                    body.setAttribute("aria-hidden", "false");
+                    body.style.maxHeight = body.scrollHeight + "px";
+                } else {
+                    body.style.maxHeight = "0px";
+                    body.setAttribute("aria-hidden", "true");
+                    body.hidden = true;
+                }
             }
 
             setOpen(index === 0);
