@@ -19,6 +19,7 @@
     --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     --max: 1360px;
+    --install-panel-width: 1040px;
 }
 
 * { box-sizing: border-box; }
@@ -1217,7 +1218,8 @@ section[id] {
 }
 
 .install-terminal {
-    margin-top: 28px;
+    max-width: var(--install-panel-width);
+    margin: 28px auto 0;
     border-radius: 14px;
 }
 
@@ -1268,7 +1270,8 @@ section[id] {
     display: flex;
     flex-wrap: wrap;
     gap: 16px 44px;
-    margin-top: 30px;
+    max-width: var(--install-panel-width);
+    margin: 30px auto 0;
     color: var(--text-muted);
     font-family: var(--mono);
     font-size: 15px;
@@ -1284,7 +1287,8 @@ section[id] {
     display: flex;
     gap: 18px;
     align-items: flex-start;
-    margin-top: 40px;
+    max-width: var(--install-panel-width);
+    margin: 40px auto 0;
     padding: 28px 30px;
     background: color-mix(in srgb, var(--acc) 5%, var(--panel));
 }
