@@ -313,7 +313,7 @@ version-major:
 	@scripts/bump_version.sh major
 
 # -----------------------------------------------------------------------------
-# Living Tree race-protected commit (ported from vibecrafted Plan 07/07-b).
+# Living Tree race-protected commit
 # Wraps "stage named files + commit" with HEAD-shift + foreign-file race
 # detection so concurrent agents on one Living Tree checkout cannot interleave
 # one commit message under another tree. Recovery is operator-driven.
