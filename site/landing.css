@@ -946,7 +946,7 @@ section[id] {
 
 .how-steps article:nth-child(2) { border-color: color-mix(in srgb, var(--acc) 45%, transparent); }
 .how-steps article:nth-child(3) { border-color: color-mix(in srgb, var(--acc) 22%, transparent); }
-.how-steps article:nth-child(4) { border-color: rgba(255,255,255,0.12); }
+.how-steps article:nth-child(4) { border-color: color-mix(in srgb, var(--acc) 11%, transparent); }
 
 .how-steps span {
     color: var(--acc);
