@@ -109,7 +109,7 @@
         var target = document.querySelector("[data-typewriter]");
         if (!target) { return; }
         var outputs = qsAll("[data-outline]");
-        var text = "screenscribe review demo.mov";
+        var text = "screenscribe review checkout-bug.mov";
 
         if (reduceMotion) {
             target.textContent = text;
@@ -216,38 +216,6 @@
         }
     }
 
-    function wireModes() {
-        var buttons = qsAll("[data-mode-btn]");
-        var panels = qsAll("[data-mode-panel]");
-        if (!buttons.length || !panels.length) { return; }
-
-        function setMode(mode) {
-            buttons.forEach(function (btn) {
-                var active = btn.getAttribute("data-mode-btn") === mode;
-                btn.classList.toggle("is-active", active);
-                btn.setAttribute("aria-selected", active ? "true" : "false");
-            });
-
-            panels.forEach(function (panel) {
-                var active = panel.getAttribute("data-mode-panel") === mode;
-                panel.classList.toggle("is-active", active);
-                if (active) {
-                    panel.removeAttribute("hidden");
-                } else {
-                    panel.setAttribute("hidden", "");
-                }
-            });
-        }
-
-        buttons.forEach(function (btn) {
-            btn.addEventListener("click", function () {
-                setMode(btn.getAttribute("data-mode-btn"));
-            });
-        });
-
-        setMode("review");
-    }
-
     function wireAccordion() {
         qsAll("[data-feat]").forEach(function (item, index) {
             var head = item.querySelector("[data-feat-head]");
@@ -284,6 +252,5 @@
     runTypewriter();
     wireHeroSpotlight();
     wirePipeline();
-    wireModes();
     wireAccordion();
 })();

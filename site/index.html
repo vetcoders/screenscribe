@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <title>screenscribe - turn screen recordings into actionable engineering reports</title>
-    <meta name="description" content="Talk through a bug once. screenscribe turns narrated screen recordings into structured reports with timestamps, screenshots, summaries, and agent-ready artifacts.">
+    <title>screenscribe - talk through bugs, get fix-ready reports</title>
+    <meta name="description" content="Record your screen and say what's wrong. screenscribe pulls out the important moments, captures matching frames, and writes the report for you.">
 
     <link rel="canonical" href="https://screenscribe.vetcoders.io/">
 
@@ -18,16 +18,16 @@
 
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="screenscribe">
-    <meta property="og:title" content="screenscribe - turn screen recordings into actionable engineering reports">
-    <meta property="og:description" content="Record your screen, say what's wrong out loud, and get a report you or your AI agent can act on.">
+    <meta property="og:title" content="screenscribe - talk through bugs, get fix-ready reports">
+    <meta property="og:description" content="Record your screen and say what's wrong. screenscribe turns the clip into a report you, a teammate, or a coding agent can act on.">
     <meta property="og:url" content="https://screenscribe.vetcoders.io/">
     <meta property="og:image" content="https://screenscribe.vetcoders.io/assets/og-image.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
 
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="screenscribe - turn screen recordings into actionable engineering reports">
-    <meta name="twitter:description" content="Talk through the bug once. Get a report you can act on.">
+    <meta name="twitter:title" content="screenscribe - talk through bugs, get fix-ready reports">
+    <meta name="twitter:description" content="Talk through the bug once. Get a fix-ready report.">
     <meta name="twitter:image" content="https://screenscribe.vetcoders.io/assets/og-image.png">
 
     <link rel="stylesheet" href="styles.css">
@@ -68,8 +68,8 @@
                 <span class="hero-corner" aria-hidden="true"></span>
                 <h1>screenscribe</h1>
             </div>
-            <p class="hero-promise">Talk through the bug once. Get a report you can act on - not another video someone has to sit through.</p>
-            <p class="hero-copy">Record your screen, say what's wrong out loud, and screenscribe turns your narration into a structured report with timestamps, screenshots, and a summary. Building with an AI agent? Hand the report straight to it - no ticket-writing, no scrubbing back through the clip.</p>
+            <p class="hero-promise"><span>Talk through the bug once.</span> <span>Get a fix-ready report.</span></p>
+            <p class="hero-copy"><span>Record your screen and say what's wrong. screenscribe pulls out the important moments, captures the matching frames, and writes the report for you.</span><span>Use it yourself, send it to a teammate, or hand the Markdown/JSON to a coding agent.</span></p>
 
             <div class="terminal-card" data-reveal>
                 <div class="terminal-titlebar">
@@ -78,9 +78,9 @@
                 </div>
                 <div class="terminal-body">
                     <div><span class="prompt">$</span> <span data-typewriter></span><span class="type-cursor" data-typecursor></span></div>
-                    <div class="terminal-output" data-outline>✓ transcribed narration · 4 findings detected</div>
-                    <div class="terminal-output" data-outline>✓ screenshots captured · confirmed against frames</div>
-                    <div class="terminal-output terminal-output--strong" data-outline>&rarr; wrote <span>demo_report.html</span> · <span>.md</span> · <span>.json</span></div>
+                    <div class="terminal-output" data-outline>✓ transcript: 42 segments</div>
+                    <div class="terminal-output" data-outline>✓ findings: 3 bugs, 1 change</div>
+                    <div class="terminal-output terminal-output--strong" data-outline>✓ <span>report.html</span> <span>report.md</span> <span>report.json</span></div>
                 </div>
             </div>
 
@@ -170,8 +170,8 @@
     <section class="section section--anatomy">
         <div class="wrap">
             <p class="section-eyebrow" data-reveal><span></span>ANATOMY OF A FINDING</p>
-            <h2 class="section-title section-title--stack" data-reveal><span>one moment </span><span>fully written up</span></h2>
-            <p class="section-lead" data-reveal>This is what lands in the report for every moment that matters - so nobody has to scrub the video to find the bug you already pointed at.</p>
+            <h2 class="section-title section-title--stack" data-reveal><span>One marked moment.</span> <span>Fully written up.</span></h2>
+            <p class="section-lead" data-reveal>Every finding carries the proof: timestamp, transcript, matching frame, visual check, and a concrete suggested fix.</p>
 
             <div class="anatomy-grid" data-reveal>
                 <article class="finding-card report-card--glow">
@@ -222,28 +222,27 @@
     <section id="how" class="section section--how">
         <div class="wrap">
             <p class="section-eyebrow" data-reveal><span></span>HOW IT WORKS</p>
-            <h2 class="section-title section-title--stack" data-reveal><span>from 'watch this' </span><span>to 'fix this'</span></h2>
-            <p class="section-lead" data-reveal>One narrated screencast in, a structured report out. Three stages do the watching, scrubbing, and writing for you.</p>
+            <h2 class="section-title section-title--stack" data-reveal><span>Record. Detect.</span> <span>Verify. Export.</span></h2>
+            <p class="section-lead" data-reveal>The workflow follows the path you actually need: capture the issue, let screenscribe pull out the moments, verify the frame, and export a report.</p>
 
             <div class="pipeline-panel" data-reveal data-pipeline>
                 <div class="pipeline-row">
-                    <div class="pipeline-node" data-node><strong>narration</strong><span>you, talking through the bug</span></div>
+                    <div class="pipeline-node" data-node><strong>Record</strong><span>screen plus narration</span></div>
                     <b>&rarr;</b>
-                    <div class="pipeline-node" data-node><strong>STT</strong><span><em>speech-to-text</em><br><i data-glossary>turns your talking into text</i></span></div>
+                    <div class="pipeline-node" data-node><strong>Detect</strong><span>transcript finds the moments</span></div>
                     <b>&rarr;</b>
-                    <div class="pipeline-node" data-node><strong>LLM</strong><span><em>language model</em><br><i data-glossary>reads it, finds what matters</i></span></div>
+                    <div class="pipeline-node" data-node><strong>Verify</strong><span>frames confirm the context</span></div>
                     <b>&rarr;</b>
-                    <div class="pipeline-node" data-node><strong>VLM</strong><span><em>vision model</em><br><i data-glossary>checks it against the frame</i></span></div>
-                    <b>&rarr;</b>
-                    <div class="pipeline-node" data-node><strong>report</strong><span>JSON · Markdown · HTML</span></div>
+                    <div class="pipeline-node" data-node><strong>Export</strong><span>HTML · Markdown · JSON</span></div>
                 </div>
-                <p>Each stage passes its context to the next - so the vision check already knows what you said.</p>
+                <p>The transcript tells the analysis what to look for before the frame check runs.</p>
             </div>
 
             <div class="how-steps">
                 <article data-reveal><span>01</span><h3>Record</h3><p>Capture your screen and narrate the bugs and changes in plain language. Any format FFmpeg reads works - mp4, mov, mkv, webm.</p></article>
-                <article data-reveal><span>02</span><h3>Pipeline</h3><p>screenscribe transcribes the narration, finds the moments that matter, then confirms each one against the actual frame on screen.</p></article>
-                <article data-reveal><span>03</span><h3>Report</h3><p>Findings with timestamps, screenshots, and a summary - as JSON, Markdown, and one interactive HTML file you can just open.</p></article>
+                <article data-reveal><span>02</span><h3>Detect</h3><p>screenscribe transcribes the narration and pulls out the moments that sound like bugs, changes, or UI issues.</p></article>
+                <article data-reveal><span>03</span><h3>Verify</h3><p>Each moment is checked against the matching frame, so the report is grounded in what was actually on screen.</p></article>
+                <article data-reveal><span>04</span><h3>Export</h3><p>Open the HTML, send the Markdown, or pipe the JSON into your own tooling or coding agent.</p></article>
             </div>
         </div>
     </section>
@@ -251,36 +250,31 @@
     <section id="modes" class="section section--modes">
         <div class="wrap">
             <p class="section-eyebrow" data-reveal><span></span>PICK YOUR MODE</p>
-            <h2 class="section-title" data-reveal>Choose how much control you want</h2>
-            <p class="section-lead" data-reveal>Two commands, one product. Let screenscribe make the whole pass for you - or point at the exact weird thing yourself.</p>
+            <h2 class="section-title" data-reveal>Which mode should I use?</h2>
+            <p class="section-lead" data-reveal>Start with <code>review</code> when you narrated the walkthrough. Use <code>analyze</code> when the clip is silent, messy, or needs careful manual marking.</p>
 
             <div class="mode-shell" data-reveal>
-                <div class="mode-toggle" role="tablist" aria-label="screenscribe modes">
-                    <button type="button" data-mode-btn="review" role="tab" aria-selected="true" aria-controls="mode-review">review</button>
-                    <button type="button" data-mode-btn="analyze" role="tab" aria-selected="false" aria-controls="mode-analyze">analyze</button>
+                <div class="mode-cards" aria-label="screenscribe modes">
+                    <article class="mode-card">
+                        <div>
+                            <p class="mono-label">review</p>
+                            <h3>For narrated walkthroughs</h3>
+                            <p>Run one command and get a full report: transcript, detected moments, screenshots, visual checks, and exports.</p>
+                            <div class="chips"><span>transcribe</span><span>find moments</span><span>screenshot</span><span>confirm</span><span>report</span></div>
+                        </div>
+                        <aside><p>ONE COMMAND</p><code><span>$</span> screenscribe review demo.mov</code><small>The report opens in your browser when it is done.</small></aside>
+                    </article>
+
+                    <article class="mode-card">
+                        <div>
+                            <p class="mono-label">analyze</p>
+                            <h3>For silent clips or careful QA</h3>
+                            <p>Open the local dashboard, mark moments yourself, add notes, and analyze only the frames that matter.</p>
+                            <div class="chips"><span>open dashboard</span><span>mark frames</span><span>add notes</span><span>analyze picked</span><span>export</span></div>
+                        </div>
+                        <aside><p>ONE COMMAND</p><code><span>$</span> screenscribe analyze demo.mov</code><small>Opens a local dashboard - you drive the review.</small></aside>
+                    </article>
                 </div>
-
-                <article class="mode-panel is-active" id="mode-review" data-mode-panel="review" role="tabpanel">
-                    <div>
-                        <p class="mono-label accent">BEST FOR NARRATED WALKTHROUGHS</p>
-                        <h3>Run it once, read the report</h3>
-                        <p>Hand screenscribe one recording. It transcribes the narration, finds the moments that matter, captures the frames, confirms them, and writes the report - end to end.</p>
-                        <div class="chips"><span>transcribe</span><span>find moments</span><span>screenshot</span><span>confirm</span><span>report</span></div>
-                    </div>
-                    <aside><p>ONE COMMAND</p><code><span>$</span> screenscribe review demo.mov</code><small>The report opens in your browser when it's done.</small></aside>
-                </article>
-
-                <article class="mode-panel" id="mode-analyze" data-mode-panel="analyze" role="tabpanel" hidden>
-                    <div>
-                        <p class="mono-label accent">BEST FOR SILENT CLIPS &amp; CAREFUL QA</p>
-                        <h3>Point at the exact moment</h3>
-                        <p>Open the video in a local dashboard, scrub to the frames that matter, mark them, add a voice or text note, and run the vision check only where you point. Works even with no audio track.</p>
-                        <div class="chips"><span>open dashboard</span><span>mark frames</span><span>add notes</span><span>analyze picked</span><span>export</span></div>
-                    </div>
-                    <aside><p>ONE COMMAND</p><code><span>$</span> screenscribe analyze demo.mov</code><small>Opens a local dashboard - you drive the review.</small></aside>
-                </article>
-
-                <p class="mode-footnote">Not every clip needs autopilot - sometimes you just want to point at the exact weird thing.</p>
             </div>
         </div>
     </section>
@@ -337,6 +331,14 @@
             <h2 class="section-title" data-reveal>Get started in three steps</h2>
             <p class="section-lead" data-reveal>Clone and install, add your key, run a review. Bring your own OpenAI-compatible key - you pay the provider directly, nothing in between.</p>
 
+            <div class="trust-band" data-reveal>
+                <span aria-hidden="true">●</span>
+                <div>
+                    <h3>Runs locally. Uses your provider key.</h3>
+                    <p>screenscribe processes the video on your machine and only sends configured AI requests to the endpoint you choose. No screenscribe account, no subscription layer.</p>
+                </div>
+            </div>
+
             <div class="install-steps">
                 <article data-reveal><span>1</span><div><h3>Clone &amp; install</h3><p>Grab the repo and run <code>make install</code>. It installs the CLI as a bare <code>screenscribe</code> command via <code>uv tool</code>.</p></div></article>
                 <article data-reveal><span>2</span><div><h3>Add your key</h3><p>Initialize config and drop in your OpenAI-compatible key.</p></div></article>
@@ -365,13 +367,6 @@
                 <span>make</span>
             </div>
 
-            <div class="trust-band" data-reveal>
-                <span aria-hidden="true">●</span>
-                <div>
-                    <h3>Your recording stays on your machine</h3>
-                    <p>screenscribe runs locally. The only thing that leaves your machine is the AI call to the provider you configure - with your own key. There's no screenscribe account, no subscription, and nothing routed through us in between.</p>
-                </div>
-            </div>
         </div>
     </section>
 </main>
