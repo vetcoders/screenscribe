@@ -1382,6 +1382,10 @@ section[id] {
         grid-template-columns: 1fr;
     }
 
+    .how-steps {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
     .transform-arrow {
         transform: rotate(90deg);
         text-align: center;
