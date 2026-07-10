@@ -501,16 +501,15 @@ main:focus { outline: none; }
     background: repeating-linear-gradient(135deg, #111116, #111116 10px, #0d0d12 10px, #0d0d12 20px);
 }
 
-.video-fake button {
+.video-play {
     width: 54px;
     height: 54px;
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 50%;
     background: rgba(255,255,255,0.08);
-    cursor: pointer;
 }
 
-.video-fake button::before {
+.video-play::before {
     content: "";
     display: block;
     width: 0;
