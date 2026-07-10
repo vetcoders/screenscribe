@@ -97,16 +97,21 @@ product owners capturing feedback walkthroughs.
 ```bash
 git clone https://github.com/vetcoders/screenscribe.git
 cd screenscribe
-uv sync
+make install
 
 # bring your own OpenAI-compatible key (one-time) — see Providers below to
 # point at OpenAI or another provider; the default endpoint is LibraxisAI
-uv run screenscribe config --init
-uv run screenscribe config --set-key YOUR_API_KEY
+screenscribe config --init
+screenscribe config --set-key YOUR_API_KEY
 
 # review a narrated screen recording
-uv run screenscribe review demo.mov
+screenscribe review demo.mov
 ```
+
+`make install` installs the CLI as a bare `screenscribe` command via
+`uv tool install . --reinstall --force`, so normal usage does not need
+`uv run`. If you are developing inside the source checkout instead, the command
+reference below shows the equivalent `uv run screenscribe ...` form.
 
 ### Providers
 
@@ -118,7 +123,7 @@ matching key — two variables, one coherent step. For OpenAI:
 export SCREENSCRIBE_API_BASE=https://api.openai.com
 export SCREENSCRIBE_API_KEY=YOUR_OPENAI_KEY   # generic key — covers STT, LLM, and vision
 
-uv run screenscribe review demo.mov
+screenscribe review demo.mov
 ```
 
 Any other OpenAI-compatible endpoint works the same way: set

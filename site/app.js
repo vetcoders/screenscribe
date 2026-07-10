@@ -1,106 +1,283 @@
-/* screenscribe landing — progressive enhancement only.
-   Three concerns: copy button, smooth in-page scroll, fade-up on scroll.
-   No external requests, no dependencies. */
+/* screenscribe landing - progressive enhancement only.
+   No dependencies, no data fetching. */
 (function () {
     "use strict";
 
-    /* Progressive enhancement flag: mark the document as JS-capable so CSS can
-       scope the initially-hidden fade-up state under `.js`. Without JS this
-       class is never added and all content stays visible. Must run first. */
     document.documentElement.classList.add("js");
 
     var reduceMotion = window.matchMedia &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    /* -- Copy button ------------------------------------------------------ */
-    document.querySelectorAll(".copy-btn").forEach(function (btn) {
-        /* Capture the original label ONCE at wire time. Reading it inside the
-           click handler meant a rapid second click (while showing 'Copied')
-           captured 'Copied' as the original and froze the button there. */
-        var original = btn.textContent;
-        var resetTimer = null;
+    function qsAll(selector, root) {
+        return Array.prototype.slice.call((root || document).querySelectorAll(selector));
+    }
+
+    function setCopied(btn) {
+        var original = btn.getAttribute("data-original-label") || btn.textContent;
+        btn.setAttribute("data-original-label", original);
+        btn.textContent = "COPIED";
+        btn.classList.add("copied");
+        window.clearTimeout(btn._copyTimer);
+        btn._copyTimer = window.setTimeout(function () {
+            btn.textContent = original;
+            btn.classList.remove("copied");
+        }, 1600);
+    }
+
+    function fallbackCopy(text, done) {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "absolute";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+            if (document.execCommand("copy")) { done(); }
+        } catch (e) {
+            /* no-op: the visible command block remains available */
+        }
+        document.body.removeChild(ta);
+    }
+
+    qsAll(".copy-btn").forEach(function (btn) {
+        btn.setAttribute("data-original-label", btn.textContent);
         btn.addEventListener("click", function () {
             var text = btn.getAttribute("data-copy") || "";
-            var done = function () {
-                btn.textContent = "Copied";
-                btn.classList.add("copied");
-                /* Debounce: a fresh click restarts the window rather than
-                   stacking timers that could fight over the label. */
-                if (resetTimer) { clearTimeout(resetTimer); }
-                resetTimer = setTimeout(function () {
-                    btn.textContent = original;
-                    btn.classList.remove("copied");
-                    resetTimer = null;
-                }, 1600);
-            };
+            var done = function () { setCopied(btn); };
             if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text).then(done, fallbackCopy);
+                navigator.clipboard.writeText(text).then(done, function () {
+                    fallbackCopy(text, done);
+                });
             } else {
-                fallbackCopy();
-            }
-            function fallbackCopy() {
-                var ta = document.createElement("textarea");
-                ta.value = text;
-                ta.setAttribute("readonly", "");
-                ta.style.position = "absolute";
-                ta.style.left = "-9999px";
-                document.body.appendChild(ta);
-                ta.select();
-                try { if (document.execCommand("copy")) { done(); } } catch (e) { /* no-op */ }
-                document.body.removeChild(ta);
+                fallbackCopy(text, done);
             }
         });
     });
 
-    /* -- Smooth in-page scroll (progressive enhancement over CSS) --------- */
-    document.querySelectorAll('a[href^="#"]').forEach(function (link) {
-        link.addEventListener("click", function (e) {
+    qsAll('a[href^="#"]').forEach(function (link) {
+        link.addEventListener("click", function (event) {
             var id = link.getAttribute("href");
-            if (id === "#" || id.length < 2) { return; }
+            if (!id || id === "#" || id.length < 2) { return; }
             var target = document.querySelector(id);
             if (!target) { return; }
-            e.preventDefault();
+            event.preventDefault();
             target.scrollIntoView({
                 behavior: reduceMotion ? "auto" : "smooth",
                 block: "start"
             });
-            /* preventDefault cancels the native focus move, so restore it for
-               programmatically-focusable targets (e.g. the skip-link's main).
-               Keeps keyboard focus in sync with the scroll position. */
             if (target.hasAttribute("tabindex")) {
                 target.focus({ preventScroll: true });
             }
         });
     });
 
-    /* -- Fade-up on scroll ------------------------------------------------ */
-    var faders = document.querySelectorAll(".fade-up");
-    if (reduceMotion || !("IntersectionObserver" in window)) {
-        faders.forEach(function (el) { el.classList.add("is-visible"); });
-        return;
-    }
-    var observer = new IntersectionObserver(function (entries, obs) {
-        entries.forEach(function (entry) {
-            if (entry.isIntersecting) {
-                entry.target.classList.add("is-visible");
-                obs.unobserve(entry.target);
-            }
-        });
-    }, { threshold: 0.08, rootMargin: "0px 0px -24px 0px" });
-    faders.forEach(function (el) { observer.observe(el); });
+    function revealElements() {
+        var reveals = qsAll("[data-reveal]");
+        if (reduceMotion || !("IntersectionObserver" in window)) {
+            reveals.forEach(function (el) { el.classList.add("ss-in"); });
+            return;
+        }
 
-    /* Failsafe: reveal anything already within the viewport (covers elements
-       trapped near the page bottom that never clear the observer margin). */
-    function revealInView() {
-        faders.forEach(function (el) {
-            if (el.classList.contains("is-visible")) { return; }
-            var r = el.getBoundingClientRect();
-            if (r.top < (window.innerHeight || 0) && r.bottom > 0) {
-                el.classList.add("is-visible");
-                observer.unobserve(el);
+        var observer = new IntersectionObserver(function (entries, obs) {
+            entries.forEach(function (entry) {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add("ss-in");
+                    obs.unobserve(entry.target);
+                }
+            });
+        }, { threshold: 0.12, rootMargin: "0px 0px -8% 0px" });
+
+        reveals.forEach(function (el) { observer.observe(el); });
+
+        function revealInView() {
+            reveals.forEach(function (el) {
+                if (el.classList.contains("ss-in")) { return; }
+                var rect = el.getBoundingClientRect();
+                if (rect.top < (window.innerHeight || 0) && rect.bottom > 0) {
+                    el.classList.add("ss-in");
+                    observer.unobserve(el);
+                }
+            });
+        }
+
+        window.addEventListener("load", revealInView);
+        window.addEventListener("scroll", revealInView, { passive: true });
+    }
+
+    function runTypewriter() {
+        var target = document.querySelector("[data-typewriter]");
+        if (!target) { return; }
+        var outputs = qsAll("[data-outline]");
+        var text = "screenscribe review demo.mov";
+
+        if (reduceMotion) {
+            target.textContent = text;
+            outputs.forEach(function (line) { line.style.opacity = "1"; });
+            return;
+        }
+
+        var i = 0;
+        window.setTimeout(function type() {
+            if (i <= text.length) {
+                target.textContent = text.slice(0, i);
+                i += 1;
+                window.setTimeout(type, 52);
+                return;
             }
+
+            outputs.forEach(function (line, index) {
+                window.setTimeout(function () {
+                    line.style.transition = "opacity 500ms ease";
+                    line.style.opacity = "1";
+                }, 380 + index * 420);
+            });
+        }, 700);
+    }
+
+    function wireHeroSpotlight() {
+        var hero = document.querySelector("[data-hero]");
+        var spot = document.querySelector("[data-spotlight]");
+        if (!hero || !spot || reduceMotion) { return; }
+
+        hero.addEventListener("mousemove", function (event) {
+            var rect = hero.getBoundingClientRect();
+            spot.style.left = (event.clientX - rect.left) + "px";
+            spot.style.top = (event.clientY - rect.top) + "px";
+            spot.style.opacity = "1";
+        });
+
+        hero.addEventListener("mouseleave", function () {
+            spot.style.opacity = "0";
         });
     }
-    window.addEventListener("load", revealInView);
-    window.addEventListener("scroll", revealInView, { passive: true });
+
+    function wirePipeline() {
+        var pipeline = document.querySelector("[data-pipeline]");
+        var nodes = qsAll("[data-node]", pipeline);
+        if (!pipeline || !nodes.length) { return; }
+
+        var index = 0;
+        var paused = false;
+        var timer = null;
+
+        function setActive(activeIndex) {
+            nodes.forEach(function (node, i) {
+                node.classList.toggle("is-active", i === activeIndex);
+            });
+        }
+
+        function tick() {
+            if (reduceMotion) {
+                setActive(0);
+                return;
+            }
+            if (!paused) {
+                setActive(index);
+                index = (index + 1) % nodes.length;
+            }
+            timer = window.setTimeout(tick, paused ? 260 : 1050);
+        }
+
+        nodes.forEach(function (node, i) {
+            node.addEventListener("mouseenter", function () {
+                paused = true;
+                window.clearTimeout(timer);
+                setActive(i);
+            });
+            node.addEventListener("mouseleave", function () {
+                paused = false;
+                window.clearTimeout(timer);
+                timer = window.setTimeout(tick, 260);
+            });
+        });
+
+        if ("IntersectionObserver" in window && !reduceMotion) {
+            var observer = new IntersectionObserver(function (entries, obs) {
+                entries.forEach(function (entry) {
+                    if (entry.isIntersecting) {
+                        tick();
+                        obs.unobserve(entry.target);
+                    }
+                });
+            }, { threshold: 0.3 });
+            observer.observe(pipeline);
+        } else {
+            tick();
+        }
+    }
+
+    function wireModes() {
+        var buttons = qsAll("[data-mode-btn]");
+        var panels = qsAll("[data-mode-panel]");
+        if (!buttons.length || !panels.length) { return; }
+
+        function setMode(mode) {
+            buttons.forEach(function (btn) {
+                var active = btn.getAttribute("data-mode-btn") === mode;
+                btn.classList.toggle("is-active", active);
+                btn.setAttribute("aria-selected", active ? "true" : "false");
+            });
+
+            panels.forEach(function (panel) {
+                var active = panel.getAttribute("data-mode-panel") === mode;
+                panel.classList.toggle("is-active", active);
+                if (active) {
+                    panel.removeAttribute("hidden");
+                } else {
+                    panel.setAttribute("hidden", "");
+                }
+            });
+        }
+
+        buttons.forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                setMode(btn.getAttribute("data-mode-btn"));
+            });
+        });
+
+        setMode("review");
+    }
+
+    function wireAccordion() {
+        qsAll("[data-feat]").forEach(function (item, index) {
+            var head = item.querySelector("[data-feat-head]");
+            var body = item.querySelector("[data-feat-body]");
+            if (!head || !body) { return; }
+
+            function setOpen(open) {
+                item.classList.toggle("is-open", open);
+                head.setAttribute("aria-expanded", open ? "true" : "false");
+                body.style.maxHeight = open ? body.scrollHeight + "px" : "0px";
+            }
+
+            setOpen(index === 0);
+            head.addEventListener("click", function () {
+                setOpen(!item.classList.contains("is-open"));
+            });
+        });
+    }
+
+    function wireArtifactHover() {
+        qsAll("[data-artifact]").forEach(function (card) {
+            card.addEventListener("mouseenter", function () {
+                card.style.transform = "translateY(-4px)";
+                card.style.borderColor = "color-mix(in srgb, var(--acc) 45%, transparent)";
+                card.style.boxShadow = "0 20px 46px -30px var(--acc)";
+            });
+            card.addEventListener("mouseleave", function () {
+                card.style.transform = "";
+                card.style.borderColor = "";
+                card.style.boxShadow = "";
+            });
+        });
+    }
+
+    revealElements();
+    runTypewriter();
+    wireHeroSpotlight();
+    wirePipeline();
+    wireModes();
+    wireAccordion();
+    wireArtifactHover();
 })();
