@@ -803,6 +803,12 @@ main:focus { outline: none; }
     transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
 }
 
+.artifact-stack article:hover {
+    transform: translateY(-4px);
+    border-color: color-mix(in srgb, var(--acc) 45%, transparent);
+    box-shadow: 0 20px 46px -30px var(--acc);
+}
+
 .artifact-stack h3 {
     display: inline;
     margin: 0 0 0 10px;

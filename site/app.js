@@ -280,26 +280,10 @@
         });
     }
 
-    function wireArtifactHover() {
-        qsAll("[data-artifact]").forEach(function (card) {
-            card.addEventListener("mouseenter", function () {
-                card.style.transform = "translateY(-4px)";
-                card.style.borderColor = "color-mix(in srgb, var(--acc) 45%, transparent)";
-                card.style.boxShadow = "0 20px 46px -30px var(--acc)";
-            });
-            card.addEventListener("mouseleave", function () {
-                card.style.transform = "";
-                card.style.borderColor = "";
-                card.style.boxShadow = "";
-            });
-        });
-    }
-
     revealElements();
     runTypewriter();
     wireHeroSpotlight();
     wirePipeline();
     wireModes();
     wireAccordion();
-    wireArtifactHover();
 })();
