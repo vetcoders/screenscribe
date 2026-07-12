@@ -104,6 +104,20 @@ class ScreenScribeConfig:
     # loads the standard-priority dictionary. An empty dictionary is a safe no-op.
     keywords: "KeywordsConfig | None" = field(default=None, repr=False)
 
+    @staticmethod
+    def _normalize_api_base(value: str) -> str:
+        """Strip endpoint suffixes so callers can derive one canonical `/v1` tree."""
+        normalized = value.rstrip("/")
+        for suffix in (
+            "/v1/responses",
+            "/v1/audio/transcriptions",
+            "/v1/chat/completions",
+            "/v1",
+        ):
+            if normalized.endswith(suffix):
+                return normalized[: -len(suffix)]
+        return normalized
+
     @classmethod
     def provider_preset(
         cls,
@@ -132,7 +146,7 @@ class ScreenScribeConfig:
                 vision_model=OPENAI_VISION_MODEL,
             )
         if normalized == "custom":
-            base = custom_base.rstrip("/")
+            base = cls._normalize_api_base(custom_base)
             if not base.startswith(("https://", "http://")):
                 raise ValueError("Custom provider base URL must start with https:// or http://")
             return cls(
@@ -502,17 +516,7 @@ class ScreenScribeConfig:
 
     def _apply_api_base(self, value: str) -> None:
         """Normalize an API base URL and derive endpoints still at their defaults."""
-        # Normalize api_base - remove trailing paths
-        normalized = value.rstrip("/")
-        for suffix in [
-            "/v1/responses",
-            "/v1/audio/transcriptions",
-            "/v1/chat/completions",
-            "/v1",
-        ]:
-            if normalized.endswith(suffix):
-                normalized = normalized[: -len(suffix)]
-                break
+        normalized = self._normalize_api_base(value)
         self.api_base = normalized
         # Only update endpoints if still at defaults (not explicitly set)
         if self.stt_endpoint == LIBRAXIS_STT_ENDPOINT:

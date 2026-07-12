@@ -66,6 +66,30 @@ def test_custom_preset_preserves_user_endpoint_and_models() -> None:
     assert config.configuration_status().startswith("READY WITH WARNING")
 
 
+@pytest.mark.parametrize(
+    "base",
+    (
+        "https://provider.example/v1",
+        "https://provider.example/v1/responses",
+        "https://provider.example/v1/audio/transcriptions",
+    ),
+)
+def test_custom_preset_normalizes_common_openai_endpoint_suffixes(base: str) -> None:
+    config = ScreenScribeConfig.provider_preset(
+        "custom",
+        "custom-key",  # pragma: allowlist secret
+        custom_base=base,
+        stt_model="custom-stt",
+        llm_model="custom-llm",
+        vision_model="custom-vision",
+    )
+
+    assert config.api_base == "https://provider.example"
+    assert config.stt_endpoint == "https://provider.example/v1/audio/transcriptions"
+    assert config.llm_endpoint == "https://provider.example/v1/responses"
+    assert "/v1/v1/" not in config.stt_endpoint
+
+
 def test_setup_uses_hidden_prompt_and_saves_complete_openai_preset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
