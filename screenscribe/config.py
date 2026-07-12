@@ -744,9 +744,12 @@ class ScreenScribeConfig:
         """Atomically replace a secret-bearing config with owner-only permissions."""
         fd, temp_name = tempfile.mkstemp(prefix=".config.env.", dir=config_path.parent)
         temp_path = Path(temp_name)
+        fd_needs_close = True
         try:
             os.chmod(temp_path, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as file:
+            file = os.fdopen(fd, "w", encoding="utf-8")
+            fd_needs_close = False
+            with file:
                 file.write(content)
                 file.flush()
                 os.fsync(file.fileno())
@@ -756,10 +759,11 @@ class ScreenScribeConfig:
             except OSError:
                 pass
         except BaseException:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+            if fd_needs_close:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
             temp_path.unlink(missing_ok=True)
             raise
 

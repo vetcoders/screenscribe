@@ -112,6 +112,11 @@ def test_atomic_setup_write_preserves_existing_config_on_replace_failure(
     path.write_text("ORIGINAL=1\n")
     config = ScreenScribeConfig.provider_preset("libraxis", "replacement-key")
     monkeypatch.setattr(os, "replace", lambda *_args: (_ for _ in ()).throw(OSError("boom")))
+    monkeypatch.setattr(
+        os,
+        "close",
+        lambda *_args: pytest.fail("wrapped file descriptor must not be closed twice"),
+    )
 
     with pytest.raises(OSError, match="boom"):
         config.save_default_config()
