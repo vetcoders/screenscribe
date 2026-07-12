@@ -20,6 +20,7 @@ _FFPROBE_TIMEOUT_SECONDS = 60.0
 # legitimately run for a while on long recordings, so this ceiling is a safety
 # net against an infinite hang, not a tight performance bound.
 _FFMPEG_TIMEOUT_SECONDS = 3600.0
+_BREW_PREFIX_TIMEOUT_SECONDS = 5.0
 
 
 def _run_media_command(
@@ -60,6 +61,35 @@ class MissingAudioStreamError(MediaDecodeError):
     """Raised when input media has no audio stream to extract."""
 
     pass
+
+
+def _macos_ffmpeg_install_guidance() -> str:
+    """Return actionable Homebrew guidance without suggesting unsafe ownership changes."""
+    brew = shutil.which("brew")
+    if not brew:
+        return "Install FFmpeg:\n  brew install ffmpeg"
+
+    try:
+        result = subprocess.run(
+            [brew, "--prefix"],
+            capture_output=True,
+            text=True,
+            timeout=_BREW_PREFIX_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "Install FFmpeg:\n  brew install ffmpeg"
+
+    prefix = result.stdout.strip()
+    if result.returncode == 0 and prefix and not os.access(prefix, os.W_OK):
+        return (
+            "Homebrew is installed, but this user cannot modify it.\n"
+            "Ask the Homebrew owner or an administrator to run:\n"
+            "  brew install ffmpeg\n\n"
+            "Do not change ownership of the Homebrew prefix."
+        )
+
+    return "Install FFmpeg:\n  brew install ffmpeg"
 
 
 def _raise_ffmpeg_error(input_path: Path, stderr: str) -> None:
@@ -125,15 +155,15 @@ def check_ffmpeg_installed() -> None:
     if missing:
         # Detect platform for install instructions
         if sys.platform == "darwin":
-            install_cmd = "brew install ffmpeg"
+            install_guidance = _macos_ffmpeg_install_guidance()
         elif sys.platform == "win32":
-            install_cmd = "choco install ffmpeg"
+            install_guidance = "Install FFmpeg:\n  choco install ffmpeg"
         else:
-            install_cmd = "sudo apt install ffmpeg"
+            install_guidance = "Install FFmpeg:\n  sudo apt install ffmpeg"
 
         raise FFmpegNotFoundError(
             f"Required tools not found: {', '.join(missing)}\n\n"
-            f"Install FFmpeg:\n  {install_cmd}\n\n"
+            f"{install_guidance}\n\n"
             f"Then try again."
         )
 

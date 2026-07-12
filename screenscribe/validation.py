@@ -285,7 +285,7 @@ def validate_models(
     if not has_any_key:
         raise APIKeyError(
             "No API key configured. "
-            "Set SCREENSCRIBE_API_KEY, run: screenscribe config --set-key YOUR_KEY, "
+            "Run `screenscribe config setup`, or set SCREENSCRIBE_API_KEY, "
             "or set per-endpoint keys such as SCREENSCRIBE_STT_API_KEY"
         )
 

@@ -105,7 +105,7 @@ def _build_transcription_failure_message(exc: Exception) -> str:
     if status in {401, 403}:
         return (
             f"The speech-to-text service rejected the credentials (HTTP {status}){detail_suffix}\n\n"
-            "Set SCREENSCRIBE_API_KEY, run `uv run screenscribe config --set-key YOUR_KEY`, "
+            "Run `screenscribe config setup`, set SCREENSCRIBE_API_KEY, "
             "or set SCREENSCRIBE_STT_API_KEY for a dedicated STT key. "
             "If the key is correct, check SCREENSCRIBE_STT_ENDPOINT."
         )
@@ -117,7 +117,7 @@ def _build_transcription_failure_message(exc: Exception) -> str:
     if isinstance(exc, ValueError) and "API key required" in str(exc):
         return (
             "No speech-to-text API key is configured.\n\n"
-            "Set SCREENSCRIBE_API_KEY, run `uv run screenscribe config --set-key YOUR_KEY`, "
+            "Run `screenscribe config setup`, set SCREENSCRIBE_API_KEY, "
             "or use --local for local STT."
         )
     return (

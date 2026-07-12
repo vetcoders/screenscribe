@@ -258,6 +258,33 @@ class TestEnvMappingAuthoritative:
         assert config.llm_endpoint == "https://base.example.com/v1/responses"
         assert config.vision_endpoint == "https://base.example.com/v1/responses"
 
+    def test_env_routing_override_supersedes_saved_provider_hint(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        clean_env.setenv("SCREENSCRIBE_API_BASE", "https://api.openai.com/v1")
+        config = ScreenScribeConfig(
+            provider="libraxis",
+            api_key="sk-openai-probe",  # pragma: allowlist secret
+        )
+
+        config._load_from_env()
+
+        assert config.provider == ""
+        assert config.recognized_provider() == "openai"
+        assert config.validate() == []
+
+    def test_explicit_env_provider_remains_authoritative_with_routing_override(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        clean_env.setenv("SCREENSCRIBE_PROVIDER", "libraxis")
+        clean_env.setenv("SCREENSCRIBE_API_BASE", "https://api.openai.com/v1")
+        config = ScreenScribeConfig()
+
+        config._load_from_env()
+
+        assert config.provider == "libraxis"
+        assert config.validate()
+
     def test_libraxis_api_base_normalizes_and_derives(self, clean_env: pytest.MonkeyPatch) -> None:
         clean_env.setenv("LIBRAXIS_API_BASE", "https://lx.example.com/v1")
         config = ScreenScribeConfig()
@@ -480,8 +507,7 @@ class TestKeyEndpointMismatchWarning:
         joined = "\n".join(warnings)
         assert "sk-" not in joined  # the secret itself is never echoed
         assert any("libraxis" in w.lower() and "openai" in w.lower() for w in warnings)
-        # Non-blocking: validate() (the blocking gate) stays empty.
-        assert config.validate() == []
+        assert any("No request was sent" in error for error in config.validate())
 
     def test_non_openai_key_on_openai_endpoint_warns(self) -> None:
         config = ScreenScribeConfig(
@@ -579,8 +605,7 @@ class TestKeyEndpointMismatchWarning:
 
         # Surfaced as a warning...
         assert warnings, "key/endpoint mismatch must still be reported"
-        # ...but non-blocking: validate() returns nothing to exit on.
-        assert config.validate() == []
+        assert config.validate(), "known provider mismatch must block before a request"
         msg = "\n".join(warnings)
 
         # Actionable: warns (run continues), names the offending pair, gives the fix.

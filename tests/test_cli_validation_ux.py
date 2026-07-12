@@ -185,20 +185,24 @@ def test_transcribe_creates_missing_output_parent_dirs(tmp_path: Path, monkeypat
 
 
 # --------------------------------------------------------------------------- #
-# Finding 4: sk- key on a non-OpenAI endpoint is a warning, not a block
+# Provider safety: a known OpenAI-to-Libraxis mismatch blocks before runtime
 # --------------------------------------------------------------------------- #
 
 
-def test_review_warns_but_does_not_block_on_sk_mismatch(tmp_path: Path, monkeypatch: Any) -> None:
-    """An sk- key on the default (LibraxisAI) endpoint used to hard-block the run.
-    OpenAI-compatible gateways legitimately use sk- keys, so review now warns and
-    proceeds."""
+def test_review_blocks_known_openai_to_libraxis_mismatch(tmp_path: Path, monkeypatch: Any) -> None:
+    """A known-host mismatch must stop before the review pipeline is reached."""
     video = _mkvideo(tmp_path)
 
     monkeypatch.setattr(cli, "check_ffmpeg_installed", lambda: None)
     monkeypatch.setattr(cli, "_require_audio_or_exit", lambda _v: None)
     monkeypatch.setattr(cli, "validate_models", lambda *a, **k: None)
-    monkeypatch.setattr("screenscribe.review_pipeline.run_review", lambda *a, **k: None)
+    reached_pipeline = False
+
+    def fail_if_reached(*_args: Any, **_kwargs: Any) -> None:
+        nonlocal reached_pipeline
+        reached_pipeline = True
+
+    monkeypatch.setattr("screenscribe.review_pipeline.run_review", fail_if_reached)
     monkeypatch.setattr(
         cli.ScreenScribeConfig,
         "load",
@@ -211,8 +215,10 @@ def test_review_warns_but_does_not_block_on_sk_mismatch(tmp_path: Path, monkeypa
 
     result = runner.invoke(app, ["review", str(video), "--no-serve"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
+    assert reached_pipeline is False
     assert "Config Warning:" in result.output
+    assert "Config Error:" in result.output
     assert "mismatch" in result.output.lower()
     assert "sk-openai-secret" not in result.output  # secret never echoed
 
