@@ -1,0 +1,109 @@
+name: Publish to PyPI
+
+# Production PyPI release via Trusted Publishing (OIDC). Triggered ONLY by a
+# published GitHub Release. NO API tokens, NO username/password: the publish
+# job mints a short-lived OIDC identity token (id-token: write) that PyPI
+# verifies against a pre-registered trusted publisher.
+#
+# Why a plain push to main cannot publish: the trigger is `release: published`,
+# not push. A fork/PR cannot publish either — release events run only in the
+# base repo, and the `pypi` environment (repo-side protection: required
+# reviewers + tag rules) gates the publish job independently of who triggered.
+#
+# Third-party actions are pinned to full commit SHAs (supply-chain hardening);
+# the trailing comment records the human-readable version.
+on:
+  release:
+    types: [published]
+
+# Workflow-level default: read-only. Each job narrows further below.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & verify release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # fetch-depth: 0 — the ancestry guard needs full history to prove the tag
+      # commit is reachable from origin/main. persist-credentials: false — this
+      # job never pushes, so persisting GITHUB_TOKEN is needless surface.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Guard 1: tag must be a strict semver release tag (vMAJOR.MINOR.PATCH).
+      # Guard 2: tag must equal "v" + the pyproject version at the tag.
+      # Guard 3: the tagged commit must be an ancestor of origin/main — a tag on
+      # a side branch / detached commit fails hard, never publishes.
+      - name: Guard release tag
+        shell: bash
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          echo "release tag: ${tag}"
+          if ! printf '%s' "${tag}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::tag '${tag}' does not match ^v[0-9]+\.[0-9]+\.[0-9]+$"
+            exit 1
+          fi
+          version="$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/^version = "([^"]+)"/\1/')"
+          if [ "${tag}" != "v${version}" ]; then
+            echo "::error::tag '${tag}' != 'v${version}' (pyproject version)"
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::tagged commit is not reachable from origin/main"
+            exit 1
+          fi
+          echo "guards passed: ${tag} == v${version}, ancestor of origin/main"
+
+      # --no-sources disables tool.uv.sources so the build matches a standard
+      # (non-uv) toolchain — a health gate before publishing.
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+
+      - name: Build sdist + wheel
+        run: uv build --no-sources
+
+      - name: Check distribution metadata
+        run: uvx twine check --strict dist/*
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: [build]
+    runs-on: ubuntu-latest
+    # Environment protection (required reviewers + deployment tag rules) is the
+    # repo-side gate that actually blocks an unapproved / non-tag publish.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/screenscribe
+    # ONLY id-token: write — mandatory for Trusted Publishing, job-level to
+    # minimise credential exposure. No contents: read needed: download-artifact
+    # pulls same-run artifacts via the Actions runtime token, not GITHUB_TOKEN.
+    # No checkout / no untrusted code runs in this job — it publishes exactly
+    # the artifacts built and verified by the build job.
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      # Attestations are ON by default under Trusted Publishing (signed digital
+      # attestations generated + uploaded with the distributions); left at
+      # default intentionally.
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
