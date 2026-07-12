@@ -1,7 +1,7 @@
 # Screenscribe Makefile
 # Uses uv as package manager
 
-.PHONY: help install dev setup-hooks lint format format-check build-check ship-verify verify verify-seed test test-unit test-integration test-all test-cov typecheck security check leak-scan brand-scan secrets-check precommit-check release-check run clean version version-patch version-minor version-major analyze e2e-review commit-safe test-race-protection
+.PHONY: help install dev setup-hooks lint format format-check build-check ship-verify verify verify-seed release-verify test test-unit test-integration test-all test-cov typecheck security check leak-scan brand-scan secrets-check precommit-check release-check run clean version version-patch version-minor version-major analyze e2e-review commit-safe test-race-protection
 
 # Interpreter for the standalone ss-verify driver. uv is already a hard
 # requirement of the whole verify flow (ss-verify orchestrates `uv run`
@@ -39,6 +39,7 @@ help:
 	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'verify' 'THE gate: ss-verify READY/NOT READY (one source of truth)'
 	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'verify-seed' 'ss-verify the git-archive HEAD export (shippable tree)'
 	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'release-check' 'Pre-release gate (thin shim -> make verify)'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'release-verify' 'Full gate + PyPI packaging proofs (build/twine/assets/isolated install)'
 	@printf '\n'
 	@printf '  $(HELP_C_YELLOW)%s$(HELP_C_RESET)\n' 'TESTING'
 	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'test' 'Run unit tests (default)'
@@ -183,6 +184,43 @@ ship-verify: verify
 # build + ship-verify (effect-level wheel render). One gate, one truth.
 release-check: verify
 	@printf '%s\n' 'release-check delegates to ss-verify (make verify): the single READY gate.'
+
+# Release packaging gate. Runs THE verify gate first (lint/format/types/security/
+# tests/coverage/leak/secrets/build + isolated wheel RENDER smoke), then adds the
+# packaging-specific proofs that verify does NOT cover — the exact artifact that
+# ships to PyPI. It builds sdist+wheel with `uv build --no-sources` (resolve deps
+# the way the index would, ignoring any local [tool.uv.sources]), runs strict
+# twine metadata validation, asserts the bundled runtime assets are present in
+# BOTH artifacts, and smoke-installs the freshly built wheel in a throwaway venv
+# OUTSIDE the repo to prove `screenscribe --version` reports this version and
+# `--help` runs from the packaged entry point. No duplicate render logic: the
+# effect-level wheel render lives in `make verify` (ss-verify); this only adds
+# the release-artifact layer on top.
+release-verify: verify
+	@set -e; \
+	printf '%s\n' 'release-verify: building shippable artifacts (uv build --no-sources)...'; \
+	rm -rf dist; \
+	uv build --no-sources; \
+	printf '%s\n' 'release-verify: twine metadata check (strict)...'; \
+	uvx twine check --strict dist/*; \
+	printf '%s\n' 'release-verify: asserting runtime assets are packaged (wheel + sdist)...'; \
+	whl=$$(ls dist/*.whl); \
+	sdist=$$(ls dist/*.tar.gz); \
+	for pat in html_pro_assets/templates/shell.html default_keywords.yaml; do \
+		unzip -l "$$whl" | grep -q "$$pat" || { printf 'FAIL: %s missing from wheel\n' "$$pat"; exit 1; }; \
+		tar -tzf "$$sdist" | grep -q "$$pat" || { printf 'FAIL: %s missing from sdist\n' "$$pat"; exit 1; }; \
+	done; \
+	printf '%s\n' '  runtime assets present in wheel + sdist'; \
+	printf '%s\n' 'release-verify: isolated wheel install smoke (throwaway venv outside repo)...'; \
+	TMP=$$(mktemp -d); \
+	trap 'rm -rf "$$TMP"' EXIT; \
+	env -u VIRTUAL_ENV uv venv "$$TMP/venv" >/dev/null; \
+	env -u VIRTUAL_ENV uv pip install --python "$$TMP/venv/bin/python" "$$whl" >/dev/null; \
+	ver=$$("$$TMP/venv/bin/screenscribe" --version); \
+	printf 'installed wheel reports version: %s\n' "$$ver"; \
+	printf '%s' "$$ver" | grep -q "$(CURRENT_VERSION)" || { printf 'FAIL: installed --version (%s) != pyproject version (%s)\n' "$$ver" "$(CURRENT_VERSION)"; exit 1; }; \
+	"$$TMP/venv/bin/screenscribe" --help >/dev/null; \
+	printf '%s\n' 'release-verify: PASS (verify gate + packaging proofs + isolated smoke).'
 
 typecheck:
 	uv run mypy screenscribe
