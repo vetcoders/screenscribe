@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+## [0.1.17] - 2026-07-13
+
+- **Changed: adopted the Business Source License 1.1.** The project now ships
+  under BUSL-1.1 (SPDX `BUSL-1.1`, converting to Apache-2.0 on the Change Date);
+  the full license terms are included in `LICENSE`.
+- **Security: bumped Starlette to `>=1.3.1`** to pick up the fixes for
+  PYSEC-2026-248 and PYSEC-2026-249.
+- **Security: the review server guards `/video` endpoints with a signed session
+  token.** Video is served only against a valid per-session token; the
+  by-filename endpoint is restored behind the same guard.
+- **Security: hardened HTML render and WebVTT output.** Frame MIME handling,
+  degraded-i18n slots, and video paths are hardened in the report render, and
+  WebVTT cue text is escaped.
+- **Fixed: provider configuration is coherent across mixed setups.** Environment
+  routing overrides are honored, custom provider base URLs are normalized, mixed
+  providers are preserved as a custom config, provider checks are scoped to the
+  active stages, `config.env` is read/written as UTF-8, and `--set-key` preserves
+  all previously configured values.
+- **Fixed: onboarding guidance for first-time and shared-machine users.** The
+  wizard walks shared-Mac users through FFmpeg setup and gives safe, coherent
+  provider-onboarding guidance without leaking secrets into shell history.
+- **Fixed: `make install` / user install flow.** Working tool installs are
+  preserved on reinstall and the user install path stays lightweight.
+- **Fixed: pipeline reliability under flaky networks and load.** Streaming VLM
+  requests retry on 429/5xx honoring `Retry-After`, httpx transport errors are
+  treated as retriable, ffmpeg/ffprobe calls are bounded by timeouts with unique
+  temp paths, concurrent marker analysis is guarded and finalize jobs are
+  bounded, orphaned manual frames are swept on save, and merged-frame thumbnails
+  are embedded as base64 so the single-file report promise holds.
+- **Fixed: CLI validation and honesty.** Model validation and CLI UX are
+  hardened, and the documented CLI flags and key requirements match actual
+  behavior.
+- **Changed: packaging metadata for the first PyPI publish.** Dropped the
+  redundant `License :: Other/Proprietary License` trove classifier — the SPDX
+  `license = "BUSL-1.1"` expression is now the single license source (PEP 639).
+  Added a `make release-verify` packaging gate that builds the sdist/wheel with
+  `uv build --no-sources`, runs `twine check --strict`, inspects the artifact
+  contents for the bundled runtime assets, and smoke-installs the wheel in an
+  isolated environment.
+
 ## [0.1.16] - 2026-07-03
 
 - **Added: operators can set a moment's priority.** In both the analyze
