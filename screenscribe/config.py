@@ -1,6 +1,7 @@
 """Configuration management with embedded defaults."""
 
 import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -13,6 +14,14 @@ LIBRAXIS_API_BASE = "https://api.libraxis.cloud"
 LIBRAXIS_STT_ENDPOINT = f"{LIBRAXIS_API_BASE}/v1/audio/transcriptions"
 LIBRAXIS_LLM_ENDPOINT = f"{LIBRAXIS_API_BASE}/v1/responses"
 LIBRAXIS_VISION_ENDPOINT = f"{LIBRAXIS_API_BASE}/v1/responses"
+
+OPENAI_API_BASE = "https://api.openai.com"
+OPENAI_STT_ENDPOINT = f"{OPENAI_API_BASE}/v1/audio/transcriptions"
+OPENAI_LLM_ENDPOINT = f"{OPENAI_API_BASE}/v1/responses"
+OPENAI_VISION_ENDPOINT = f"{OPENAI_API_BASE}/v1/responses"
+OPENAI_STT_MODEL = "whisper-1"
+OPENAI_LLM_MODEL = "gpt-5.6-luna"
+OPENAI_VISION_MODEL = "gpt-5.6-luna"
 
 # Default models
 DEFAULT_STT_MODEL = "whisper-1"
@@ -51,6 +60,7 @@ class ScreenScribeConfig:
     # API Configuration (generic fallback)
     api_key: str = ""
     api_base: str = LIBRAXIS_API_BASE
+    provider: str = ""
 
     # Per-endpoint API keys (use these for multi-provider setups)
     stt_api_key: str = ""  # Falls back to api_key if empty
@@ -93,6 +103,64 @@ class ScreenScribeConfig:
     # that need the active dictionary should use ``get_keywords()`` which lazily
     # loads the standard-priority dictionary. An empty dictionary is a safe no-op.
     keywords: "KeywordsConfig | None" = field(default=None, repr=False)
+
+    @staticmethod
+    def _normalize_api_base(value: str) -> str:
+        """Strip endpoint suffixes so callers can derive one canonical `/v1` tree."""
+        normalized = value.rstrip("/")
+        for suffix in (
+            "/v1/responses",
+            "/v1/audio/transcriptions",
+            "/v1/chat/completions",
+            "/v1",
+        ):
+            if normalized.endswith(suffix):
+                return normalized[: -len(suffix)]
+        return normalized
+
+    @classmethod
+    def provider_preset(
+        cls,
+        provider: str,
+        api_key: str,
+        *,
+        custom_base: str = "",
+        stt_model: str = "",
+        llm_model: str = "",
+        vision_model: str = "",
+    ) -> "ScreenScribeConfig":
+        """Build one coherent provider configuration for the setup wizard."""
+        normalized = provider.lower().strip()
+        if normalized == "libraxis":
+            return cls(provider="libraxis", api_key=api_key)
+        if normalized == "openai":
+            return cls(
+                provider="openai",
+                api_key=api_key,
+                api_base=OPENAI_API_BASE,
+                stt_endpoint=OPENAI_STT_ENDPOINT,
+                llm_endpoint=OPENAI_LLM_ENDPOINT,
+                vision_endpoint=OPENAI_VISION_ENDPOINT,
+                stt_model=OPENAI_STT_MODEL,
+                llm_model=OPENAI_LLM_MODEL,
+                vision_model=OPENAI_VISION_MODEL,
+            )
+        if normalized == "custom":
+            base = cls._normalize_api_base(custom_base)
+            if not base.startswith(("https://", "http://")):
+                raise ValueError("Custom provider base URL must start with https:// or http://")
+            return cls(
+                provider="custom",
+                api_key=api_key,
+                api_base=base,
+                stt_endpoint=f"{base}/v1/audio/transcriptions",
+                llm_endpoint=f"{base}/v1/responses",
+                vision_endpoint=f"{base}/v1/responses",
+                stt_model=stt_model or DEFAULT_STT_MODEL,
+                llm_model=llm_model or DEFAULT_LLM_MODEL,
+                vision_model=vision_model or DEFAULT_VISION_MODEL,
+            )
+        raise ValueError(f"Unknown provider preset: {provider}")
 
     def get_keywords(self) -> "KeywordsConfig":
         """Return the active keyword vocabulary, lazily loading defaults if unset.
@@ -141,10 +209,9 @@ class ScreenScribeConfig:
         ``/v1/chat/completions`` instead of ``/v1/responses``), which fails every
         request. Callers turn a non-empty result into ``Exit(1)``.
 
-        Softer key<->endpoint provider mismatches are NON-blocking and returned
-        separately by :meth:`mismatch_warnings` -- OpenAI-compatible gateways
-        legitimately use ``sk-`` keys, so a prefix that disagrees with the
-        endpoint host is a warning, not a hard block (finding 283).
+        Known OpenAI↔LibraxisAI key/endpoint mismatches are blocking because the
+        key would otherwise be sent to the wrong provider. Explicit custom
+        providers retain warning-only behavior when compatibility is uncertain.
 
         ``providers`` scopes the check to the named providers ("llm", "vision",
         "stt"). When ``None`` (the default, used by ``review``) every provider is
@@ -172,7 +239,68 @@ class ScreenScribeConfig:
                     "  Fix in: ~/.config/screenscribe/config.env"
                 )
 
+        pairs = (
+            ("llm", "LLM", self.get_llm_api_key(), self.llm_endpoint),
+            ("vision", "Vision", self.get_vision_api_key(), self.vision_endpoint),
+            ("stt", "STT", self.get_stt_api_key(), self.stt_endpoint),
+        )
+        declared_provider = self.provider.lower().strip()
+        for provider, label, key, endpoint in pairs:
+            if provider not in providers:
+                continue
+            endpoint_provider = self._endpoint_provider(endpoint)
+
+            if (
+                declared_provider in {"libraxis", "openai"}
+                and endpoint_provider != declared_provider
+            ):
+                errors.append(
+                    f"{label} endpoint does not match the configured {declared_provider} preset.\n"
+                    f"  Endpoint in use: {endpoint}\n"
+                    "  Run `screenscribe config setup` to rewrite one coherent provider preset."
+                )
+                continue
+
+            if not key or declared_provider == "custom":
+                continue
+            key_provider = self._key_provider(key)
+            if endpoint_provider == "libraxis" and key_provider == "openai":
+                errors.append(
+                    f"{label} provider mismatch: an OpenAI API key would be sent to LibraxisAI.\n"
+                    "  No request was sent. Run `screenscribe config setup` and choose OpenAI."
+                )
+            elif endpoint_provider == "openai" and key_provider != "openai":
+                errors.append(
+                    f"{label} provider mismatch: the OpenAI endpoint requires an OpenAI API key.\n"
+                    "  No request was sent. Run `screenscribe config setup` and choose OpenAI."
+                )
+
         return errors
+
+    def recognized_provider(self) -> str:
+        """Return the declared or consistently inferred provider identity."""
+        declared = self.provider.lower().strip()
+        if declared in {"libraxis", "openai", "custom"}:
+            return declared
+        inferred = {
+            self._endpoint_provider(endpoint)
+            for endpoint in (self.stt_endpoint, self.llm_endpoint, self.vision_endpoint)
+        }
+        if None in inferred:
+            return "custom"
+        if len(inferred) == 1:
+            return inferred.pop() or "custom"
+        return "custom"
+
+    def configuration_status(self) -> str:
+        """Return a concise user-facing readiness status without making requests."""
+        if self.validate():
+            return "BLOCKED - provider preset mismatch"
+        if not (self.get_stt_api_key() and self.get_llm_api_key() and self.get_vision_api_key()):
+            return "INCOMPLETE - API key required"
+        if self.recognized_provider() == "custom":
+            return "READY WITH WARNING - custom provider compatibility is not verified"
+        return "READY"
 
     @staticmethod
     def _endpoint_provider(endpoint: str) -> str | None:
@@ -199,13 +327,10 @@ class ScreenScribeConfig:
     def mismatch_warnings(self, providers: set[str] | None = None) -> list[str]:
         """Non-blocking key<->endpoint provider mismatch warnings.
 
-        An ``sk-`` key on a non-OpenAI endpoint (or a non-``sk-`` key on
-        openai.com) is surfaced as a WARNING, never a hard block: OpenAI-compatible
-        gateways legitimately accept ``sk-`` keys, so a prefix that disagrees with
-        the endpoint host may be entirely intentional (finding 283). Pure
-        detection -- no re-routing, no block, and the secret itself is never
-        echoed. ``providers`` scopes the check to the endpoints a command actually
-        uses (``analyze`` passes ``{"vision", "stt"}``); ``None`` checks all.
+        The same mismatch detail is rendered as a warning for diagnosis, while
+        :meth:`validate` decides whether it is a known-host hard block or an
+        explicit custom-provider warning-only case. The secret is never echoed.
+        ``providers`` scopes the check to the endpoints a command actually uses.
         """
         if providers is None:
             providers = {"llm", "vision", "stt"}
@@ -236,18 +361,13 @@ class ScreenScribeConfig:
                 continue
             env_endpoint_var = f"SCREENSCRIBE_{label.upper()}_ENDPOINT"
             env_key_var = f"SCREENSCRIBE_{label.upper()}_API_KEY"
-            # Non-blocking warning: OpenAI-compatible gateways legitimately use
-            # sk- keys, so this may be intentional. We flag it (the key would go
-            # to a provider its prefix does not match) but let the run proceed --
-            # the message names the exact key/endpoint pair and the two concrete
-            # ways to silence it. The secret itself is never echoed.
             warnings.append(
-                f"{label} key/endpoint mismatch (warning -- run continues).\n"
+                f"{label} key/endpoint mismatch.\n"
                 f"  What: {detail}\n"
                 f"  Endpoint in use: {endpoint}\n"
                 "  Note: OpenAI-compatible gateways legitimately use OpenAI-style "
-                "keys, so this may be intentional. If it is not, your key would be "
-                "sent to a provider it does not belong to.\n"
+                "keys. Explicit custom providers remain warning-only; known OpenAI "
+                "and LibraxisAI mismatches are blocked before a request.\n"
                 "  To silence this, align config in ~/.config/screenscribe/config.env "
                 "(or as an env var):\n"
                 f"    - point the endpoint at the key's provider: set {env_endpoint_var}\n"
@@ -311,7 +431,17 @@ class ScreenScribeConfig:
 
     def _load_from_env(self) -> None:
         """Load configuration from environment variables."""
+        provider_is_explicit = bool(os.environ.get("SCREENSCRIBE_PROVIDER"))
+        routing_override_keys = (
+            "SCREENSCRIBE_API_BASE",
+            "LIBRAXIS_API_BASE",
+            "SCREENSCRIBE_STT_ENDPOINT",
+            "SCREENSCRIBE_LLM_ENDPOINT",
+            "SCREENSCRIBE_VISION_ENDPOINT",
+        )
+        routing_is_overridden = any(os.environ.get(key) for key in routing_override_keys)
         env_mapping = {
+            "SCREENSCRIBE_PROVIDER": "provider",
             # Generic API Key (fallback for all endpoints)
             "SCREENSCRIBE_API_KEY": "api_key",  # pragma: allowlist secret
             # Per-provider keys (set appropriate per-endpoint key)
@@ -366,6 +496,13 @@ class ScreenScribeConfig:
                     # the var lands -- unlike the old inert-value form (BH54).
                     self._assign_env_value(attr, value)
 
+        # A saved provider is a coherence hint for its saved endpoints, not an
+        # authority over one-off routing overrides. When env changes routing
+        # without explicitly declaring a provider, infer it from the resulting
+        # endpoint set instead of rejecting the override as a preset mismatch.
+        if routing_is_overridden and not provider_is_explicit:
+            self.provider = ""
+
     # Attributes needing normalization when assigned from an env value; every
     # other mapped attribute is a plain string assignment.
     _ENDPOINT_ATTRS = (
@@ -396,17 +533,7 @@ class ScreenScribeConfig:
 
     def _apply_api_base(self, value: str) -> None:
         """Normalize an API base URL and derive endpoints still at their defaults."""
-        # Normalize api_base - remove trailing paths
-        normalized = value.rstrip("/")
-        for suffix in [
-            "/v1/responses",
-            "/v1/audio/transcriptions",
-            "/v1/chat/completions",
-            "/v1",
-        ]:
-            if normalized.endswith(suffix):
-                normalized = normalized[: -len(suffix)]
-                break
+        normalized = self._normalize_api_base(value)
         self.api_base = normalized
         # Only update endpoints if still at defaults (not explicitly set)
         if self.stt_endpoint == LIBRAXIS_STT_ENDPOINT:
@@ -446,6 +573,10 @@ class ScreenScribeConfig:
     def _set_from_key(self, key: str, value: str) -> None:
         """Set attribute from key-value pair."""
         key_lower = key.lower()
+
+        if key_lower == "screenscribe_provider":
+            self.provider = value.lower().strip()
+            return
 
         # STT fallback (checked first: "stt_fallback_api_key" also contains the
         # generic "api_key" substring, so it must win before the broader checks).
@@ -543,6 +674,8 @@ class ScreenScribeConfig:
             "# screenscribe configuration",
             "# Made with (งಠ_ಠ)ง by ⌜screenscribe⌟ © 2025-2026",
             "",
+            f"SCREENSCRIBE_PROVIDER={self.provider or self.recognized_provider()}",
+            "",
             sep,
             "# API KEY (required - pick one)",
             sep,
@@ -623,15 +756,37 @@ class ScreenScribeConfig:
         # The config holds the API key, so create it owner-only (0600). os.open
         # with the mode sets it at creation (no world-readable window for a new
         # file); the explicit chmod also tightens an already-existing config.
-        fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(content)
-        try:  # tighten an existing file too (no-op on Windows)
-            os.chmod(config_path, 0o600)
-        except OSError:
-            pass
+        self._atomic_write(config_path, content)
 
         return config_path
+
+    @staticmethod
+    def _atomic_write(config_path: Path, content: str) -> None:
+        """Atomically replace a secret-bearing config with owner-only permissions."""
+        fd, temp_name = tempfile.mkstemp(prefix=".config.env.", dir=config_path.parent)
+        temp_path = Path(temp_name)
+        fd_needs_close = True
+        try:
+            os.chmod(temp_path, 0o600)
+            file = os.fdopen(fd, "w", encoding="utf-8")
+            fd_needs_close = False
+            with file:
+                file.write(content)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temp_path, config_path)
+            try:
+                os.chmod(config_path, 0o600)
+            except OSError:
+                pass
+        except BaseException:
+            if fd_needs_close:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            temp_path.unlink(missing_ok=True)
+            raise
 
     def save_api_key(self, api_key: str) -> Path:
         """Persist a new primary API key without discarding other config.

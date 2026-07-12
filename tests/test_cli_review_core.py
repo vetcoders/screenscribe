@@ -179,7 +179,8 @@ def test_review_config_validation_error_exits_1(tmp_path: Path, monkeypatch: Any
     monkeypatch.setattr(cli, "_require_audio_or_exit", lambda _v: None)
 
     class _Cfg(ScreenScribeConfig):
-        def validate(self) -> list[str]:
+        def validate(self, providers: set[str] | None = None) -> list[str]:
+            assert providers == {"llm", "vision", "stt"}
             return ["bad endpoint scheme"]
 
     monkeypatch.setattr(cli.ScreenScribeConfig, "load", classmethod(lambda _c: _Cfg()))

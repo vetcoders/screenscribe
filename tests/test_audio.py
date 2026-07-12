@@ -6,13 +6,45 @@ from subprocess import CompletedProcess
 import pytest
 
 from screenscribe.audio import (
+    FFmpegNotFoundError,
     MediaDecodeError,
     MissingAudioStreamError,
+    check_ffmpeg_installed,
     extract_audio,
     get_video_duration,
     has_audio_stream,
     tail_is_silent,
 )
+
+
+def test_macos_shared_homebrew_guidance_does_not_recommend_chown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def which(tool: str) -> str | None:
+        return "/opt/homebrew/bin/brew" if tool == "brew" else None
+
+    monkeypatch.setattr("screenscribe.audio.sys.platform", "darwin")
+    monkeypatch.setattr("screenscribe.audio.shutil.which", which)
+    monkeypatch.setattr(
+        "screenscribe.audio.subprocess.run",
+        lambda *_args, **_kwargs: CompletedProcess(
+            args=["brew", "--prefix"],
+            returncode=0,
+            stdout="/opt/homebrew\n",
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr("screenscribe.audio.os.access", lambda *_args: False)
+
+    with pytest.raises(FFmpegNotFoundError) as error:
+        check_ffmpeg_installed()
+
+    message = str(error.value)
+    assert "Homebrew is installed, but this user cannot modify it." in message
+    assert "Ask the Homebrew owner or an administrator to run:" in message
+    assert "brew install ffmpeg" in message
+    assert "Do not change ownership of the Homebrew prefix." in message
+    assert "chown" not in message
 
 
 def _volumedetect_run(max_volume_db: float):

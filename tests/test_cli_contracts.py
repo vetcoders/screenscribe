@@ -165,15 +165,30 @@ def test_transcribe_auth_error_is_friendly(monkeypatch: Any, tmp_path: Path) -> 
     assert "Transcription Failed" in normalized_output
     assert "rejected the credentials" in normalized_output
     assert "SCREENSCRIBE_API_KEY" in normalized_output
+    assert "screenscribe config setup" in normalized_output
+    assert "--set-key" not in normalized_output
     assert "Traceback" not in result.output
     assert "HTTPStatusError" not in result.output
 
 
-def test_no_key_guidance_prefers_screenscribe_api_key() -> None:
+def test_no_key_guidance_prefers_safe_provider_setup() -> None:
     with pytest.raises(APIKeyError) as exc_info:
         validate_models(ScreenScribeConfig())
 
-    assert str(exc_info.value).startswith("No API key configured. Set SCREENSCRIBE_API_KEY")
+    assert str(exc_info.value).startswith("No API key configured. Run `screenscribe config setup`")
+
+
+def test_runtime_guidance_never_recommends_secret_in_command_arguments() -> None:
+    root = Path(__file__).resolve().parents[1]
+    runtime_sources = (
+        root / "screenscribe" / "transcribe.py",
+        root / "screenscribe" / "cli_messages.py",
+    )
+
+    for source in runtime_sources:
+        text = source.read_text(encoding="utf-8")
+        assert "config setup" in text
+        assert "config --set-key" not in text
 
 
 def test_review_estimate_does_not_require_api_key(monkeypatch: Any, tmp_path: Path) -> None:
@@ -201,6 +216,53 @@ def test_review_estimate_does_not_require_api_key(monkeypatch: Any, tmp_path: Pa
     assert "Total estimated time" in normalized_output
     assert "API Key Error" not in normalized_output
     assert "estimate should not validate API models" not in normalized_output
+
+
+def test_review_estimate_ignores_unused_provider_mismatches(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    video = tmp_path / "sample.mov"
+    video.write_bytes(b"fake-video")
+    monkeypatch.setattr("screenscribe.cli._check_ffmpeg_or_exit", lambda: None)
+    monkeypatch.setattr(
+        "screenscribe.cli.ScreenScribeConfig.load",
+        lambda: ScreenScribeConfig(
+            provider="libraxis",
+            api_key="sk-stale-openai",  # pragma: allowlist secret
+        ),
+    )
+    monkeypatch.setattr(
+        "screenscribe.review_pipeline.run_review",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = CliRunner().invoke(app, ["review", str(video), "--estimate"])
+
+    assert result.exit_code == 0, result.output
+    assert "Config Error:" not in _plain(result.output)
+
+
+def test_review_local_no_vision_checks_only_llm_provider(monkeypatch: Any, tmp_path: Path) -> None:
+    video = tmp_path / "sample.mov"
+    video.write_bytes(b"fake-video")
+    config = ScreenScribeConfig(
+        llm_api_key="matching-key",  # pragma: allowlist secret
+        stt_api_key="sk-unused-openai",  # pragma: allowlist secret
+        vision_api_key="sk-unused-openai",  # pragma: allowlist secret
+    )
+    monkeypatch.setattr("screenscribe.cli._check_ffmpeg_or_exit", lambda: None)
+    monkeypatch.setattr("screenscribe.cli._require_audio_or_exit", lambda _video: None)
+    monkeypatch.setattr("screenscribe.cli.validate_models", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("screenscribe.cli.ScreenScribeConfig.load", lambda: config)
+    monkeypatch.setattr(
+        "screenscribe.review_pipeline.run_review",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = CliRunner().invoke(app, ["review", str(video), "--local", "--no-vision", "--no-serve"])
+
+    assert result.exit_code == 0, result.output
+    assert "Config Error:" not in _plain(result.output)
 
 
 def test_analyze_uses_config_language_unless_lang_overrides(
@@ -309,13 +371,8 @@ def _stub_analyze_server_side_effects(monkeypatch: Any, recorded: list[ScreenScr
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *_a, **_k: None)
 
 
-def test_analyze_warns_on_key_endpoint_mismatch(monkeypatch: Any, tmp_path: Path) -> None:
-    """Finding 283: a key<->endpoint mismatch is a NON-blocking warning, not a block.
-
-    An OpenAI ``sk-`` key against the default LibraxisAI endpoint used to hard-block,
-    but OpenAI-compatible gateways legitimately use ``sk-`` keys -- so analyze now
-    warns and starts the server anyway. The secret is still never echoed.
-    """
+def test_analyze_blocks_known_key_endpoint_mismatch(monkeypatch: Any, tmp_path: Path) -> None:
+    """A known OpenAI-to-Libraxis mismatch blocks before the analyze runtime."""
     video = tmp_path / "sample.mov"
     video.write_bytes(b"fake-video")
 
@@ -332,10 +389,11 @@ def test_analyze_warns_on_key_endpoint_mismatch(monkeypatch: Any, tmp_path: Path
 
     result = CliRunner().invoke(app, ["analyze", str(video)])
 
-    assert result.exit_code == 0, result.output
-    assert recorded, "create_analyze_app must run despite a (warned) mismatch"
+    assert result.exit_code == 1, result.output
+    assert not recorded
     out = _plain(result.output)
     assert "Config Warning:" in out
+    assert "Config Error:" in out
     assert "mismatch" in out.lower()
     assert "sk-openai-secret" not in result.output  # secret never echoed
 
