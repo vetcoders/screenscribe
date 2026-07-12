@@ -646,7 +646,13 @@ def review(
     config.verbose = verbose
     config.analysis_prompt_override = (prompt or "").strip()
 
-    _check_provider_config_or_exit(config)
+    if not estimate:
+        active_providers = {"llm"}
+        if not local:
+            active_providers.add("stt")
+        if vision:
+            active_providers.add("vision")
+        _check_provider_config_or_exit(config, providers=active_providers)
 
     # Validate model availability (fail fast). --local only reroutes STT to a
     # LOCAL Whisper server; the LLM pre-filter and the Vision stage still hit the

@@ -218,6 +218,53 @@ def test_review_estimate_does_not_require_api_key(monkeypatch: Any, tmp_path: Pa
     assert "estimate should not validate API models" not in normalized_output
 
 
+def test_review_estimate_ignores_unused_provider_mismatches(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    video = tmp_path / "sample.mov"
+    video.write_bytes(b"fake-video")
+    monkeypatch.setattr("screenscribe.cli._check_ffmpeg_or_exit", lambda: None)
+    monkeypatch.setattr(
+        "screenscribe.cli.ScreenScribeConfig.load",
+        lambda: ScreenScribeConfig(
+            provider="libraxis",
+            api_key="sk-stale-openai",  # pragma: allowlist secret
+        ),
+    )
+    monkeypatch.setattr(
+        "screenscribe.review_pipeline.run_review",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = CliRunner().invoke(app, ["review", str(video), "--estimate"])
+
+    assert result.exit_code == 0, result.output
+    assert "Config Error:" not in _plain(result.output)
+
+
+def test_review_local_no_vision_checks_only_llm_provider(monkeypatch: Any, tmp_path: Path) -> None:
+    video = tmp_path / "sample.mov"
+    video.write_bytes(b"fake-video")
+    config = ScreenScribeConfig(
+        llm_api_key="matching-key",
+        stt_api_key="sk-unused-openai",  # pragma: allowlist secret
+        vision_api_key="sk-unused-openai",  # pragma: allowlist secret
+    )
+    monkeypatch.setattr("screenscribe.cli._check_ffmpeg_or_exit", lambda: None)
+    monkeypatch.setattr("screenscribe.cli._require_audio_or_exit", lambda _video: None)
+    monkeypatch.setattr("screenscribe.cli.validate_models", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("screenscribe.cli.ScreenScribeConfig.load", lambda: config)
+    monkeypatch.setattr(
+        "screenscribe.review_pipeline.run_review",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = CliRunner().invoke(app, ["review", str(video), "--local", "--no-vision", "--no-serve"])
+
+    assert result.exit_code == 0, result.output
+    assert "Config Error:" not in _plain(result.output)
+
+
 def test_analyze_uses_config_language_unless_lang_overrides(
     monkeypatch: Any, tmp_path: Path
 ) -> None:
