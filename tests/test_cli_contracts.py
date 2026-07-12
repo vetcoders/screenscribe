@@ -246,7 +246,7 @@ def test_review_local_no_vision_checks_only_llm_provider(monkeypatch: Any, tmp_p
     video = tmp_path / "sample.mov"
     video.write_bytes(b"fake-video")
     config = ScreenScribeConfig(
-        llm_api_key="matching-key",
+        llm_api_key="matching-key",  # pragma: allowlist secret
         stt_api_key="sk-unused-openai",  # pragma: allowlist secret
         vision_api_key="sk-unused-openai",  # pragma: allowlist secret
     )
