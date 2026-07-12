@@ -67,8 +67,11 @@ help:
 # ============================================================================
 
 install:
-	@printf '%s\n' '[1/3] Removing any previous screenscribe tool install...'
-	@uv tool uninstall screenscribe >/dev/null 2>&1 || true
+	@printf '%s\n' '[1/3] Checking installer prerequisites...'
+	@command -v uv >/dev/null 2>&1 || { \
+		printf '%s\n' 'Error: uv is required. Install it first and retry.'; \
+		exit 1; \
+	}
 	@printf '%s\n' '[2/3] Installing screenscribe and runtime dependencies...'
 	@uv tool install . --reinstall --force
 	@printf '%s\n' '[3/3] Checking command availability...'
