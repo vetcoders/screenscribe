@@ -108,10 +108,12 @@ screenscribe config --set-key YOUR_API_KEY
 screenscribe review demo.mov
 ```
 
-`make install` installs the CLI as a bare `screenscribe` command via
-`uv tool install . --reinstall --force`, so normal usage does not need
-`uv run`. If you are developing inside the source checkout instead, the command
-reference below shows the equivalent `uv run screenscribe ...` form.
+`make install` installs only the CLI and its runtime dependencies via
+`uv tool`; it does not bootstrap contributor dependencies or Git hooks. If uv
+reports that its tool directory is not on `PATH`, run `uv tool update-shell`
+once and restart your terminal. If you are developing inside the source
+checkout instead, the command reference below shows the equivalent
+`uv run screenscribe ...` form.
 
 ### Providers
 
