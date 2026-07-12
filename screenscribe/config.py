@@ -286,7 +286,8 @@ class ScreenScribeConfig:
             self._endpoint_provider(endpoint)
             for endpoint in (self.stt_endpoint, self.llm_endpoint, self.vision_endpoint)
         }
-        inferred.discard(None)
+        if None in inferred:
+            return "custom"
         if len(inferred) == 1:
             return inferred.pop() or "custom"
         return "custom"

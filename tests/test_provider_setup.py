@@ -90,6 +90,23 @@ def test_custom_preset_normalizes_common_openai_endpoint_suffixes(base: str) -> 
     assert "/v1/v1/" not in config.stt_endpoint
 
 
+def test_mixed_known_and_custom_endpoints_persist_as_custom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _config_path(monkeypatch, tmp_path)
+    config = ScreenScribeConfig(
+        api_key="mixed-provider-key",  # pragma: allowlist secret
+        stt_endpoint="https://stt.provider.example/v1/audio/transcriptions",
+    )
+
+    assert config.recognized_provider() == "custom"
+
+    config.save_default_config()
+
+    assert "SCREENSCRIBE_PROVIDER=custom" in path.read_text(encoding="utf-8")
+    assert config.validate() == []
+
+
 def test_setup_uses_hidden_prompt_and_saves_complete_openai_preset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
