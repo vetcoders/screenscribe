@@ -328,6 +328,22 @@ def _check_ffmpeg_or_exit() -> None:
         raise typer.Exit(1) from None
 
 
+def _check_provider_config_or_exit(
+    config: ScreenScribeConfig, providers: set[str] | None = None
+) -> None:
+    """Block known provider mismatches before any network request is attempted."""
+    warnings = (
+        config.mismatch_warnings() if providers is None else config.mismatch_warnings(providers)
+    )
+    for warning in warnings:
+        console.print(f"[yellow]Config Warning:[/] {warning}")
+    errors = config.validate() if providers is None else config.validate(providers)
+    if errors:
+        for error in errors:
+            console.print(f"[red]Config Error:[/] {error}")
+        raise typer.Exit(1)
+
+
 def _find_available_port(preferred_port: int, max_tries: int = 25) -> int:
     """Return ``preferred_port`` if free, else the next bindable port.
 
@@ -630,17 +646,7 @@ def review(
     config.verbose = verbose
     config.analysis_prompt_override = (prompt or "").strip()
 
-    # Non-blocking key<->endpoint mismatch warnings (sk- gateways are legit, so
-    # a prefix mismatch is surfaced, not blocked).
-    for warning in config.mismatch_warnings():
-        console.print(f"[yellow]Config Warning:[/] {warning}")
-
-    # Validate endpoint configuration (fail fast on genuinely fatal mistakes)
-    config_errors = config.validate()
-    if config_errors:
-        for error in config_errors:
-            console.print(f"[red]Config Error:[/] {error}")
-        raise typer.Exit(1)
+    _check_provider_config_or_exit(config)
 
     # Validate model availability (fail fast). --local only reroutes STT to a
     # LOCAL Whisper server; the LLM pre-filter and the Vision stage still hit the
@@ -802,20 +808,7 @@ def analyze(
     if language is not None:
         config.language = language
 
-    # Endpoint configuration checks — mirror the `review` command, scoped to the
-    # providers `analyze` actually uses: vision (frame analysis) + STT (voice
-    # notes); it never contacts the LLM, so a stale/unused LLM mismatch must not
-    # be considered (finding I). A key<->endpoint mismatch (e.g. an sk- key on a
-    # non-OpenAI endpoint) is a NON-blocking warning -- OpenAI-compatible
-    # gateways legitimately use sk- keys (finding 283).
-    for warning in config.mismatch_warnings(providers={"vision", "stt"}):
-        console.print(f"[yellow]Config Warning:[/] {warning}")
-
-    config_errors = config.validate(providers={"vision", "stt"})
-    if config_errors:
-        for error in config_errors:
-            console.print(f"[red]Config Error:[/] {error}")
-        raise typer.Exit(1)
+    _check_provider_config_or_exit(config, providers={"vision", "stt"})
 
     # Load the active keyword vocabulary (explicit --keywords-file, else global
     # user file, else built-in default) and attach it to the config that backs
@@ -827,9 +820,7 @@ def analyze(
     # Validate API key
     if not config.get_vision_api_key():
         console.print("[red]Error:[/] API key required for VLM analysis")
-        console.print(
-            "[dim]Set SCREENSCRIBE_API_KEY or run: uv run screenscribe config --set-key YOUR_KEY[/]"
-        )
+        console.print("[dim]Run `screenscribe config setup` or set SCREENSCRIBE_API_KEY.[/]")
         raise typer.Exit(1)
 
     # Validate model availability up front — mirrors `review` so a dead key or an
@@ -938,6 +929,9 @@ def transcribe(
     if language is not None:
         config.language = language
     language = config.language
+
+    if not local:
+        _check_provider_config_or_exit(config, providers={"stt"})
 
     # Check FFmpeg is installed (shared guard — identical message across commands)
     _check_ffmpeg_or_exit()
@@ -1054,6 +1048,8 @@ def preprocess(
     if language is not None:
         config.language = language
     language = config.language
+    if not local:
+        _check_provider_config_or_exit(config, providers={"stt"})
 
     base_output = output or (video.parent / f"{video.stem}_preprocess")
     if force:
@@ -1123,7 +1119,16 @@ def preprocess(
     )
 
 
-@app.command()
+config_app = typer.Typer(
+    name="config",
+    help="Manage provider setup and screenscribe configuration.",
+    add_completion=False,
+    invoke_without_command=True,
+)
+app.add_typer(config_app, name="config")
+
+
+@config_app.callback()
 def config(
     ctx: typer.Context,
     show: Annotated[
@@ -1144,7 +1149,7 @@ def config(
         str | None,
         typer.Option(
             "--set-key",
-            help="Set API key in config",
+            help="Advanced compatibility path: set only the key (visible in shell history)",
         ),
     ] = None,
 ) -> None:
@@ -1154,13 +1159,19 @@ def config(
     Config file: ~/.config/screenscribe/config.env
 
     Examples:
-        uv run screenscribe config --show
-        uv run screenscribe config --init
-        uv run screenscribe config --set-key YOUR_API_KEY
+        screenscribe config setup
+        screenscribe config --show
     """
     cfg = ScreenScribeConfig.load()
 
+    if ctx.invoked_subcommand is not None:
+        return
+
     if set_key:
+        console.print(
+            "[yellow]Warning:[/] --set-key exposes the secret in shell history and only "
+            "changes the generic key. Prefer `screenscribe config setup`."
+        )
         # In-place update: rewrite only the SCREENSCRIBE_API_KEY line and keep
         # every other configured value (per-endpoint keys, STT fallback,
         # api_base, user comments). A config.env.bak snapshot is taken first.
@@ -1203,6 +1214,18 @@ def config(
             )
 
         # API Keys
+        provider_labels = {
+            "libraxis": "LibraxisAI",
+            "openai": "OpenAI",
+            "custom": "Custom OpenAI-compatible",
+        }
+        provider = cfg.recognized_provider()
+        console.print("[cyan]Provider:[/]")
+        console.print(f"  Name: {provider_labels[provider]}")
+        console.print(f"  Status: {cfg.configuration_status()}")
+
+        # API Keys
+        console.print()
         console.print("[cyan]API Keys:[/]")
         console.print(f"  Main: {_mask_api_key(cfg.api_key)}")
         if cfg.stt_api_key and cfg.stt_api_key != cfg.api_key:
@@ -1253,6 +1276,59 @@ def config(
     # Default (no flag): show the real command help instead of an ad-hoc one-liner.
     console.print(ctx.get_help())
     raise typer.Exit()
+
+
+@config_app.command("setup")
+def config_setup() -> None:
+    """Interactively create one coherent provider preset using a hidden key prompt."""
+    console.print("[bold]Choose your provider:[/]")
+    console.print("  1. LibraxisAI")
+    console.print("  2. OpenAI")
+    console.print("  3. Custom OpenAI-compatible provider (advanced)")
+
+    choice = typer.prompt("Provider", type=str).strip()
+    provider_by_choice = {"1": "libraxis", "2": "openai", "3": "custom"}
+    if choice not in provider_by_choice:
+        console.print("[red]Error:[/] Choose 1, 2, or 3.")
+        raise typer.Exit(1)
+
+    api_key = typer.prompt("API key", hide_input=True).strip()
+    if not api_key:
+        console.print("[red]Error:[/] API key cannot be empty.")
+        raise typer.Exit(1)
+
+    provider = provider_by_choice[choice]
+    kwargs: dict[str, str] = {}
+    if provider == "custom":
+        kwargs = {
+            "custom_base": typer.prompt(
+                "API base URL (for example: https://api.example.com)"
+            ).strip(),
+            "stt_model": typer.prompt("STT model (for example: whisper-1)").strip(),
+            "llm_model": typer.prompt("LLM model (for example: your-provider-text-model)").strip(),
+            "vision_model": typer.prompt(
+                "Vision model (for example: your-provider-vision-model)"
+            ).strip(),
+        }
+
+    try:
+        preset = ScreenScribeConfig.provider_preset(provider, api_key, **kwargs)
+    except ValueError as error:
+        console.print(f"[red]Error:[/] {error}")
+        raise typer.Exit(1) from None
+
+    config_path = Path.home() / ".config" / "screenscribe" / "config.env"
+    if config_path.exists() and not typer.confirm(
+        "Replace the existing config with this provider preset?", default=False
+    ):
+        console.print("[dim]Aborted. Existing config preserved.[/]")
+        return
+
+    path = preset.save_default_config()
+    console.print(
+        f"[green]Provider setup saved atomically to:[/] [link=file://{path}]{path}[/link]"
+    )
+    console.print(f"[green]Status:[/] {preset.configuration_status()}")
 
 
 # ---------------------------------------------------------------------------

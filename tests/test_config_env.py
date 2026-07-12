@@ -480,8 +480,7 @@ class TestKeyEndpointMismatchWarning:
         joined = "\n".join(warnings)
         assert "sk-" not in joined  # the secret itself is never echoed
         assert any("libraxis" in w.lower() and "openai" in w.lower() for w in warnings)
-        # Non-blocking: validate() (the blocking gate) stays empty.
-        assert config.validate() == []
+        assert any("No request was sent" in error for error in config.validate())
 
     def test_non_openai_key_on_openai_endpoint_warns(self) -> None:
         config = ScreenScribeConfig(
@@ -579,8 +578,7 @@ class TestKeyEndpointMismatchWarning:
 
         # Surfaced as a warning...
         assert warnings, "key/endpoint mismatch must still be reported"
-        # ...but non-blocking: validate() returns nothing to exit on.
-        assert config.validate() == []
+        assert config.validate(), "known provider mismatch must block before a request"
         msg = "\n".join(warnings)
 
         # Actionable: warns (run continues), names the offending pair, gives the fix.

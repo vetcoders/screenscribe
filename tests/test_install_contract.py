@@ -26,6 +26,7 @@ def test_user_install_excludes_contributor_bootstrap_and_reports_progress() -> N
     assert "[2/3]" in output
     assert "[3/3]" in output
     assert "command -v uv" in output
+    assert 'PATH="$(uv tool dir --bin):$PATH"' in output
     assert "uv tool install . --reinstall --force" in output
     assert "uv tool uninstall screenscribe" not in output
     assert "uv tool update-shell" in output

@@ -99,10 +99,11 @@ git clone https://github.com/vetcoders/screenscribe.git
 cd screenscribe
 make install
 
-# bring your own OpenAI-compatible key (one-time) — see Providers below to
-# point at OpenAI or another provider; the default endpoint is LibraxisAI
-screenscribe config --init
-screenscribe config --set-key YOUR_API_KEY
+# choose LibraxisAI, OpenAI, or a custom OpenAI-compatible provider;
+# the API key is entered through a hidden prompt
+screenscribe config setup
+
+# FFmpeg is required before the first video run (see Requirements above)
 
 # review a narrated screen recording
 screenscribe review demo.mov
@@ -117,37 +118,23 @@ checkout instead, the command reference below shows the equivalent
 
 ### Providers
 
-The self-serve way to run screenscribe is to bring your own key from an
-**OpenAI-compatible provider**. Point the endpoints at that provider and set the
-matching key — two variables, one coherent step. For OpenAI:
+The self-serve path is the provider setup wizard:
 
 ```bash
-export SCREENSCRIBE_API_BASE=https://api.openai.com
-export SCREENSCRIBE_API_KEY=YOUR_OPENAI_KEY   # generic key — covers STT, LLM, and vision
-
-screenscribe review demo.mov
+screenscribe config setup
 ```
 
-Any other OpenAI-compatible endpoint works the same way: set
-`SCREENSCRIBE_API_BASE` to that provider's base URL and `SCREENSCRIBE_API_KEY`
-to its key.
+Choose **LibraxisAI**, **OpenAI**, or a **Custom OpenAI-compatible provider
+(advanced)**. The custom path asks for a base URL and provider-specific STT,
+LLM, and vision model names, with an example beside every prompt.
+The wizard reads the API key through a hidden prompt and atomically writes one
+coherent set of key, endpoints, and compatible models. A known OpenAI↔LibraxisAI
+mismatch blocks before any request is sent. Custom endpoints remain available
+with a warning when provider compatibility cannot be verified.
 
-The built-in default endpoint is **LibraxisAI**, screenscribe's first-party
-OpenAI-compatible provider. If you have a LibraxisAI key, the Quickstart steps
-work as-is — `config --set-key YOUR_API_KEY` is enough and you can skip the base
-URL. Without one, use the OpenAI-compatible path above.
-
-> Use `SCREENSCRIBE_API_KEY` here, not `OPENAI_API_KEY`. `OPENAI_API_KEY` only
-> fills the LLM and vision keys — it leaves the STT key empty, so `review` fails
-> at transcription (the first step). `SCREENSCRIBE_API_KEY` is the generic key
-> all three endpoints fall back to. See [Configuration](#configuration) for
-> per-endpoint keys.
-
-> Set **both** variables together. An OpenAI key (`sk-...`) left on the default
-> LibraxisAI endpoint is a key/endpoint mismatch — screenscribe will not
-> silently re-route, so it warns (and the run is blocked) instead of sending
-> your OpenAI key to the wrong provider. See [Configuration](#configuration) for
-> the full provider/endpoint reference.
+The legacy `config --set-key` option remains for advanced compatibility, but it
+changes only the generic key and exposes its argument to shell history. It is
+not the recommended onboarding path.
 
 > **Billing — bring-your-own-key (BYOK).** screenscribe does not resell or proxy
 > AI capacity. You bring your own provider key and you pay that provider directly
@@ -302,8 +289,9 @@ Manage configuration and API keys. The config file lives at
 
 ```bash
 uv run screenscribe config --show           # display current configuration
+uv run screenscribe config setup            # safe provider + hidden-key wizard
 uv run screenscribe config --init           # create a default config file
-uv run screenscribe config --set-key YOUR_API_KEY # save an API key
+uv run screenscribe config --set-key KEY     # advanced compatibility; shell-history risk
 ```
 
 You can also open the config in your editor with `uv run screenscribe --config`.

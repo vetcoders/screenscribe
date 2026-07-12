@@ -169,11 +169,11 @@ def test_transcribe_auth_error_is_friendly(monkeypatch: Any, tmp_path: Path) -> 
     assert "HTTPStatusError" not in result.output
 
 
-def test_no_key_guidance_prefers_screenscribe_api_key() -> None:
+def test_no_key_guidance_prefers_safe_provider_setup() -> None:
     with pytest.raises(APIKeyError) as exc_info:
         validate_models(ScreenScribeConfig())
 
-    assert str(exc_info.value).startswith("No API key configured. Set SCREENSCRIBE_API_KEY")
+    assert str(exc_info.value).startswith("No API key configured. Run `screenscribe config setup`")
 
 
 def test_review_estimate_does_not_require_api_key(monkeypatch: Any, tmp_path: Path) -> None:
@@ -309,13 +309,8 @@ def _stub_analyze_server_side_effects(monkeypatch: Any, recorded: list[ScreenScr
     monkeypatch.setattr("screenscribe.cli.validate_models", lambda *_a, **_k: None)
 
 
-def test_analyze_warns_on_key_endpoint_mismatch(monkeypatch: Any, tmp_path: Path) -> None:
-    """Finding 283: a key<->endpoint mismatch is a NON-blocking warning, not a block.
-
-    An OpenAI ``sk-`` key against the default LibraxisAI endpoint used to hard-block,
-    but OpenAI-compatible gateways legitimately use ``sk-`` keys -- so analyze now
-    warns and starts the server anyway. The secret is still never echoed.
-    """
+def test_analyze_blocks_known_key_endpoint_mismatch(monkeypatch: Any, tmp_path: Path) -> None:
+    """A known OpenAI-to-Libraxis mismatch blocks before the analyze runtime."""
     video = tmp_path / "sample.mov"
     video.write_bytes(b"fake-video")
 
@@ -332,10 +327,11 @@ def test_analyze_warns_on_key_endpoint_mismatch(monkeypatch: Any, tmp_path: Path
 
     result = CliRunner().invoke(app, ["analyze", str(video)])
 
-    assert result.exit_code == 0, result.output
-    assert recorded, "create_analyze_app must run despite a (warned) mismatch"
+    assert result.exit_code == 1, result.output
+    assert not recorded
     out = _plain(result.output)
     assert "Config Warning:" in out
+    assert "Config Error:" in out
     assert "mismatch" in out.lower()
     assert "sk-openai-secret" not in result.output  # secret never echoed
 

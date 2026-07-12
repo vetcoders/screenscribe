@@ -73,7 +73,7 @@ install:
 		exit 1; \
 	}
 	@printf '%s\n' '[2/3] Installing screenscribe and runtime dependencies...'
-	@uv tool install . --reinstall --force
+	@PATH="$$(uv tool dir --bin):$$PATH" uv tool install . --reinstall --force
 	@printf '%s\n' '[3/3] Checking command availability...'
 	@if command -v screenscribe >/dev/null 2>&1; then \
 		printf '%s\n' 'Ready: screenscribe is installed and available on PATH.'; \
