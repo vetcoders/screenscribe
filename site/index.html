@@ -329,7 +329,7 @@
         <div class="wrap">
             <p class="section-eyebrow" data-reveal><span></span>INSTALL</p>
             <h2 class="section-title" data-reveal>Get started in three steps</h2>
-            <p class="section-lead" data-reveal>Clone and install, add your key, run a review. Bring your own OpenAI-compatible key - you pay the provider directly, nothing in between.</p>
+            <p class="section-lead" data-reveal>Install with uv, add your key, run a review. Bring your own OpenAI-compatible key - you pay the provider directly, nothing in between.</p>
 
             <div class="trust-band" data-reveal>
                 <span aria-hidden="true">●</span>
@@ -340,19 +340,17 @@
             </div>
 
             <div class="install-steps">
-                <article data-reveal><span>1</span><div><h3>Clone &amp; install</h3><p>Grab the repo and run <code>make install</code>. It installs only the CLI and runtime dependencies via <code>uv tool</code> — no contributor toolchain or Git hooks.</p></div></article>
+                <article data-reveal><span>1</span><div><h3>Install</h3><p>Run <code>uv tool install screenscribe</code>. It installs the CLI and its runtime dependencies from PyPI in an isolated environment — no source checkout needed.</p></div></article>
                 <article data-reveal><span>2</span><div><h3>Choose your provider</h3><p>Run the setup wizard for LibraxisAI, OpenAI, or a custom compatible endpoint. Your API key is entered through a hidden prompt.</p></div></article>
-                <article data-reveal><span>3</span><div><h3>Run a review</h3><p>Install FFmpeg first (<code>brew install ffmpeg</code> on macOS or <code>sudo apt install ffmpeg</code> on Debian/Ubuntu), then point screenscribe at a recording. On a shared Mac, ask the Homebrew owner or an administrator to install it; do not change ownership of the Homebrew prefix.</p></div></article>
+                <article data-reveal><span>3</span><div><h3>Run a review</h3><p>Install FFmpeg first (<code>brew install ffmpeg</code> on macOS or <code>sudo apt install ffmpeg</code> on Debian/Ubuntu) — it's a system prerequisite, not installed by the package. On a shared Mac, ask the Homebrew owner or an administrator to install it; do not change ownership of the Homebrew prefix.</p></div></article>
             </div>
 
             <div class="install-terminal" data-reveal>
                 <div class="code-head">
                     <span>BASH</span>
-                    <button class="copy-btn" type="button" data-copy="git clone https://github.com/vetcoders/screenscribe.git&#10;cd screenscribe&#10;make install&#10;screenscribe config setup">COPY</button>
+                    <button class="copy-btn" type="button" data-copy="uv tool install screenscribe&#10;screenscribe config setup">COPY</button>
                 </div>
-<pre><code><span class="prompt">$</span> git clone https://github.com/vetcoders/screenscribe.git
-<span class="prompt">$</span> cd screenscribe
-<span class="prompt">$</span> make install
+<pre><code><span class="prompt">$</span> uv tool install screenscribe
 <span class="comment"># choose a provider and enter your key in a hidden prompt</span>
 <span class="prompt">$</span> screenscribe config setup
 <span class="comment"># FFmpeg is required before the first video run</span>
@@ -360,11 +358,12 @@
 <span class="prompt">$</span> screenscribe review demo.mov</code></pre>
             </div>
 
+            <p data-reveal><small>Prefer to build from source? See <a href="https://github.com/vetcoders/screenscribe/blob/main/README.md#development--install-from-source">Development / install from source</a> in the README.</small></p>
+
             <div class="requirements" data-reveal>
                 <span>Python 3.11+</span>
                 <span>FFmpeg</span>
                 <span>uv</span>
-                <span>make</span>
             </div>
 
         </div>
