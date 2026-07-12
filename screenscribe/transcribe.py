@@ -190,7 +190,7 @@ def _request_transcription_payload(
     if not api_key and not use_local:
         raise ValueError(
             "API key required for cloud STT. Set SCREENSCRIBE_API_KEY, "
-            "run `screenscribe config --set-key YOUR_KEY`, or use --local for local STT."
+            "run `screenscribe config setup`, or use --local for local STT."
         )
 
     url = _resolve_stt_url(use_local, stt_endpoint)
@@ -280,7 +280,7 @@ def transcribe_audio(
     if not api_key and not use_local:
         raise ValueError(
             "API key required for cloud STT. Set SCREENSCRIBE_API_KEY, "
-            "run `screenscribe config --set-key YOUR_KEY`, or use --local for local STT."
+            "run `screenscribe config setup`, or use --local for local STT."
         )
 
     console.print(f"[blue]Transcribing:[/] {audio_path.name}")

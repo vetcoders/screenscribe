@@ -85,6 +85,9 @@ product owners capturing feedback walkthroughs.
   - macOS: `brew install ffmpeg`
   - Debian/Ubuntu: `sudo apt install ffmpeg`
   - Windows: `choco install ffmpeg`
+  - Shared Mac: if your account cannot modify the Homebrew prefix, ask the
+    Homebrew owner or an administrator to run `brew install ffmpeg`. Do not
+    change ownership of the Homebrew prefix.
 - An **API key** for an OpenAI-compatible provider (covers STT + LLM + vision).
   The self-serve path is to bring your own key from **OpenAI** (or any other
   OpenAI-compatible provider) and point the endpoints at that provider — see

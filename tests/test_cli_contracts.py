@@ -165,6 +165,8 @@ def test_transcribe_auth_error_is_friendly(monkeypatch: Any, tmp_path: Path) -> 
     assert "Transcription Failed" in normalized_output
     assert "rejected the credentials" in normalized_output
     assert "SCREENSCRIBE_API_KEY" in normalized_output
+    assert "screenscribe config setup" in normalized_output
+    assert "--set-key" not in normalized_output
     assert "Traceback" not in result.output
     assert "HTTPStatusError" not in result.output
 
@@ -174,6 +176,19 @@ def test_no_key_guidance_prefers_safe_provider_setup() -> None:
         validate_models(ScreenScribeConfig())
 
     assert str(exc_info.value).startswith("No API key configured. Run `screenscribe config setup`")
+
+
+def test_runtime_guidance_never_recommends_secret_in_command_arguments() -> None:
+    root = Path(__file__).resolve().parents[1]
+    runtime_sources = (
+        root / "screenscribe" / "transcribe.py",
+        root / "screenscribe" / "cli_messages.py",
+    )
+
+    for source in runtime_sources:
+        text = source.read_text(encoding="utf-8")
+        assert "config setup" in text
+        assert "config --set-key" not in text
 
 
 def test_review_estimate_does_not_require_api_key(monkeypatch: Any, tmp_path: Path) -> None:

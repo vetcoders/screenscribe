@@ -46,3 +46,14 @@ def test_contributor_install_keeps_hooks_and_dev_dependencies() -> None:
     output = result.stdout
     assert "pre-commit install" in output
     assert "uv sync --dev" in output
+
+
+def test_public_ffmpeg_guidance_covers_shared_macos_without_chown() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    site = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+
+    for public_surface in (readme, site):
+        normalized = " ".join(public_surface.lower().split())
+        assert "Homebrew owner or an administrator" in public_surface
+        assert "do not change ownership of the homebrew prefix" in normalized
+        assert "chown" not in public_surface
