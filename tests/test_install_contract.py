@@ -4,14 +4,17 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 MAKE = shutil.which("make")
+MAKE_COMMAND = MAKE or "make"
+pytestmark = pytest.mark.skipif(MAKE is None, reason="make is not available")
 
 
 def test_user_install_excludes_contributor_bootstrap_and_reports_progress() -> None:
-    assert MAKE is not None
     result = subprocess.run(
-        [MAKE, "--dry-run", "install"],
+        [MAKE_COMMAND, "--dry-run", "install"],
         cwd=ROOT,
         check=True,
         capture_output=True,
@@ -31,9 +34,8 @@ def test_user_install_excludes_contributor_bootstrap_and_reports_progress() -> N
 
 
 def test_contributor_install_keeps_hooks_and_dev_dependencies() -> None:
-    assert MAKE is not None
     result = subprocess.run(
-        [MAKE, "--dry-run", "dev"],
+        [MAKE_COMMAND, "--dry-run", "dev"],
         cwd=ROOT,
         check=True,
         capture_output=True,
