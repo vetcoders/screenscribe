@@ -430,6 +430,15 @@ class ScreenScribeConfig:
 
     def _load_from_env(self) -> None:
         """Load configuration from environment variables."""
+        provider_is_explicit = bool(os.environ.get("SCREENSCRIBE_PROVIDER"))
+        routing_override_keys = (
+            "SCREENSCRIBE_API_BASE",
+            "LIBRAXIS_API_BASE",
+            "SCREENSCRIBE_STT_ENDPOINT",
+            "SCREENSCRIBE_LLM_ENDPOINT",
+            "SCREENSCRIBE_VISION_ENDPOINT",
+        )
+        routing_is_overridden = any(os.environ.get(key) for key in routing_override_keys)
         env_mapping = {
             "SCREENSCRIBE_PROVIDER": "provider",
             # Generic API Key (fallback for all endpoints)
@@ -485,6 +494,13 @@ class ScreenScribeConfig:
                     # matching on the key name. Editing a map value changes where
                     # the var lands -- unlike the old inert-value form (BH54).
                     self._assign_env_value(attr, value)
+
+        # A saved provider is a coherence hint for its saved endpoints, not an
+        # authority over one-off routing overrides. When env changes routing
+        # without explicitly declaring a provider, infer it from the resulting
+        # endpoint set instead of rejecting the override as a preset mismatch.
+        if routing_is_overridden and not provider_is_explicit:
+            self.provider = ""
 
     # Attributes needing normalization when assigned from an env value; every
     # other mapped attribute is a plain string assignment.

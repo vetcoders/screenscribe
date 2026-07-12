@@ -258,6 +258,33 @@ class TestEnvMappingAuthoritative:
         assert config.llm_endpoint == "https://base.example.com/v1/responses"
         assert config.vision_endpoint == "https://base.example.com/v1/responses"
 
+    def test_env_routing_override_supersedes_saved_provider_hint(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        clean_env.setenv("SCREENSCRIBE_API_BASE", "https://api.openai.com/v1")
+        config = ScreenScribeConfig(
+            provider="libraxis",
+            api_key="sk-openai-probe",  # pragma: allowlist secret
+        )
+
+        config._load_from_env()
+
+        assert config.provider == ""
+        assert config.recognized_provider() == "openai"
+        assert config.validate() == []
+
+    def test_explicit_env_provider_remains_authoritative_with_routing_override(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        clean_env.setenv("SCREENSCRIBE_PROVIDER", "libraxis")
+        clean_env.setenv("SCREENSCRIBE_API_BASE", "https://api.openai.com/v1")
+        config = ScreenScribeConfig()
+
+        config._load_from_env()
+
+        assert config.provider == "libraxis"
+        assert config.validate()
+
     def test_libraxis_api_base_normalizes_and_derives(self, clean_env: pytest.MonkeyPatch) -> None:
         clean_env.setenv("LIBRAXIS_API_BASE", "https://lx.example.com/v1")
         config = ScreenScribeConfig()
