@@ -23,7 +23,7 @@ help:
 	@printf '%s\n' 'Usage: make [target]'
 	@printf '\n'
 	@printf '  $(HELP_C_YELLOW)%s$(HELP_C_RESET)\n' 'SETUP'
-	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'install' 'Install CLI + git hooks'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'install' 'Install CLI for normal use'
 	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'dev' 'Install dev dependencies + git hooks'
 	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'setup-hooks' 'Install pre-commit/pre-push hooks only'
 	@printf '\n'
@@ -66,9 +66,19 @@ help:
 # Setup
 # ============================================================================
 
-install: setup-hooks
-	-uv tool uninstall screenscribe 2>/dev/null
-	uv tool install . --reinstall --force
+install:
+	@printf '%s\n' '[1/3] Removing any previous screenscribe tool install...'
+	@uv tool uninstall screenscribe >/dev/null 2>&1 || true
+	@printf '%s\n' '[2/3] Installing screenscribe and runtime dependencies...'
+	@uv tool install . --reinstall --force
+	@printf '%s\n' '[3/3] Checking command availability...'
+	@if command -v screenscribe >/dev/null 2>&1; then \
+		printf '%s\n' 'Ready: screenscribe is installed and available on PATH.'; \
+	else \
+		TOOL_BIN=$$(uv tool dir --bin); \
+		printf '%s\n' 'Installed successfully, but the uv tool bin directory is not on PATH.'; \
+		printf 'Run: uv tool update-shell\nThen restart your terminal. Tool directory: %s\n' "$$TOOL_BIN"; \
+	fi
 
 dev: setup-hooks
 	uv sync --dev
