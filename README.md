@@ -4,7 +4,7 @@
 
 # screenscribe
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![CI](https://github.com/vetcoders/screenscribe/actions/workflows/ci.yml/badge.svg)](https://github.com/vetcoders/screenscribe/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](Makefile)
@@ -461,7 +461,7 @@ issue, see [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Business Source License 1.1 (BUSL-1.1) — see [LICENSE](LICENSE).
 
 ---
 
