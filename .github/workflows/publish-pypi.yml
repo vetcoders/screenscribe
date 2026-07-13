@@ -20,10 +20,19 @@ on:
 permissions:
   contents: read
 
+# Serialize per release tag: two runs for the SAME tag (e.g. an accidental
+# re-publish of one release) must never race to upload the same artifacts.
+# cancel-in-progress: false — a publish already in flight is NEVER killed
+# mid-upload; the second run queues and fails cleanly on the duplicate instead.
+concurrency:
+  group: publish-pypi-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build & verify release
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -83,6 +92,7 @@ jobs:
     name: Publish to PyPI
     needs: [build]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Environment protection (required reviewers + deployment tag rules) is the
     # repo-side gate that actually blocks an unapproved / non-tag publish.
     environment:

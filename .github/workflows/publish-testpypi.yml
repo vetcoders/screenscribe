@@ -22,10 +22,19 @@ on:
 permissions:
   contents: read
 
+# Serialize per requested version: two concurrent dry-run dispatches for the
+# SAME version must not race to upload identical files. cancel-in-progress:
+# false — a publish already in flight is NEVER killed mid-upload; the second
+# run queues and (thanks to skip-existing below) exits cleanly.
+concurrency:
+  group: publish-testpypi-${{ inputs.version }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build distributions
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -71,6 +80,7 @@ jobs:
     name: Publish to TestPyPI
     needs: [build]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Environment protection (required reviewers + deployment branch/tag rules)
     # is the real gate that stops an unapproved publish — configured repo-side.
     environment:
