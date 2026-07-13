@@ -24,6 +24,9 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Defense in depth: a hung transfer must not eat the whole job budget and
+    # skip rollback. Per-curl timeouts below are the primary bound.
+    timeout-minutes: 15
     environment:
       name: screenscribe-production
       url: https://screenscribe.vetcoders.io
@@ -140,14 +143,14 @@ jobs:
           expect_200() {
             local url="$1"
             local code
-            code="$(curl -fsS -o /dev/null -w '%{http_code}' "$url")" || {
+            code="$(curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null -w '%{http_code}' "$url")" || {
               echo "SMOKE FAIL (curl error): $url" >&2; exit 1; }
             [ "$code" = "200" ] || { echo "SMOKE FAIL: $url -> $code" >&2; exit 1; }
             echo "OK 200: $url"
           }
 
           # Root fetched to a file for byte-exact sha256 comparison.
-          curl -fsS "$PROD_URL/?$CB" -o "$LIVE_INDEX"
+          curl -fsS --connect-timeout 10 --max-time 30 "$PROD_URL/?$CB" -o "$LIVE_INDEX"
           expect_200 "$PROD_URL/landing.css?$CB"
           expect_200 "$PROD_URL/styles.css?$CB"
           expect_200 "$PROD_URL/app.js?$CB"
@@ -190,7 +193,7 @@ jobs:
           mv -T current.new current
           REMOTE
           # Re-smoke root after rollback.
-          code="$(curl -fsS -o /dev/null -w '%{http_code}' "$PROD_URL/?cb=rollback-$GITHUB_SHA")"
+          code="$(curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null -w '%{http_code}' "$PROD_URL/?cb=rollback-$GITHUB_SHA")"
           echo "post-rollback / -> $code"
           echo "ROLLBACK PERFORMED (restored current -> $PREV_TARGET)"
           [ "$code" = "200" ] || { echo "ROLLBACK re-smoke failed" >&2; exit 1; }
