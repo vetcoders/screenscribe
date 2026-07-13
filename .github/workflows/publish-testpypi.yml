@@ -106,3 +106,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
         with:
           repository-url: https://test.pypi.org/legacy/
+          # Repeatable dry-run: re-dispatching the same version must not hard-fail
+          # on files that already exist on TestPyPI. The production PyPI workflow
+          # deliberately OMITS this — a duplicate version on PyPI must be a hard fail.
+          skip-existing: true
