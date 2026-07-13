@@ -53,6 +53,12 @@
 var DEBUG;
 if (typeof DEBUG === 'undefined') { DEBUG = typeof window !== 'undefined' && window.location?.search?.includes('debug=1'); }
 
+// "Momenty (N)" tab counter must sum AI findings + manual moments (dispatcher
+// decision). The span's server-rendered initial value is the AI-only count;
+// cache it once on first read so later updates (which mutate the same span)
+// don't re-read our own running total.
+let aiFindingsCount = null;
+
 const reportState = {
     findings: {},
     manualFrames: [],
@@ -2998,7 +3004,20 @@ function manualFrameEffectiveSeverity(frame) {
     return modelSeverity === 'none' ? '' : (modelSeverity || '');
 }
 
+// Keeps the header tab counter in sync with manual moment add/remove, so
+// "Momenty (N)" never lags behind the "Ręczne momenty" panel count.
+function updateFindingsTabCount() {
+    const tabCount = document.getElementById('findings-count');
+    if (!tabCount) return;
+    if (aiFindingsCount === null) {
+        aiFindingsCount = parseInt(tabCount.textContent, 10) || 0;
+    }
+    tabCount.textContent = String(aiFindingsCount + reportState.manualFrames.length);
+}
+
 function renderManualFrames() {
+    updateFindingsTabCount();
+
     const section = document.getElementById('manualFindingsSection');
     const list = document.getElementById('manualFindingsList');
     const count = document.getElementById('manualFindingsCount');
