@@ -9,12 +9,8 @@ name: Publish to TestPyPI
 on:
   workflow_dispatch:
     inputs:
-      ref:
-        description: "Git ref (tag/branch/SHA) to build and publish"
-        required: true
-        type: string
       version:
-        description: "Expected package version (must equal pyproject version at ref)"
+        description: "Expected package version (must equal pyproject version at the dispatched SHA)"
         required: true
         type: string
 
@@ -25,7 +21,7 @@ permissions:
 # Serialize per requested version: two concurrent dry-run dispatches for the
 # SAME version must not race to upload identical files. cancel-in-progress:
 # false — a publish already in flight is NEVER killed mid-upload; the second
-# run queues and (thanks to skip-existing below) exits cleanly.
+# run queues and fails loudly if that version already exists.
 concurrency:
   group: publish-testpypi-${{ inputs.version }}
   cancel-in-progress: false
@@ -43,33 +39,40 @@ jobs:
       # config would be an unnecessary credential-surface expansion.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
-          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
 
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "20"
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Sync development dependencies
+        run: uv sync --dev
+
       # Guard: the version on the checked-out ref must equal the operator input.
       - name: Verify version matches input
         shell: bash
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
         run: |
-          expected="${{ inputs.version }}"
-          actual="$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/^version = "([^"]+)"/\1/')"
-          echo "pyproject version: ${actual}  |  expected: ${expected}"
-          if [ "${actual}" != "${expected}" ]; then
-            echo "::error::version mismatch: pyproject=${actual} expected=${expected}"
+          actual="$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          echo "pyproject version: ${actual}  |  expected: ${EXPECTED_VERSION}"
+          if [ "${actual}" != "${EXPECTED_VERSION}" ]; then
+            echo "::error::version mismatch: pyproject=${actual} expected=${EXPECTED_VERSION}"
             exit 1
           fi
 
-      # --no-sources tells uv to ignore any [tool.uv.sources] table so the build
-      # resolves dependencies the way a standard (non-uv) index install would.
-      # pyproject declares no such table today, so this is a defensive/future-proof
-      # guard rather than an active transform — a health gate before publishing.
-      - name: Build sdist + wheel
-        run: uv build --no-sources
-
-      - name: Check distribution metadata
-        run: uvx twine check --strict dist/*
+      # release-verify runs the full quality gate, then builds dist/* exactly
+      # once and verifies that same wheel + sdist (metadata, assets, isolated
+      # installs, exact versions, CLI help, and the keyless render effect).
+      - name: Build and verify release artifacts
+        run: make release-verify
 
       - name: Upload distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -108,7 +111,6 @@ jobs:
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
         with:
           repository-url: https://test.pypi.org/legacy/
-          # Repeatable dry-run: re-dispatching the same version must not hard-fail
-          # on files that already exist on TestPyPI. The production PyPI workflow
-          # deliberately OMITS this — a duplicate version on PyPI must be a hard fail.
-          skip-existing: true
+          # Every TestPyPI publish attempt uses a unique package version. A retry
+          # after a failed external smoke requires a patch bump (e.g. 0.1.17 ->
+          # 0.1.18); duplicate uploads fail loudly instead of being hidden.

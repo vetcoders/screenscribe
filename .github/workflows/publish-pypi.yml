@@ -31,6 +31,8 @@ concurrency:
 jobs:
   build:
     name: Build & verify release
+    # A published prerelease must never enter the production artifact path.
+    if: ${{ github.event.release.prerelease == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -51,14 +53,16 @@ jobs:
       # a side branch / detached commit fails hard, never publishes.
       - name: Guard release tag
         shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          tag="${{ github.event.release.tag_name }}"
+          tag="${RELEASE_TAG}"
           echo "release tag: ${tag}"
           if ! printf '%s' "${tag}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "::error::tag '${tag}' does not match ^v[0-9]+\.[0-9]+\.[0-9]+$"
             exit 1
           fi
-          version="$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/^version = "([^"]+)"/\1/')"
+          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           if [ "${tag}" != "v${version}" ]; then
             echo "::error::tag '${tag}' != 'v${version}' (pyproject version)"
             exit 1
@@ -73,15 +77,22 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
 
-      # --no-sources tells uv to ignore any [tool.uv.sources] table so the build
-      # resolves dependencies the way a standard (non-uv) index install would.
-      # pyproject declares no such table today, so this is a defensive/future-proof
-      # guard rather than an active transform — a health gate before publishing.
-      - name: Build sdist + wheel
-        run: uv build --no-sources
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "20"
 
-      - name: Check distribution metadata
-        run: uvx twine check --strict dist/*
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Sync development dependencies
+        run: uv sync --dev
+
+      # release-verify runs the full quality gate, then builds dist/* exactly
+      # once and verifies that same wheel + sdist (metadata, assets, isolated
+      # installs, exact versions, CLI help, and the keyless render effect).
+      - name: Build and verify release artifacts
+        run: make release-verify
 
       - name: Upload distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
