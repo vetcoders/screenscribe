@@ -1,0 +1,116 @@
+name: Publish to TestPyPI
+
+# Manual dry-run publish to TestPyPI via PyPI Trusted Publishing (OIDC).
+# NO API tokens, NO username/password: the publish job mints a short-lived
+# OIDC identity token (id-token: write) that TestPyPI verifies against a
+# pre-registered trusted publisher. Third-party actions are pinned to full
+# commit SHAs (supply-chain hardening); the trailing comment records the
+# human-readable version.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Expected package version (must equal pyproject version at the dispatched SHA)"
+        required: true
+        type: string
+
+# Workflow-level default: read-only. Each job narrows further below.
+permissions:
+  contents: read
+
+# Serialize per requested version: two concurrent dry-run dispatches for the
+# SAME version must not race to upload identical files. cancel-in-progress:
+# false — a publish already in flight is NEVER killed mid-upload; the second
+# run queues and fails loudly if that version already exists.
+concurrency:
+  group: publish-testpypi-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      # persist-credentials: false — this job only builds a package and never
+      # runs git push/commit, so persisting GITHUB_TOKEN into the local git
+      # config would be an unnecessary credential-surface expansion.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "20"
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Sync development dependencies
+        run: uv sync --dev
+
+      # Guard: the version on the checked-out ref must equal the operator input.
+      - name: Verify version matches input
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          actual="$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          echo "pyproject version: ${actual}  |  expected: ${EXPECTED_VERSION}"
+          if [ "${actual}" != "${EXPECTED_VERSION}" ]; then
+            echo "::error::version mismatch: pyproject=${actual} expected=${EXPECTED_VERSION}"
+            exit 1
+          fi
+
+      # release-verify runs the full quality gate, then builds dist/* exactly
+      # once and verifies that same wheel + sdist (metadata, assets, isolated
+      # installs, exact versions, CLI help, and the keyless render effect).
+      - name: Build and verify release artifacts
+        run: make release-verify
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to TestPyPI
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Environment protection (required reviewers + deployment branch/tag rules)
+    # is the real gate that stops an unapproved publish — configured repo-side.
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/screenscribe
+    # ONLY id-token: write — mandatory for Trusted Publishing, job-level to
+    # minimise credential exposure. No contents: read needed: download-artifact
+    # pulls same-run artifacts via the Actions runtime token, not GITHUB_TOKEN.
+    # No checkout / no untrusted code runs in this job.
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      # Attestations are ON by default under Trusted Publishing (signed digital
+      # attestations generated + uploaded with the distributions); left at
+      # default intentionally.
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # Every TestPyPI publish attempt uses a unique package version. A retry
+          # after a failed external smoke requires a patch bump (e.g. 0.1.17 ->
+          # 0.1.18); duplicate uploads fail loudly instead of being hidden.

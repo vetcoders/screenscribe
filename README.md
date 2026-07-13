@@ -1,21 +1,23 @@
 <p align="center">
-  <img src="assets/brand/social/banner-a-flat-2x.png" alt="screenscribe — from &lsquo;watch this&rsquo; to &lsquo;fix this&rsquo;" width="100%">
+  <img src="https://raw.githubusercontent.com/vetcoders/screenscribe/main/assets/brand/social/banner-a-flat-2x.png" alt="screenscribe — from &lsquo;watch this&rsquo; to &lsquo;fix this&rsquo;" width="100%">
 </p>
 
 # screenscribe
 
-[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
+[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](https://github.com/vetcoders/screenscribe/blob/main/LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![CI](https://github.com/vetcoders/screenscribe/actions/workflows/ci.yml/badge.svg)](https://github.com/vetcoders/screenscribe/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](Makefile)
+[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](https://github.com/vetcoders/screenscribe/blob/main/Makefile)
 
 **Turn screen recordings into actionable engineering reports.**
 
-[![screenscribe example report — interactive dashboard with an executive summary and synchronized transcript](docs/showcase/example_report.png)](docs/SHOWCASE.md)
+[![screenscribe example report — interactive dashboard with an executive summary and synchronized transcript](https://raw.githubusercontent.com/vetcoders/screenscribe/main/docs/showcase/example_report.png)](https://github.com/vetcoders/screenscribe/blob/main/docs/SHOWCASE.md)
 
-**See a live example report:** open [`examples/example_report.html`](examples/example_report.html)
-in your browser (build it with `uv run python examples/generate_example.py`), or
-browse the [showcase](docs/SHOWCASE.md). It is a neutral, fictional sample — no
+**See a live example report:** browse the
+[showcase](https://github.com/vetcoders/screenscribe/blob/main/docs/SHOWCASE.md)
+for a rendered screenshot, or clone the repo and run
+`uv run python examples/generate_example.py` to generate and open a live,
+self-contained `example_report.html`. It is a neutral, fictional sample — no
 real recordings, keys, or personal data.
 
 Record yourself walking through your app, talk through the bugs and changes you
@@ -79,12 +81,16 @@ product owners capturing feedback walkthroughs.
 - **uv** for dependency sync and source-checkout commands.
   - macOS: `brew install uv`
   - Standalone installer: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- **FFmpeg** (provides `ffmpeg` and `ffprobe`) — used for audio extraction and
-  duration probing. Input videos can be anything FFmpeg decodes, including
+- **FFmpeg** (provides `ffmpeg` and `ffprobe`) — a **system-level prerequisite**,
+  not a Python dependency. It is never installed by `pip`/`uv tool install`; you
+  must install it separately before the first run. Used for audio extraction and
+  duration probing; input videos can be anything FFmpeg decodes, including
   `.mp4`, `.mov`, `.mkv`, and `.webm`.
   - macOS: `brew install ffmpeg`
   - Debian/Ubuntu: `sudo apt install ffmpeg`
-  - Windows: `choco install ffmpeg`
+  - Windows: `choco install ffmpeg` (community/untested — CI and package
+    classifiers cover macOS and Linux only; Windows is not an officially
+    supported platform)
   - Shared Mac: if your account cannot modify the Homebrew prefix, ask the
     Homebrew owner or an administrator to run `brew install ffmpeg`. Do not
     change ownership of the Homebrew prefix.
@@ -98,9 +104,7 @@ product owners capturing feedback walkthroughs.
 ## Quickstart
 
 ```bash
-git clone https://github.com/vetcoders/screenscribe.git
-cd screenscribe
-make install
+uv tool install screenscribe
 
 # choose LibraxisAI, OpenAI, or a custom OpenAI-compatible provider;
 # the API key is entered through a hidden prompt
@@ -112,12 +116,33 @@ screenscribe config setup
 screenscribe review demo.mov
 ```
 
-`make install` installs only the CLI and its runtime dependencies via
-`uv tool`; it does not bootstrap contributor dependencies or Git hooks. If uv
-reports that its tool directory is not on `PATH`, run `uv tool update-shell`
-once and restart your terminal. If you are developing inside the source
-checkout instead, the command reference below shows the equivalent
-`uv run screenscribe ...` form.
+Want to try it without a persistent install? Run `uvx screenscribe --help`.
+If `uv`/`uvx` is not installed yet, follow the official
+[uv installation guide](https://docs.astral.sh/uv/getting-started/installation/).
+
+`uv tool install screenscribe` installs the CLI and its runtime dependencies
+from PyPI in an isolated environment. If uv reports that its tool directory is
+not on `PATH`, run `uv tool update-shell` once and restart your terminal.
+FFmpeg/ffprobe are a system prerequisite and are **not** installed by this
+command — see [Requirements](#requirements) above.
+
+Upgrade to the latest release: `uv tool upgrade screenscribe`. Remove it:
+`uv tool uninstall screenscribe`.
+
+### Development / install from source
+
+To work on screenscribe itself instead of installing the published package:
+
+```bash
+git clone https://github.com/vetcoders/screenscribe.git
+cd screenscribe
+make dev
+# Optional: keep the globally available CLI linked to this checkout.
+make dev-link
+```
+
+`make install` installs the current source checkout as a normal, non-editable
+tool. It does not install the development dependency group or Git hooks.
 
 ### Providers
 
@@ -153,7 +178,7 @@ artifacts, and (by default) opens the interactive HTML report in your browser.
 Prefer to drive the AI yourself? Use the interactive dashboard:
 
 ```bash
-uv run screenscribe analyze demo.mov
+screenscribe analyze demo.mov
 ```
 
 This opens a browser where you scrub the video, mark interesting frames, add
@@ -235,7 +260,7 @@ report and opens the HTML report in your browser. Key options:
   (see [Keywords](#screenscribe-keywords) below); an empty or missing file is safe.
 - `--resume` / `--force` — resume from a checkpoint, or overwrite a prior review.
 
-See [USAGE.md](USAGE.md#screenscribe-review) for every flag.
+See [USAGE.md](https://github.com/vetcoders/screenscribe/blob/main/USAGE.md#screenscribe-review) for every flag.
 
 ### `screenscribe analyze`
 
@@ -410,7 +435,7 @@ export SCREENSCRIBE_STT_FALLBACK_API_KEY=YOUR_OPENAI_KEY
 export SCREENSCRIBE_STT_FALLBACK_MODEL=whisper-1
 ```
 
-See [USAGE.md](USAGE.md) for the full configuration reference and troubleshooting.
+See [USAGE.md](https://github.com/vetcoders/screenscribe/blob/main/USAGE.md) for the full configuration reference and troubleshooting.
 
 ---
 
@@ -442,26 +467,26 @@ A `preprocess` run writes a transcript-first bundle (`transcript.txt`,
 
 ## Documentation
 
-- [USAGE.md](USAGE.md) — comprehensive command and flag reference, workflows,
+- [USAGE.md](https://github.com/vetcoders/screenscribe/blob/main/USAGE.md) — comprehensive command and flag reference, workflows,
   and troubleshooting.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — pipeline, servers, report layer,
+- [docs/ARCHITECTURE.md](https://github.com/vetcoders/screenscribe/blob/main/docs/ARCHITECTURE.md) — pipeline, servers, report layer,
   CLI, and module map for developers and contributors.
-- [docs/SHOWCASE.md](docs/SHOWCASE.md) — feature showcase and sample artifacts.
-- **See an example report:** [`examples/`](examples/) — a neutral sample report
-  ([JSON](examples/example_report.json), [VTT](examples/example_transcript.vtt));
-  run `uv run python examples/generate_example.py` to build the self-contained
-  interactive HTML and open it in a browser.
-- [CHANGELOG.md](CHANGELOG.md) — release history.
+- [docs/SHOWCASE.md](https://github.com/vetcoders/screenscribe/blob/main/docs/SHOWCASE.md) — feature showcase and sample artifacts.
+- **See an example report:** [`examples/`](https://github.com/vetcoders/screenscribe/tree/main/examples) — a neutral sample report
+  ([JSON](https://github.com/vetcoders/screenscribe/blob/main/examples/example_report.json), [VTT](https://github.com/vetcoders/screenscribe/blob/main/examples/example_transcript.vtt));
+  from a source checkout, run `uv run python examples/generate_example.py` to
+  build the self-contained interactive HTML and open it in a browser.
+- [CHANGELOG.md](https://github.com/vetcoders/screenscribe/blob/main/CHANGELOG.md) — release history.
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) to get started,
-and please review our [Code of Conduct](CODE_OF_CONDUCT.md). To report a security
-issue, see [SECURITY.md](SECURITY.md).
+Contributions are welcome. See [CONTRIBUTING.md](https://github.com/vetcoders/screenscribe/blob/main/CONTRIBUTING.md) to get started,
+and please review our [Code of Conduct](https://github.com/vetcoders/screenscribe/blob/main/CODE_OF_CONDUCT.md). To report a security
+issue, see [SECURITY.md](https://github.com/vetcoders/screenscribe/blob/main/SECURITY.md).
 
 ## License
 
-Business Source License 1.1 (BUSL-1.1) — see [LICENSE](LICENSE).
+Business Source License 1.1 (BUSL-1.1) — see [LICENSE](https://github.com/vetcoders/screenscribe/blob/main/LICENSE).
 
 ---
 

@@ -1,6 +1,6 @@
 [project]
 name = "screenscribe"
-version = "0.1.16"
+version = "0.1.17"
 description = "Turn screen recordings into actionable engineering reports — narrated screencast review (STT → LLM → VLM)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,7 +14,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: Other/Proprietary License",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3.11",
@@ -37,7 +36,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/vetcoders/screenscribe"
+Homepage = "https://screenscribe.vetcoders.io"
 Repository = "https://github.com/vetcoders/screenscribe"
 Documentation = "https://github.com/vetcoders/screenscribe/blob/main/README.md"
 Showcase = "https://github.com/vetcoders/screenscribe/blob/main/docs/SHOWCASE.md"
@@ -106,7 +105,9 @@ ignore = [
 quote-style = "double"
 indent-style = "space"
 
-# MyPy - type checking
+# MyPy - type checking. Scope is the shipped package only: tests/, scripts/,
+# and examples/ are tracked debt (see CONTRIBUTING.md), excluded here so that
+# `mypy .` reflects the actual product gate instead of erroring on backend code.
 [tool.mypy]
 python_version = "3.11"
 strict = true
@@ -114,6 +115,11 @@ warn_return_any = true
 warn_unused_ignores = true
 disallow_untyped_defs = true
 ignore_missing_imports = true
+exclude = [
+    "^tests/",
+    "^scripts/",
+    "^examples/",
+]
 
 [[tool.mypy.overrides]]
 module = "tests.*"
