@@ -203,6 +203,11 @@ release-verify: verify
 	uv build --no-sources; \
 	printf '%s\n' 'release-verify: twine metadata check (strict)...'; \
 	uvx twine check --strict dist/*; \
+	printf '%s\n' 'release-verify: asserting dist/ holds exactly one wheel and one sdist...'; \
+	whl_count=$$(ls dist/*.whl 2>/dev/null | wc -l | tr -d ' '); \
+	sdist_count=$$(ls dist/*.tar.gz 2>/dev/null | wc -l | tr -d ' '); \
+	[ "$$whl_count" = "1" ] || { printf 'FAIL: expected exactly 1 wheel in dist/, found %s\n' "$$whl_count"; exit 1; }; \
+	[ "$$sdist_count" = "1" ] || { printf 'FAIL: expected exactly 1 sdist in dist/, found %s\n' "$$sdist_count"; exit 1; }; \
 	printf '%s\n' 'release-verify: asserting runtime assets are packaged (wheel + sdist)...'; \
 	whl=$$(ls dist/*.whl); \
 	sdist=$$(ls dist/*.tar.gz); \
@@ -218,7 +223,8 @@ release-verify: verify
 	env -u VIRTUAL_ENV uv pip install --python "$$TMP/venv/bin/python" "$$whl" >/dev/null; \
 	ver=$$("$$TMP/venv/bin/screenscribe" --version); \
 	printf 'installed wheel reports version: %s\n' "$$ver"; \
-	printf '%s' "$$ver" | grep -q "$(CURRENT_VERSION)" || { printf 'FAIL: installed --version (%s) != pyproject version (%s)\n' "$$ver" "$(CURRENT_VERSION)"; exit 1; }; \
+	ver_num=$$(printf '%s\n' "$$ver" | sed -E 's/^.*[[:space:]]v//'); \
+	[ "$$ver_num" = "$(CURRENT_VERSION)" ] || { printf 'FAIL: installed --version (%s) -> parsed (%s) != pyproject version (%s)\n' "$$ver" "$$ver_num" "$(CURRENT_VERSION)"; exit 1; }; \
 	"$$TMP/venv/bin/screenscribe" --help >/dev/null; \
 	printf '%s\n' 'release-verify: PASS (verify gate + packaging proofs + isolated smoke).'
 
