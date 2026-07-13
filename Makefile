@@ -205,30 +205,9 @@ release-verify: verify
 	uv build --no-sources; \
 	printf '%s\n' 'release-verify: twine metadata check (strict)...'; \
 	uvx twine check --strict dist/*; \
-	printf '%s\n' 'release-verify: asserting dist/ holds exactly one wheel and one sdist...'; \
-	whl_count=$$(ls dist/*.whl 2>/dev/null | wc -l | tr -d ' '); \
-	sdist_count=$$(ls dist/*.tar.gz 2>/dev/null | wc -l | tr -d ' '); \
-	[ "$$whl_count" = "1" ] || { printf 'FAIL: expected exactly 1 wheel in dist/, found %s\n' "$$whl_count"; exit 1; }; \
-	[ "$$sdist_count" = "1" ] || { printf 'FAIL: expected exactly 1 sdist in dist/, found %s\n' "$$sdist_count"; exit 1; }; \
-	printf '%s\n' 'release-verify: asserting runtime assets are packaged (wheel + sdist)...'; \
-	whl=$$(ls dist/*.whl); \
-	sdist=$$(ls dist/*.tar.gz); \
-	for pat in html_pro_assets/templates/shell.html default_keywords.yaml; do \
-		unzip -l "$$whl" | grep -q "$$pat" || { printf 'FAIL: %s missing from wheel\n' "$$pat"; exit 1; }; \
-		tar -tzf "$$sdist" | grep -q "$$pat" || { printf 'FAIL: %s missing from sdist\n' "$$pat"; exit 1; }; \
-	done; \
-	printf '%s\n' '  runtime assets present in wheel + sdist'; \
-	printf '%s\n' 'release-verify: isolated wheel install smoke (throwaway venv outside repo)...'; \
-	TMP=$$(mktemp -d); \
-	trap 'rm -rf "$$TMP"' EXIT; \
-	env -u VIRTUAL_ENV uv venv "$$TMP/venv" >/dev/null; \
-	env -u VIRTUAL_ENV uv pip install --python "$$TMP/venv/bin/python" "$$whl" >/dev/null; \
-	ver=$$("$$TMP/venv/bin/screenscribe" --version); \
-	printf 'installed wheel reports version: %s\n' "$$ver"; \
-	ver_num=$$(printf '%s\n' "$$ver" | sed -E 's/^.*[[:space:]]v//'); \
-	[ "$$ver_num" = "$(CURRENT_VERSION)" ] || { printf 'FAIL: installed --version (%s) -> parsed (%s) != pyproject version (%s)\n' "$$ver" "$$ver_num" "$(CURRENT_VERSION)"; exit 1; }; \
-	"$$TMP/venv/bin/screenscribe" --help >/dev/null; \
-	printf '%s\n' 'release-verify: PASS (verify gate + packaging proofs + isolated smoke).'
+	printf '%s\n' 'release-verify: verifying the exact wheel + sdist in dist/...'; \
+	uv run python scripts/release_artifacts_verify.py --dist dist; \
+	printf '%s\n' 'release-verify: PASS (verify gate + exact artifact proofs).'
 
 typecheck:
 	uv run mypy screenscribe
