@@ -30,6 +30,10 @@ jobs:
     env:
       DEPLOY_BASE: /srv/screenscribe-landing
       PROD_URL: https://screenscribe.vetcoders.io
+      # Unique per-run release dir name keeps every deploy atomic: rsync always
+      # lands in a fresh <name>.tmp, activation is always mv + symlink switch,
+      # even when re-running the same commit SHA.
+      RELEASE_NAME: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -65,7 +69,7 @@ jobs:
           # --delete acts ONLY inside the fresh per-release tmp dir, never the parent.
           rsync -rlpcz --delete --exclude='.DS_Store' \
             -e "ssh -i $SSH_KEY_FILE -o UserKnownHostsFile=$KNOWN_HOSTS_FILE -o StrictHostKeyChecking=yes -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20" \
-            site/ "$SSH_USER@$SSH_HOST:$DEPLOY_BASE/releases/$GITHUB_SHA.tmp/"
+            site/ "$SSH_USER@$SSH_HOST:$DEPLOY_BASE/releases/$RELEASE_NAME.tmp/"
 
       - name: Validate release on server (pre-activation)
         env:
@@ -75,10 +79,10 @@ jobs:
           set -euo pipefail
           ssh -i "$SSH_KEY_FILE" -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
             -o StrictHostKeyChecking=yes -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 \
-            "$SSH_USER@$SSH_HOST" bash -s "$DEPLOY_BASE" "$GITHUB_SHA" <<'REMOTE'
+            "$SSH_USER@$SSH_HOST" bash -s "$DEPLOY_BASE" "$RELEASE_NAME" <<'REMOTE'
           set -euo pipefail
-          BASE="$1"; SHA="$2"
-          DIR="$BASE/releases/$SHA.tmp"
+          BASE="$1"; RELNAME="$2"
+          DIR="$BASE/releases/$RELNAME.tmp"
           cd "$DIR"
           for f in index.html landing.css styles.css app.js demo/report.html robots.txt sitemap.xml; do
             [ -f "$f" ] || { echo "MISSING FILE: $f" >&2; exit 1; }
@@ -91,7 +95,7 @@ jobs:
             echo "$links" >&2
             exit 1
           fi
-          echo "=== MANIFEST (sha256, $SHA.tmp) ==="
+          echo "=== MANIFEST (sha256, $RELNAME.tmp) ==="
           find . -type f | sort | xargs sha256sum
           REMOTE
 
@@ -104,25 +108,15 @@ jobs:
           set -euo pipefail
           OUT="$(ssh -i "$SSH_KEY_FILE" -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
             -o StrictHostKeyChecking=yes -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 \
-            "$SSH_USER@$SSH_HOST" bash -s "$DEPLOY_BASE" "$GITHUB_SHA" <<'REMOTE'
+            "$SSH_USER@$SSH_HOST" bash -s "$DEPLOY_BASE" "$RELEASE_NAME" <<'REMOTE'
           set -euo pipefail
-          BASE="$1"; SHA="$2"
+          BASE="$1"; RELNAME="$2"
           cd "$BASE"
-          REL="releases/$SHA"
+          REL="releases/$RELNAME"
           PREV=""
           if [ -L current ]; then PREV="$(readlink current)"; fi
-          if [ -e "$REL" ]; then
-            if [ "$PREV" = "$REL" ]; then
-              # Same-sha redeploy of the live release: refresh content in place,
-              # keep the existing symlink; PREV stays unchanged.
-              rsync -rlpc --delete "$REL.tmp/" "$REL/"
-              rm -rf "$REL.tmp"
-              echo "PREV_TARGET=$PREV"
-              exit 0
-            fi
-            # Stale same-name dir that is not live: safe to drop (inside releases/).
-            rm -rf "$REL"
-          fi
+          # Release dirs are unique per run, so activation is always a fresh
+          # mv + atomic symlink switch; no same-name in-place refresh needed.
           mv "$REL.tmp" "$REL"
           # Atomic switch via relative target: ln -s + mv -T (no ln -sfn).
           rm -f current.new
@@ -134,7 +128,7 @@ jobs:
           echo "$OUT"
           PREV="$(printf '%s\n' "$OUT" | sed -n 's/^PREV_TARGET=//p' | tail -n1)"
           echo "prev_target=$PREV" >> "$GITHUB_OUTPUT"
-          echo "release_path=$DEPLOY_BASE/releases/$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "release_path=$DEPLOY_BASE/releases/$RELEASE_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Smoke checks (against live canonical URL)
         id: smoke
