@@ -116,7 +116,9 @@ screenscribe config setup
 screenscribe review demo.mov
 ```
 
-No `uv`? A one-shot run without installing anything: `uvx screenscribe --help`.
+Want to try it without a persistent install? Run `uvx screenscribe --help`.
+If `uv`/`uvx` is not installed yet, follow the official
+[uv installation guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 `uv tool install screenscribe` installs the CLI and its runtime dependencies
 from PyPI in an isolated environment. If uv reports that its tool directory is
@@ -134,13 +136,13 @@ To work on screenscribe itself instead of installing the published package:
 ```bash
 git clone https://github.com/vetcoders/screenscribe.git
 cd screenscribe
-make install
+make dev
+# Optional: keep the globally available CLI linked to this checkout.
+make dev-link
 ```
 
-`make install` runs `uv tool install .` against your local checkout; it does
-not bootstrap contributor dependencies or Git hooks (`make dev` does that). If
-you are developing inside the source checkout, the command reference below
-shows the equivalent `uv run screenscribe ...` form.
+`make install` installs the current source checkout as a normal, non-editable
+tool. It does not install the development dependency group or Git hooks.
 
 ### Providers
 
