@@ -25,7 +25,7 @@ We use `uv` for dependency management and Python environment handling.
 ## Coding Standards
 
 - **Formatting**: We use `ruff` for formatting and linting. Run `make format` to format your code.
-- **Type Hints**: All code must have strict type hints. We use `mypy` for type checking. Run `make typecheck`.
+- **Type Hints**: All code must have strict type hints. We use `mypy` for type checking. Run `make typecheck`. Type-checking scope is the shipped `screenscribe/` package; `tests/`, `scripts/`, and `examples/` are intentionally excluded (`[tool.mypy]` in `pyproject.toml`) — that backend surface is tracked separately as debt, not enforced on every PR. PRs touching `screenscribe/` must pass mypy clean.
 - **Linting**: Run `make lint` to check for code quality issues.
 - **Tests**: We use `pytest`. Run `make test` for unit tests. Integration tests (`make test-integration`) require a `LIBRAXIS_API_KEY`. There is also an optional end-to-end suite (`make e2e-review`) that drives a real report in headless Chromium via Playwright — it needs the `playwright` dev dependency and a cached Chromium, and is deliberately kept out of `make verify` so the gate stays fast and browserless.
 - **Architecture**: New to the codebase? [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) maps the pipeline, servers, report layer, CLI, and the hub modules to respect before editing.
