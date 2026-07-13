@@ -215,17 +215,30 @@ jobs:
           CURR_BASE="$(basename "$CURR")"
           PREV_BASE="$(basename "$PREV" 2>/dev/null || true)"
           # Newest-first by mtime; keep the 4 newest, never the live or previous target.
+          # Skip *.tmp leftovers so failed-deploy scratch dirs never count toward
+          # the 4 kept releases (they are reaped separately below).
           count=0
           while IFS= read -r d; do
             [ -n "$d" ] || continue
             d="${d%/}"
             [ -d "$d" ] || continue
+            case "$d" in *.tmp) continue;; esac
             count=$((count + 1))
             if [ "$count" -le 4 ]; then continue; fi
             if [ "$d" = "$CURR_BASE" ] || [ "$d" = "$PREV_BASE" ]; then continue; fi
             echo "pruning old release: $d"
             rm -rf -- "$d"
           done < <(ls -1dt -- */ 2>/dev/null)
+          # Reap stale *.tmp dirs from failed deploys older than 24h so scratch
+          # from crashed runs cannot grow unbounded. current/PREV are never .tmp,
+          # but keep the guard for safety.
+          while IFS= read -r t; do
+            [ -n "$t" ] || continue
+            t="${t#./}"
+            if [ "$t" = "$CURR_BASE" ] || [ "$t" = "$PREV_BASE" ]; then continue; fi
+            echo "pruning stale tmp dir: $t"
+            rm -rf -- "$t"
+          done < <(find . -maxdepth 1 -type d -name '*.tmp' -mmin +1440 2>/dev/null)
           REMOTE
 
       - name: Job summary
