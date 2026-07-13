@@ -1223,6 +1223,11 @@ section[id] {
     border-radius: 14px;
 }
 
+.install-note {
+    max-width: var(--install-panel-width);
+    margin: 18px auto 0;
+}
+
 .code-head {
     justify-content: space-between;
     padding: 16px 24px;
