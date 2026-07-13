@@ -1,0 +1,247 @@
+name: Deploy canonical production (screenscribe.vetcoders.io)
+
+# Canonical production for the landing site is Caddy on a VM
+# (screenscribe.vetcoders.io). GitHub Pages is a non-canonical mirror.
+# Operator decision 2026-07-09. This workflow performs an atomic,
+# release-directory-based deploy over SSH/rsync with pre-activation
+# validation, post-switch smoke checks, and automatic rollback.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/deploy-site-production.yml"
+
+# Never cancel an in-flight production deploy; serialize instead.
+concurrency:
+  group: site-production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: screenscribe-production
+      url: https://screenscribe.vetcoders.io
+    env:
+      DEPLOY_BASE: /srv/screenscribe-landing
+      PROD_URL: https://screenscribe.vetcoders.io
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Configure SSH
+        env:
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          install -m 700 -d "$RUNNER_TEMP/ssh"
+          # Secrets flow only through env -> file; never echoed to the log.
+          printf '%s\n' "$PROD_SSH_KEY" > "$RUNNER_TEMP/ssh/id_ed25519"
+          chmod 600 "$RUNNER_TEMP/ssh/id_ed25519"
+          printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/ssh/known_hosts"
+          echo "SSH_KEY_FILE=$RUNNER_TEMP/ssh/id_ed25519" >> "$GITHUB_ENV"
+          echo "KNOWN_HOSTS_FILE=$RUNNER_TEMP/ssh/known_hosts" >> "$GITHUB_ENV"
+
+      - name: Push release to server (rsync into fresh tmp dir)
+        env:
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+        run: |
+          set -euo pipefail
+          # Ensure the releases parent exists (never touch the parent's contents).
+          ssh -i "$SSH_KEY_FILE" -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
+            -o StrictHostKeyChecking=yes -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 \
+            "$SSH_USER@$SSH_HOST" "mkdir -p '$DEPLOY_BASE/releases'"
+          # --delete acts ONLY inside the fresh per-release tmp dir, never the parent.
+          rsync -rlpcz --delete --exclude='.DS_Store' \
+            -e "ssh -i $SSH_KEY_FILE -o UserKnownHostsFile=$KNOWN_HOSTS_FILE -o StrictHostKeyChecking=yes -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20" \
+            site/ "$SSH_USER@$SSH_HOST:$DEPLOY_BASE/releases/$GITHUB_SHA.tmp/"
+
+      - name: Validate release on server (pre-activation)
+        env:
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+        run: |
+          set -euo pipefail
+          ssh -i "$SSH_KEY_FILE" -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
+            -o StrictHostKeyChecking=yes -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 \
+            "$SSH_USER@$SSH_HOST" bash -s "$DEPLOY_BASE" "$GITHUB_SHA" <<'REMOTE'
+          set -euo pipefail
+          BASE="$1"; SHA="$2"
+          DIR="$BASE/releases/$SHA.tmp"
+          cd "$DIR"
+          for f in index.html landing.css styles.css app.js demo/report.html robots.txt sitemap.xml; do
+            [ -f "$f" ] || { echo "MISSING FILE: $f" >&2; exit 1; }
+          done
+          [ -d assets ] || { echo "MISSING DIR: assets/" >&2; exit 1; }
+          # Content must contain zero symlinks.
+          links="$(find . -type l)"
+          if [ -n "$links" ]; then
+            echo "SYMLINKS PRESENT IN CONTENT:" >&2
+            echo "$links" >&2
+            exit 1
+          fi
+          echo "=== MANIFEST (sha256, $SHA.tmp) ==="
+          find . -type f | sort | xargs sha256sum
+          REMOTE
+
+      - name: Activate release (atomic symlink switch)
+        id: activate
+        env:
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+        run: |
+          set -euo pipefail
+          OUT="$(ssh -i "$SSH_KEY_FILE" -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
+            -o StrictHostKeyChecking=yes -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 \
+            "$SSH_USER@$SSH_HOST" bash -s "$DEPLOY_BASE" "$GITHUB_SHA" <<'REMOTE'
+          set -euo pipefail
+          BASE="$1"; SHA="$2"
+          cd "$BASE"
+          REL="releases/$SHA"
+          PREV=""
+          if [ -L current ]; then PREV="$(readlink current)"; fi
+          if [ -e "$REL" ]; then
+            if [ "$PREV" = "$REL" ]; then
+              # Same-sha redeploy of the live release: refresh content in place,
+              # keep the existing symlink; PREV stays unchanged.
+              rsync -rlpc --delete "$REL.tmp/" "$REL/"
+              rm -rf "$REL.tmp"
+              echo "PREV_TARGET=$PREV"
+              exit 0
+            fi
+            # Stale same-name dir that is not live: safe to drop (inside releases/).
+            rm -rf "$REL"
+          fi
+          mv "$REL.tmp" "$REL"
+          # Atomic switch via relative target: ln -s + mv -T (no ln -sfn).
+          rm -f current.new
+          ln -s "$REL" current.new
+          mv -T current.new current
+          echo "PREV_TARGET=$PREV"
+          REMOTE
+          )"
+          echo "$OUT"
+          PREV="$(printf '%s\n' "$OUT" | sed -n 's/^PREV_TARGET=//p' | tail -n1)"
+          echo "prev_target=$PREV" >> "$GITHUB_OUTPUT"
+          echo "release_path=$DEPLOY_BASE/releases/$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke checks (against live canonical URL)
+        id: smoke
+        run: |
+          set -euo pipefail
+          CB="cb=$GITHUB_SHA"
+          LIVE_INDEX="$RUNNER_TEMP/live_index.html"
+
+          expect_200() {
+            local url="$1"
+            local code
+            code="$(curl -fsS -o /dev/null -w '%{http_code}' "$url")" || {
+              echo "SMOKE FAIL (curl error): $url" >&2; exit 1; }
+            [ "$code" = "200" ] || { echo "SMOKE FAIL: $url -> $code" >&2; exit 1; }
+            echo "OK 200: $url"
+          }
+
+          # Root fetched to a file for byte-exact sha256 comparison.
+          curl -fsS "$PROD_URL/?$CB" -o "$LIVE_INDEX"
+          expect_200 "$PROD_URL/landing.css?$CB"
+          expect_200 "$PROD_URL/styles.css?$CB"
+          expect_200 "$PROD_URL/app.js?$CB"
+          expect_200 "$PROD_URL/demo/report.html?$CB"
+
+          grep -q 'uv tool install screenscribe' "$LIVE_INDEX" \
+            || { echo "SMOKE FAIL: install command missing from /" >&2; exit 1; }
+          grep -q 'rel="canonical" href="https://screenscribe.vetcoders.io' "$LIVE_INDEX" \
+            || { echo "SMOKE FAIL: canonical does not point to production" >&2; exit 1; }
+
+          LOCAL_SHA="$(sha256sum site/index.html | awk '{print $1}')"
+          LIVE_SHA="$(sha256sum "$LIVE_INDEX" | awk '{print $1}')"
+          echo "local  index.html sha256: $LOCAL_SHA"
+          echo "live   index.html sha256: $LIVE_SHA"
+          [ "$LOCAL_SHA" = "$LIVE_SHA" ] \
+            || { echo "SMOKE FAIL: live index.html does not match deployed commit" >&2; exit 1; }
+
+          echo "smoke passed"
+
+      - name: Rollback on smoke failure
+        if: failure() && steps.activate.outcome == 'success'
+        env:
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PREV_TARGET: ${{ steps.activate.outputs.prev_target }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PREV_TARGET" ]; then
+            echo "No previous release recorded; cannot roll back. Leaving failed deploy in place." >&2
+            exit 1
+          fi
+          ssh -i "$SSH_KEY_FILE" -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
+            -o StrictHostKeyChecking=yes -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 \
+            "$SSH_USER@$SSH_HOST" bash -s "$DEPLOY_BASE" "$PREV_TARGET" <<'REMOTE'
+          set -euo pipefail
+          BASE="$1"; PREV="$2"
+          cd "$BASE"
+          rm -f current.new
+          ln -s "$PREV" current.new
+          mv -T current.new current
+          REMOTE
+          # Re-smoke root after rollback.
+          code="$(curl -fsS -o /dev/null -w '%{http_code}' "$PROD_URL/?cb=rollback-$GITHUB_SHA")"
+          echo "post-rollback / -> $code"
+          echo "ROLLBACK PERFORMED (restored current -> $PREV_TARGET)"
+          [ "$code" = "200" ] || { echo "ROLLBACK re-smoke failed" >&2; exit 1; }
+          # Fail the workflow: the pushed commit did not go live.
+          exit 1
+
+      - name: Prune old releases (keep 4 newest)
+        if: success()
+        env:
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PREV_TARGET: ${{ steps.activate.outputs.prev_target }}
+        run: |
+          set -euo pipefail
+          ssh -i "$SSH_KEY_FILE" -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
+            -o StrictHostKeyChecking=yes -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 \
+            "$SSH_USER@$SSH_HOST" bash -s "$DEPLOY_BASE" "$PREV_TARGET" <<'REMOTE'
+          set -euo pipefail
+          BASE="$1"; PREV="$2"
+          cd "$BASE/releases"
+          CURR="$(readlink "$BASE/current" 2>/dev/null || true)"
+          CURR_BASE="$(basename "$CURR")"
+          PREV_BASE="$(basename "$PREV" 2>/dev/null || true)"
+          # Newest-first by mtime; keep the 4 newest, never the live or previous target.
+          count=0
+          while IFS= read -r d; do
+            [ -n "$d" ] || continue
+            d="${d%/}"
+            [ -d "$d" ] || continue
+            count=$((count + 1))
+            if [ "$count" -le 4 ]; then continue; fi
+            if [ "$d" = "$CURR_BASE" ] || [ "$d" = "$PREV_BASE" ]; then continue; fi
+            echo "pruning old release: $d"
+            rm -rf -- "$d"
+          done < <(ls -1dt -- */ 2>/dev/null)
+          REMOTE
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Canonical production deploy"
+            echo ""
+            echo "- Deployed SHA: \`$GITHUB_SHA\`"
+            echo "- Release path: \`${{ steps.activate.outputs.release_path }}\`"
+            echo "- Smoke result: \`${{ steps.smoke.outcome }}\`"
+            echo "- Canonical URL: $PROD_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
