@@ -61,8 +61,10 @@ jobs:
             exit 1
           fi
 
-      # --no-sources disables tool.uv.sources so the build matches a standard
-      # (non-uv) toolchain — a health gate before publishing.
+      # --no-sources tells uv to ignore any [tool.uv.sources] table so the build
+      # resolves dependencies the way a standard (non-uv) index install would.
+      # pyproject declares no such table today, so this is a defensive/future-proof
+      # guard rather than an active transform — a health gate before publishing.
       - name: Build sdist + wheel
         run: uv build --no-sources
 

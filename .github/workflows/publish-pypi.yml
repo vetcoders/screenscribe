@@ -70,11 +70,13 @@ jobs:
           fi
           echo "guards passed: ${tag} == v${version}, ancestor of origin/main"
 
-      # --no-sources disables tool.uv.sources so the build matches a standard
-      # (non-uv) toolchain — a health gate before publishing.
       - name: Install uv
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
 
+      # --no-sources tells uv to ignore any [tool.uv.sources] table so the build
+      # resolves dependencies the way a standard (non-uv) index install would.
+      # pyproject declares no such table today, so this is a defensive/future-proof
+      # guard rather than an active transform — a health gate before publishing.
       - name: Build sdist + wheel
         run: uv build --no-sources
 

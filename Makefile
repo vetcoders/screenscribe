@@ -189,7 +189,9 @@ release-check: verify
 # tests/coverage/leak/secrets/build + isolated wheel RENDER smoke), then adds the
 # packaging-specific proofs that verify does NOT cover — the exact artifact that
 # ships to PyPI. It builds sdist+wheel with `uv build --no-sources` (resolve deps
-# the way the index would, ignoring any local [tool.uv.sources]), runs strict
+# the way a standard index install would; --no-sources ignores any
+# [tool.uv.sources] table, which pyproject does not declare today, so the flag
+# is a defensive/future-proof guard rather than an active transform), runs strict
 # twine metadata validation, asserts the bundled runtime assets are present in
 # BOTH artifacts, and smoke-installs the freshly built wheel in a throwaway venv
 # OUTSIDE the repo to prove `screenscribe --version` reports this version and
