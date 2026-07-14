@@ -8,6 +8,7 @@ Turns the report viewer into a lightweight local web app:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import mimetypes
@@ -359,6 +360,19 @@ def create_review_app(
         report_filename=report_filename,
         video_path=video_path.resolve(),
     )
+
+    # Serializes the whole /api/save read-modify-write cycle (load report.json ->
+    # merge session markers + posted human review -> atomic write). The atomic
+    # write (BH30 fsync+replace) already guards against a torn file, but two
+    # concurrent saves each load->merge->write independently: the second writer's
+    # load predates the first writer's replace, so it overwrites report.json with
+    # a report_data that never saw the first save's contribution (last-writer-wins
+    # drops a reviewer's verdict). The session's threading.RLock does NOT help
+    # here — every save coroutine runs on the one event-loop thread, so the RLock
+    # is reentrant and never blocks a second coroutine. A dedicated asyncio.Lock
+    # is the primitive that actually serializes overlapping async saves. Saves are
+    # short local file I/O, so full serialization is cheap.
+    save_lock = asyncio.Lock()
 
     def report_json_path() -> Path:
         report_path = session.output_dir / session.report_filename
@@ -903,6 +917,10 @@ def create_review_app(
         markers and results to the disk report.json."""
         import json
 
+        # Serialize the entire load->merge->write cycle: a concurrent save must
+        # not load report.json before this one's atomic replace lands, or it
+        # would overwrite with a stale snapshot and drop this save's verdicts.
+        await save_lock.acquire()
         try:
             with session.lock:
                 markers = list(session.markers.values())
@@ -1077,6 +1095,8 @@ def create_review_app(
         except Exception as e:
             logger.error("Failed to save review state: %s", e)
             raise HTTPException(status_code=500, detail="Failed to save review state.") from e
+        finally:
+            save_lock.release()
 
     app.mount(
         "/",
