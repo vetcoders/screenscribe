@@ -185,12 +185,16 @@ def test_transcribe_creates_missing_output_parent_dirs(tmp_path: Path, monkeypat
 
 
 # --------------------------------------------------------------------------- #
-# Provider safety: a known OpenAI-to-Libraxis mismatch blocks before runtime
+# Provider safety: a known Libraxis-to-OpenAI mismatch blocks before runtime
 # --------------------------------------------------------------------------- #
 
 
-def test_review_blocks_known_openai_to_libraxis_mismatch(tmp_path: Path, monkeypatch: Any) -> None:
-    """A known-host mismatch must stop before the review pipeline is reached."""
+def test_review_blocks_known_libraxis_to_openai_mismatch(tmp_path: Path, monkeypatch: Any) -> None:
+    """A known-host mismatch must stop before the review pipeline is reached.
+
+    Post-D1 the one remaining hard block is a recognized LibraxisAI key (sk-vista)
+    aimed at the OpenAI endpoint -- that key must never reach OpenAI.
+    """
     video = _mkvideo(tmp_path)
 
     monkeypatch.setattr(cli, "check_ffmpeg_installed", lambda: None)
@@ -207,8 +211,9 @@ def test_review_blocks_known_openai_to_libraxis_mismatch(tmp_path: Path, monkeyp
         cli.ScreenScribeConfig,
         "load",
         classmethod(
-            lambda _c: ScreenScribeConfig(
-                llm_api_key="sk-openai-secret",  # pragma: allowlist secret
+            lambda _c: ScreenScribeConfig.provider_preset(
+                "openai",
+                "sk-vista-secret",  # pragma: allowlist secret
             )
         ),
     )
@@ -220,7 +225,7 @@ def test_review_blocks_known_openai_to_libraxis_mismatch(tmp_path: Path, monkeyp
     assert "Config Warning:" in result.output
     assert "Config Error:" in result.output
     assert "mismatch" in result.output.lower()
-    assert "sk-openai-secret" not in result.output  # secret never echoed
+    assert "sk-vista-secret" not in result.output  # secret never echoed
 
 
 # --------------------------------------------------------------------------- #

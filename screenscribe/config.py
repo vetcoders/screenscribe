@@ -209,9 +209,11 @@ class ScreenScribeConfig:
         ``/v1/chat/completions`` instead of ``/v1/responses``), which fails every
         request. Callers turn a non-empty result into ``Exit(1)``.
 
-        Known OpenAI↔LibraxisAI key/endpoint mismatches are blocking because the
-        key would otherwise be sent to the wrong provider. Explicit custom
-        providers retain warning-only behavior when compatibility is uncertain.
+        A LibraxisAI key (``sk-vista``/legacy ``vista-``) aimed at the openai.com
+        endpoint stays blocking -- that key must never reach OpenAI. An ambiguous
+        ``sk-`` key on a LibraxisAI endpoint is only a non-blocking warning (see
+        :meth:`mismatch_warnings`), since OpenAI-compatible gateways share the
+        ``sk-`` shape. Explicit custom providers retain warning-only behavior.
 
         ``providers`` scopes the check to the named providers ("llm", "vision",
         "stt"). When ``None`` (the default, used by ``review``) every provider is
@@ -264,15 +266,10 @@ class ScreenScribeConfig:
             if not key or declared_provider == "custom":
                 continue
             key_provider = self._key_provider(key)
-            if endpoint_provider == "libraxis" and key_provider == "openai":
+            if endpoint_provider == "openai" and key_provider == "libraxis":
                 errors.append(
-                    f"{label} provider mismatch: an OpenAI API key would be sent to LibraxisAI.\n"
-                    "  No request was sent. Run `screenscribe config setup` and choose OpenAI."
-                )
-            elif endpoint_provider == "openai" and key_provider != "openai":
-                errors.append(
-                    f"{label} provider mismatch: the OpenAI endpoint requires an OpenAI API key.\n"
-                    "  No request was sent. Run `screenscribe config setup` and choose OpenAI."
+                    f"{label} provider mismatch: a LibraxisAI API key would be sent to OpenAI.\n"
+                    "  No request was sent. Run `screenscribe config setup` and choose LibraxisAI."
                 )
 
         return errors
@@ -314,14 +311,22 @@ class ScreenScribeConfig:
 
     @staticmethod
     def _key_provider(key: str) -> str | None:
-        """Best-effort provider tag from an API-key shape. None when ambiguous.
+        """Best-effort provider tag from an API-key shape. Three classes.
 
-        Only the well-known OpenAI ``sk-`` prefix is inferred; anything else is
-        ambiguous (could be LibraxisAI or a custom provider) and yields None so
-        we never warn on a guess. The key value itself is never returned.
+        - LibraxisAI keys carry the ``sk-vista`` project prefix (or the legacy
+          ``vista-`` header form) and are tagged ``"libraxis"`` -- the only class
+          certain enough to hard-block a wrong-endpoint request.
+        - Any other ``sk-`` key is ``"ambiguous"``: OpenAI issues ``sk-``/
+          ``sk-proj-`` keys, but so do OpenAI-compatible gateways, so the shape
+          alone never proves OpenAI. It is never auto-tagged OpenAI and never
+          hard-blocked -- only warned about on a LibraxisAI endpoint.
+        - Everything else is truly unknown (a custom provider's opaque token) and
+          yields ``None`` so it stays silent. The key value is never returned.
         """
+        if key.startswith(("sk-vista", "vista-")):
+            return "libraxis"
         if key.startswith("sk-"):
-            return "openai"
+            return "ambiguous"
         return None
 
     def mismatch_warnings(self, providers: set[str] | None = None) -> list[str]:
@@ -349,14 +354,19 @@ class ScreenScribeConfig:
             ep_provider = self._endpoint_provider(endpoint)
             if ep_provider is None:
                 continue
-            # Forward case (P1-1): an OpenAI `sk-` key on a non-OpenAI endpoint.
-            # Reverse case: a non-`sk-` key on an OpenAI endpoint (which expects
-            # the `sk-` shape). Both are real mismatches; ambiguous combos (e.g.
-            # an unknown-shape key on a libraxis endpoint) are left silent.
-            if key_provider == "openai" and ep_provider != "openai":
-                detail = f"an openai API key is configured for the {ep_provider} endpoint"
-            elif ep_provider == "openai" and key_provider != "openai":
-                detail = "a non-openai API key is configured for the openai.com endpoint"
+            # Ambiguous `sk-` key (not `sk-vista`) on a LibraxisAI endpoint: could
+            # be a stray OpenAI key, so it is surfaced as a non-blocking warning
+            # (D1). A recognized LibraxisAI key on the openai.com endpoint mirrors
+            # the hard block (validate also errors) for diagnosis. A non-`sk-` key
+            # on openai.com (which expects the `sk-` shape) is likewise flagged.
+            # Silent combos: a LibraxisAI or unknown-shape key on a LibraxisAI
+            # endpoint, and an ambiguous `sk-` key on openai.com (the expected shape).
+            if ep_provider == "libraxis" and key_provider == "ambiguous":
+                detail = f"an OpenAI-style API key is configured for the {ep_provider} endpoint"
+            elif ep_provider == "openai" and key_provider == "libraxis":
+                detail = "a LibraxisAI API key is configured for the openai.com endpoint"
+            elif ep_provider == "openai" and key_provider is None:
+                detail = "a non-OpenAI-style API key is configured for the openai.com endpoint"
             else:
                 continue
             env_endpoint_var = f"SCREENSCRIBE_{label.upper()}_ENDPOINT"
@@ -366,10 +376,11 @@ class ScreenScribeConfig:
                 f"  What: {detail}\n"
                 f"  Endpoint in use: {endpoint}\n"
                 "  Note: OpenAI-compatible gateways legitimately use OpenAI-style "
-                "keys. Explicit custom providers remain warning-only; known OpenAI "
-                "and LibraxisAI mismatches are blocked before a request.\n"
-                "  To silence this, align config in ~/.config/screenscribe/config.env "
-                "(or as an env var):\n"
+                "keys, so an ambiguous key on a LibraxisAI endpoint is a warning "
+                "and the run continues. Only a LibraxisAI key aimed at OpenAI is "
+                "blocked before a request.\n"
+                "  To silence this, run `screenscribe config setup`, or align config "
+                "in ~/.config/screenscribe/config.env (or as an env var):\n"
                 f"    - point the endpoint at the key's provider: set {env_endpoint_var}\n"
                 f"    - use the endpoint's matching key: set {env_key_var}"
             )

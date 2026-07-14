@@ -496,18 +496,62 @@ class TestKeyEndpointMismatchWarning:
     altered and the run continues.
     """
 
-    def test_openai_key_on_libraxis_endpoint_warns(self) -> None:
+    def test_ambiguous_sk_key_on_libraxis_endpoint_warns_without_blocking(self) -> None:
         config = ScreenScribeConfig(
-            llm_api_key="sk-openai-secret",  # pragma: allowlist secret
-            vision_api_key="sk-openai-secret",  # pragma: allowlist secret
+            llm_api_key="sk-ambiguous-secret",  # pragma: allowlist secret
+            vision_api_key="sk-ambiguous-secret",  # pragma: allowlist secret
         )
-        # Endpoints stay at the LibraxisAI defaults.
+        # Endpoints stay at the LibraxisAI defaults. An ambiguous `sk-` key (not
+        # `sk-vista`) could be a stray OpenAI key: warn, but never block (D1).
         warnings = config.mismatch_warnings()
 
         joined = "\n".join(warnings)
         assert "sk-" not in joined  # the secret itself is never echoed
         assert any("libraxis" in w.lower() and "openai" in w.lower() for w in warnings)
-        assert any("No request was sent" in error for error in config.validate())
+        # Softened: an ambiguous key on a LibraxisAI endpoint no longer hard-blocks.
+        assert config.validate() == []
+
+    def test_sk_vista_key_on_libraxis_endpoint_is_clean(self) -> None:
+        # Case 1: the migrated LibraxisAI key shape on its own endpoint -- no
+        # warning, no error.
+        config = ScreenScribeConfig(
+            llm_api_key="sk-vista-secret",  # pragma: allowlist secret
+            vision_api_key="sk-vista-secret",  # pragma: allowlist secret
+            stt_api_key="sk-vista-secret",  # pragma: allowlist secret
+        )
+        assert not any("mismatch" in w.lower() for w in config.mismatch_warnings())
+        assert config.validate() == []
+
+    def test_legacy_vista_key_on_libraxis_endpoint_is_clean(self) -> None:
+        # The legacy `vista-` header form is still recognized as LibraxisAI.
+        config = ScreenScribeConfig(
+            llm_api_key="vista-legacy-secret",  # pragma: allowlist secret
+            vision_api_key="vista-legacy-secret",  # pragma: allowlist secret
+            stt_api_key="vista-legacy-secret",  # pragma: allowlist secret
+        )
+        assert not any("mismatch" in w.lower() for w in config.mismatch_warnings())
+        assert config.validate() == []
+
+    def test_libraxis_key_on_openai_endpoint_blocks(self) -> None:
+        # Case 3: a recognized LibraxisAI key aimed at OpenAI is the one remaining
+        # hard block -- that key must never reach OpenAI.
+        config = ScreenScribeConfig.provider_preset(
+            "openai",
+            "sk-vista-secret",  # pragma: allowlist secret
+        )
+        errors = config.validate()
+        assert any("No request was sent" in error for error in errors)
+        assert "sk-" not in "\n".join(errors)  # the secret itself is never echoed
+
+    def test_sk_proj_key_on_openai_endpoint_is_clean(self) -> None:
+        # Case 4: an OpenAI-shaped key (sk-proj / plain sk-) on the OpenAI endpoint
+        # stays valid -- ambiguous keys are never auto-blocked.
+        config = ScreenScribeConfig.provider_preset(
+            "openai",
+            "sk-proj-secret",  # pragma: allowlist secret
+        )
+        assert config.validate() == []
+        assert not any("mismatch" in w.lower() for w in config.mismatch_warnings())
 
     def test_non_openai_key_on_openai_endpoint_warns(self) -> None:
         config = ScreenScribeConfig(
@@ -595,17 +639,17 @@ class TestKeyEndpointMismatchWarning:
         assert not any("stt" in w.lower() and "mismatch" in w.lower() for w in scoped)
 
     def test_mismatch_message_is_actionable_and_warns(self) -> None:
-        """D1 (P1-1) / finding 283: the mismatch message names key+endpoint and the
-        concrete fix, and is NON-blocking -- mismatch_warnings() carries it while
-        validate() (the blocking gate) stays empty, so cli.py does NOT exit."""
+        """D1: the mismatch message names key+endpoint and the concrete fix, and is
+        NON-blocking -- mismatch_warnings() carries it while validate() (the
+        blocking gate) stays empty for an ambiguous key, so cli.py does NOT exit."""
         config = ScreenScribeConfig(
-            llm_api_key="sk-openai-secret",  # pragma: allowlist secret
+            llm_api_key="sk-ambiguous-secret",  # pragma: allowlist secret
         )
         warnings = config.mismatch_warnings()
 
         # Surfaced as a warning...
         assert warnings, "key/endpoint mismatch must still be reported"
-        assert config.validate(), "known provider mismatch must block before a request"
+        assert config.validate() == [], "an ambiguous key on a LibraxisAI endpoint must not block"
         msg = "\n".join(warnings)
 
         # Actionable: warns (run continues), names the offending pair, gives the fix.

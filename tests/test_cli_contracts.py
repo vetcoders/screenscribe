@@ -372,7 +372,11 @@ def _stub_analyze_server_side_effects(monkeypatch: Any, recorded: list[ScreenScr
 
 
 def test_analyze_blocks_known_key_endpoint_mismatch(monkeypatch: Any, tmp_path: Path) -> None:
-    """A known OpenAI-to-Libraxis mismatch blocks before the analyze runtime."""
+    """A known Libraxis-to-OpenAI mismatch blocks before the analyze runtime.
+
+    Post-D1 the one remaining hard block is a recognized LibraxisAI key (sk-vista)
+    aimed at the OpenAI endpoint. Placed on the vision endpoint, which analyze uses.
+    """
     video = tmp_path / "sample.mov"
     video.write_bytes(b"fake-video")
 
@@ -380,8 +384,9 @@ def test_analyze_blocks_known_key_endpoint_mismatch(monkeypatch: Any, tmp_path: 
         "screenscribe.cli.ScreenScribeConfig.load",
         lambda: ScreenScribeConfig(
             language="en",
-            vision_api_key="sk-openai-secret",  # pragma: allowlist secret
-        ),  # endpoints stay at LibraxisAI defaults -> mismatch
+            vision_api_key="sk-vista-secret",  # pragma: allowlist secret
+            vision_endpoint="https://api.openai.com/v1/responses",  # libraxis key -> openai
+        ),
     )
 
     recorded: list[ScreenScribeConfig] = []
@@ -395,7 +400,7 @@ def test_analyze_blocks_known_key_endpoint_mismatch(monkeypatch: Any, tmp_path: 
     assert "Config Warning:" in out
     assert "Config Error:" in out
     assert "mismatch" in out.lower()
-    assert "sk-openai-secret" not in result.output  # secret never echoed
+    assert "sk-vista-secret" not in result.output  # secret never echoed
 
 
 def test_analyze_passes_on_clean_config(monkeypatch: Any, tmp_path: Path) -> None:

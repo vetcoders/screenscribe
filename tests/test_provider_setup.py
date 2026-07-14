@@ -171,9 +171,11 @@ def test_known_mismatch_blocks_before_any_runtime_or_request(
 ) -> None:
     video = tmp_path / "sample.mov"
     video.write_bytes(b"video")
-    config = ScreenScribeConfig(
-        api_key="sk-" + "openai-key",  # pragma: allowlist secret
-        provider="libraxis",
+    # The one remaining hard block: a recognized LibraxisAI key (sk-vista) aimed
+    # at the OpenAI endpoint. That key must never reach OpenAI (D1).
+    config = ScreenScribeConfig.provider_preset(
+        "openai",
+        "sk-vista-" + "secret",  # pragma: allowlist secret
     )
     monkeypatch.setattr(cli.ScreenScribeConfig, "load", classmethod(lambda _cls: config))
     reached_runtime = False
