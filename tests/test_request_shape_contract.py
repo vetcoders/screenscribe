@@ -225,9 +225,7 @@ def _detection() -> Detection:
     )
 
 
-def test_vlm_unified_analyze_request_shape(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_vlm_unified_analyze_request_shape(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Unified VLM analyze POST on a chat/completions endpoint: path, model,
     messages[role/content] shape with an image_url part, stream flag."""
     _CapturingStreamClient.captured = []
