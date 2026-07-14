@@ -37,6 +37,7 @@ from . import __version__
 from .server_common import (
     MAX_AUDIO_BYTES,
     VALID_MARKER_SEVERITIES,
+    advance_response_id_cas,
     install_stt_upload_cap,
     read_upload_capped,
     sanitized_error,
@@ -604,8 +605,13 @@ def create_analyze_app(video_path: Path, config: ScreenScribeConfig) -> FastAPI:
                 # BH29: only advance the conversation chain when the finding
                 # actually carried a response_id; an empty id would clobber the
                 # valid chain head with a blank, breaking later chaining.
-                if finding.response_id:
-                    session.last_response_id = finding.response_id
+                # Compare-and-set against previous_response_id (read at :531): a
+                # concurrent analysis that finished first owns the newer head, so
+                # this call must not overwrite it with an id chained off the stale
+                # head.
+                advance_response_id_cas(
+                    session, previous_response_id, finding.response_id, logger=logger
+                )
                 marker.status = "completed"
 
             return {
@@ -865,6 +871,12 @@ def create_analyze_app(video_path: Path, config: ScreenScribeConfig) -> FastAPI:
 
         validate_browser_stt_upload(content)
 
+        # Snapshot the chain head before the unlocked STT call so the write-back
+        # can compare-and-set: a VLM/STT that finished first must not be clobbered
+        # by this call landing later (mirror of review-side).
+        with session.lock:
+            previous_response_id = session.last_response_id
+
         try:
             # BH13: transcribe_browser_audio makes blocking HTTP STT calls (plus
             # a possible ffmpeg-normalization fallback). Running it directly in
@@ -879,15 +891,17 @@ def create_analyze_app(video_path: Path, config: ScreenScribeConfig) -> FastAPI:
                 config=config,
             )
             quality_warning = validate_browser_stt_result(result)
-            with session.lock:
-                # BH46/BH49: an empty STT response_id would clobber the chain
-                # head with a blank, breaking the conversation chain the VLM
-                # analysis relies on (the next analyze call would pass "" as
-                # previous_response_id). Only advance the chain on a real id.
-                # NOTE: STT and VLM still share one chain field; full STT/VLM
-                # chain separation is design work (D-4) deferred as needs_design.
-                if result.response_id:
-                    session.last_response_id = result.response_id
+            # BH46/BH49: an empty STT response_id would clobber the chain head
+            # with a blank, breaking the conversation chain the VLM analysis
+            # relies on (the next analyze call would pass "" as
+            # previous_response_id). Only advance on a real id, and only if the
+            # head has not moved since we read it — compare-and-set drops the
+            # write when a concurrent operation already advanced the chain.
+            # NOTE: STT and VLM still share one chain field; full STT/VLM chain
+            # separation is design work (D-4) deferred as needs_design.
+            advance_response_id_cas(
+                session, previous_response_id, result.response_id, logger=logger
+            )
             return JSONResponse(
                 content=serialize_stt_result(result, quality_warning=quality_warning)
             )

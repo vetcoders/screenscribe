@@ -31,6 +31,7 @@ from . import __version__
 from .server_common import (
     MAX_AUDIO_BYTES,
     VALID_MARKER_SEVERITIES,
+    advance_response_id_cas,
     install_stt_upload_cap,
     read_upload_capped,
     sanitized_error,
@@ -651,9 +652,13 @@ def create_review_app(
                 # conversation chain when the finding actually carried a
                 # response_id. An empty id would clobber the valid chain head
                 # with a blank, breaking the previous_response_id chaining the
-                # next manual-frame analysis relies on.
-                if finding.response_id:
-                    session.last_response_id = finding.response_id
+                # next manual-frame analysis relies on. Compare-and-set against
+                # previous_response_id (read at :537): a concurrent analysis that
+                # finished first owns the newer head, so this call must not
+                # overwrite it with an id chained off the stale head.
+                advance_response_id_cas(
+                    session, previous_response_id, finding.response_id, logger=logger
+                )
                 marker.status = "completed"
 
             return {
@@ -756,6 +761,12 @@ def create_review_app(
         filename = audio.filename or "recording.webm"
         content_type = audio.content_type or "audio/webm"
 
+        # Snapshot the chain head before the unlocked STT call so the write-back
+        # can compare-and-set: a VLM/STT that finished first must not be clobbered
+        # by this call landing later (mirror of analyze-side).
+        with session.lock:
+            previous_response_id = session.last_response_id
+
         try:
             # BH13: transcribe_browser_audio makes blocking HTTP STT calls (plus
             # a possible ffmpeg-normalization fallback). Running it directly in
@@ -770,15 +781,16 @@ def create_review_app(
                 config=config,
             )
             quality_warning = validate_browser_stt_result(result)
-            with session.lock:
-                # BH46/BH49 mirror (analyze-side): only advance the shared
-                # conversation chain on a real STT response_id. An empty id would
-                # clobber the valid chain head with a blank, breaking the
-                # previous_response_id the next manual-frame analysis relies on.
-                # NOTE: STT and VLM still share one chain field here (as on the
-                # analyze side); full STT/VLM chain separation is deferred design.
-                if result.response_id:
-                    session.last_response_id = result.response_id
+            # BH46/BH49 mirror (analyze-side): only advance the shared
+            # conversation chain on a real STT response_id (empty id must not
+            # clobber a valid head), and only if the head has not moved since we
+            # read it — compare-and-set drops the write when a concurrent
+            # operation already advanced the chain. NOTE: STT and VLM still share
+            # one chain field here (as on the analyze side); full STT/VLM chain
+            # separation is deferred design.
+            advance_response_id_cas(
+                session, previous_response_id, result.response_id, logger=logger
+            )
             return JSONResponse(
                 content=serialize_stt_result(result, quality_warning=quality_warning)
             )

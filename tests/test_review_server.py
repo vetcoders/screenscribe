@@ -1969,3 +1969,120 @@ def test_concurrent_saves_serialize_the_report_load_write_cycle(
     # The reviewer's verdict survives the concurrent body-less save.
     assert "human_review" in saved, saved
     assert saved["human_review"]["findings"]["1"]["verdict"] == "accepted", saved
+
+
+def _reach_review_session(app: Any) -> Any:
+    """Walk the app's route closures to reach the live ReviewSession."""
+    from screenscribe import review_server as mod
+
+    for route in app.routes:
+        endpoint = getattr(route, "endpoint", None)
+        closure = getattr(endpoint, "__closure__", None)
+        if not closure:
+            continue
+        for cell in closure:
+            val = cell.cell_contents
+            if isinstance(val, mod.ReviewSession):
+                return val
+    raise AssertionError("could not reach ReviewSession")
+
+
+def test_concurrent_manual_analyses_last_response_id_uses_cas(
+    review_workspace: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Overlapping manual-frame analyses must not clobber the chain head.
+
+    Both analyses read ``last_response_id == ""`` at start. The fast one finishes
+    first and commits its id; the slow one returns later having read the stale
+    ``""`` and must LOSE the compare-and-set instead of overwriting the newer
+    head. Without CAS the late writer would clobber the head with an id chained
+    off a stale predecessor.
+    """
+    import asyncio
+    import json
+    import threading
+    from types import SimpleNamespace
+
+    import httpx
+
+    output_dir, report_file, video_path = review_workspace
+    (output_dir / "screen_report.json").write_text(
+        json.dumps({"video": "screen.mov", "findings": []}), encoding="utf-8"
+    )
+
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    token = app.state.session_token
+
+    slow_has_read = threading.Event()
+    release_slow = threading.Event()
+
+    def fake_vlm(**kwargs: Any) -> SimpleNamespace:
+        text = kwargs["detection"].segment.text
+        if "SLOW" in text:
+            # SLOW has already read last_response_id (== "") before this call.
+            slow_has_read.set()
+            release_slow.wait(5)
+            response_id = "slow-id"
+        else:
+            # FAST must not commit until SLOW has read the stale "" head.
+            slow_has_read.wait(5)
+            response_id = "fast-id"
+        return SimpleNamespace(
+            category="manual_capture",
+            severity="high",
+            summary="s",
+            issues_detected=[],
+            suggested_fix="",
+            affected_components=[],
+            response_id=response_id,
+            confidence="high",
+        )
+
+    monkeypatch.setattr("screenscribe.unified_analysis.analyze_finding_unified", fake_vlm)
+
+    async def _run() -> tuple[str, str]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1",
+            headers={"X-ScreenScribe-Token": token},
+        ) as client:
+            fast_id = (
+                await client.post(
+                    "/api/manual-mark",
+                    json={
+                        "timestamp": 1.0,
+                        "frame_base64": PNG_1X1_BASE64,
+                        "transcript": "FAST",
+                        "notes": "",
+                    },
+                )
+            ).json()["marker_id"]
+            slow_id = (
+                await client.post(
+                    "/api/manual-mark",
+                    json={
+                        "timestamp": 2.0,
+                        "frame_base64": PNG_1X1_BASE64,
+                        "transcript": "SLOW",
+                        "notes": "",
+                    },
+                )
+            ).json()["marker_id"]
+
+            t_fast = asyncio.create_task(client.post(f"/api/manual-analyze/{fast_id}"))
+            t_slow = asyncio.create_task(client.post(f"/api/manual-analyze/{slow_id}"))
+            r_fast = await t_fast
+            release_slow.set()
+            r_slow = await t_slow
+            return r_fast.json()["status"], r_slow.json()["status"]
+
+    status_fast, status_slow = asyncio.run(_run())
+    assert status_fast == "completed"
+    assert status_slow == "completed"
+
+    session = _reach_review_session(app)
+    # Fast committed "fast-id"; slow read the stale "" and lost the CAS, so the
+    # head keeps the newer id rather than being clobbered by the late writer.
+    assert session.last_response_id == "fast-id"
