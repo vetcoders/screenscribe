@@ -501,6 +501,18 @@ def render_html_report_pro(
                 }.get(video_path_obj.suffix.lower(), "video/mp4")
                 video_src = f"data:{media_type};base64,{video_b64}"
             else:
+                # Surface the size-limit fallback through the existing pipeline-errors
+                # channel (rendered in the report's "errors-section") instead of
+                # silently linking by filename with no explanation to the user.
+                errors.append(
+                    {
+                        "stage": "embed_video",
+                        "message": (
+                            f"Video is {size_mb:.0f}MB, exceeding the 50MB embed limit; "
+                            "linking by filename instead of embedding inline."
+                        ),
+                    }
+                )
                 video_src = (
                     video_path_obj.name if video_path_obj.is_absolute() else str(video_path_obj)
                 )
