@@ -171,9 +171,11 @@ def test_known_mismatch_blocks_before_any_runtime_or_request(
 ) -> None:
     video = tmp_path / "sample.mov"
     video.write_bytes(b"video")
-    config = ScreenScribeConfig(
-        api_key="sk-" + "openai-key",  # pragma: allowlist secret
-        provider="libraxis",
+    # The one remaining hard block: a recognized LibraxisAI key (sk-vista) aimed
+    # at the OpenAI endpoint. That key must never reach OpenAI (D1).
+    config = ScreenScribeConfig.provider_preset(
+        "openai",
+        "sk-vista-" + "secret",  # pragma: allowlist secret
     )
     monkeypatch.setattr(cli.ScreenScribeConfig, "load", classmethod(lambda _cls: config))
     reached_runtime = False
@@ -188,6 +190,28 @@ def test_known_mismatch_blocks_before_any_runtime_or_request(
     assert result.exit_code == 1
     assert reached_runtime is False
     assert "No request was sent" in result.output
+
+
+def test_openai_env_key_on_libraxis_endpoint_is_a_hard_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Provenance block (Codex P1): a key from the explicit OPENAI_API_KEY env var
+    # is a proven OpenAI key. Left on the default LibraxisAI endpoint it must be a
+    # blocking error -- unlike an ambiguous sk- key of unknown origin, which warns.
+    for key in ("SCREENSCRIBE_LLM_API_KEY", "SCREENSCRIBE_VISION_API_KEY", "SCREENSCRIBE_PROVIDER"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-ambient-openai-key")  # pragma: allowlist secret
+    config = ScreenScribeConfig()
+    config._load_from_env()
+
+    # The llm/vision slots carry the OPENAI_API_KEY provenance; blocking is scoped
+    # to those providers (transcribe, which only touches stt, stays unaffected).
+    errors = config.validate({"llm", "vision"})
+    assert any("OPENAI_API_KEY" in error for error in errors)
+    assert any("No request was sent" in error for error in errors)
+    assert "sk-ambient-openai-key" not in "\n".join(errors)  # pragma: allowlist secret
+    # stt is not filled from OPENAI_API_KEY, so an stt-only check does not block.
+    assert config.validate({"stt"}) == []
 
 
 def test_config_show_reports_provider_and_status(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -129,6 +129,26 @@ command — see [Requirements](#requirements) above.
 Upgrade to the latest release: `uv tool upgrade screenscribe`. Remove it:
 `uv tool uninstall screenscribe`.
 
+### No screen recording handy?
+
+`screenscribe review demo.mov` above assumes you already have a narrated
+screencast. If you don't, generate a synthetic clip with FFmpeg and run the
+full pipeline against it end to end:
+
+```bash
+ffmpeg -f lavfi -i testsrc=duration=30:size=1280x720:rate=30 -f lavfi -i sine=frequency=440:duration=30 -c:v libx264 -pix_fmt yuv420p -shortest demo.mp4
+
+screenscribe review demo.mp4
+```
+
+This exercises audio extraction, STT, the LLM/VLM findings pipeline, and
+report generation against a real 30-second video. Honest expectation: the
+synthetic clip carries a test pattern and a 440Hz tone, not narration, so
+screenscribe reports "No speech detected in this recording" and generates an
+empty-state report (0 findings) instead of fabricating results. That's the
+correct outcome — it confirms your install and API keys work end to end.
+Point the same command at a real narrated recording to get actual findings.
+
 ### Development / install from source
 
 To work on screenscribe itself instead of installing the published package:

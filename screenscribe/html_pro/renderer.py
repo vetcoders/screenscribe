@@ -431,6 +431,30 @@ def _render_finding(f: dict[str, Any], index: int, language: str = "en") -> str:
     """
 
 
+# Inline base64 embedding is only worthwhile below this size; larger videos are
+# linked by filename instead (the report stays shareable without a huge data URI).
+EMBED_VIDEO_SIZE_LIMIT_MB = 50
+
+
+def embed_video_oversize_warning(size_bytes: int) -> dict[str, str] | None:
+    """Return the embed-size fallback warning for an oversized video, else ``None``.
+
+    Single source of truth for the ``--embed-video`` size-limit message so the
+    renderer and the save path (which alone knows the real source path -- the
+    renderer only receives the sanitized basename) emit the identical warning.
+    """
+    size_mb = size_bytes / (1024 * 1024)
+    if size_mb < EMBED_VIDEO_SIZE_LIMIT_MB:
+        return None
+    return {
+        "stage": "embed_video",
+        "message": (
+            f"Video is {size_mb:.0f}MB, exceeding the {EMBED_VIDEO_SIZE_LIMIT_MB}MB embed limit; "
+            "linking by filename instead of embedding inline."
+        ),
+    }
+
+
 def render_html_report_pro(
     video_name: str,
     video_path: str | None,
@@ -464,7 +488,11 @@ def render_html_report_pro(
     Returns:
         Complete HTML document as string
     """
-    errors = errors or []
+    # `if errors is None` (not `errors or []`): when the caller passes an empty
+    # list, keep that same object so an append below (the embed-size fallback) is
+    # observable to the caller, instead of rebinding to a fresh throwaway list.
+    if errors is None:
+        errors = []
     segments = segments or []
 
     normalized_language = (language or "pl").strip().lower().replace("_", "-")
@@ -488,8 +516,8 @@ def render_html_report_pro(
     if video_path:
         video_path_obj = Path(video_path)
         if embed_video and video_path_obj.exists():
-            size_mb = video_path_obj.stat().st_size / (1024 * 1024)
-            if size_mb < 50:  # Only embed if < 50MB
+            oversize_warning = embed_video_oversize_warning(video_path_obj.stat().st_size)
+            if oversize_warning is None:  # under the limit: embed inline
                 with open(video_path_obj, "rb") as vf:
                     video_b64 = base64.b64encode(vf.read()).decode("ascii")
                 media_type = {
@@ -501,6 +529,10 @@ def render_html_report_pro(
                 }.get(video_path_obj.suffix.lower(), "video/mp4")
                 video_src = f"data:{media_type};base64,{video_b64}"
             else:
+                # Surface the size-limit fallback through the existing pipeline-errors
+                # channel (rendered in the report's "errors-section") instead of
+                # silently linking by filename with no explanation to the user.
+                errors.append(oversize_warning)
                 video_src = (
                     video_path_obj.name if video_path_obj.is_absolute() else str(video_path_obj)
                 )

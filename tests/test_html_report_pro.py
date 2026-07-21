@@ -334,6 +334,53 @@ def create_mock_findings() -> list[dict[str, Any]]:
     ]
 
 
+def test_embed_video_over_limit_warns_and_links_by_name(monkeypatch, tmp_path: Path) -> None:
+    """embed_video on a >=50MB file must warn (not silently fall back) and link by name.
+
+    Covers the else-branch of the 50MB embed guard (A1-1): before this fix the
+    fallback to filename-only linking happened with zero user-facing signal.
+    """
+    video_file = tmp_path / "big-recording.mp4"
+    video_file.write_bytes(b"0")
+
+    class _FakeStat:
+        st_size = 60 * 1024 * 1024  # 60MB, over the 50MB embed threshold
+
+    real_stat = Path.stat
+
+    def _fake_stat(self, *args, **kwargs):
+        if self == video_file:
+            return _FakeStat()
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _fake_stat)
+
+    # An empty list is enough: render_html_report_pro now does
+    # `if errors is None: errors = []`, so a caller-supplied `[]` keeps its
+    # identity and the embed-size append below stays observable here.
+    errors: list[dict[str, str]] = []
+    html_doc = render_html_report_pro(
+        video_name=video_file.name,
+        video_path=str(video_file),
+        generated_at=datetime.now().isoformat(),
+        executive_summary="Streszczenie testowe.",
+        findings=create_mock_findings(),
+        segments=create_mock_segments(),
+        errors=errors,
+        embed_video=True,
+        language="en",
+    )
+
+    embed_warnings = [e for e in errors if e["stage"] == "embed_video"]
+    assert embed_warnings, f"expected embed-size warning to be appended to errors, got {errors}"
+    warning = embed_warnings[0]
+    assert "50" in warning["message"]
+    assert "60" in warning["message"]
+    assert f'src="{video_file.name}"' in html_doc
+    # The warning must also be visible in the rendered report itself (errors-section).
+    assert warning["message"] in html_doc
+
+
 def main() -> None:
     """Generate test HTML report."""
     segments = create_mock_segments()
