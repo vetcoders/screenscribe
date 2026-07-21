@@ -6,6 +6,7 @@ from typing import Any
 
 from ..detect import Detection, format_timestamp
 from ..html_pro import render_html_report_pro
+from ..html_pro.renderer import embed_video_oversize_warning
 from ..image_utils import encode_image_base64, get_media_type
 from ..transcribe import Segment
 from .data import (
@@ -143,6 +144,20 @@ def save_html_report_pro(
 
     # Render HTML using Pro template
     report_video_source = _prepare_html_video_source(video_path, output_path)
+
+    # The renderer's embed-size guard keys on ``Path(video_path).exists()``, but it
+    # only ever receives the sanitized basename (``report_video_source``) -- never
+    # the real source path, which would leak an absolute local path into the report.
+    # So the oversized ``--embed-video`` warning could never fire in this save path
+    # (P2). Do the size check here, where the real source path is known, and inject
+    # the identical warning. A dedicated copy keeps this HTML-only signal out of the
+    # ``errors`` list shared with the JSON/Markdown writers.
+    report_errors = list(errors) if errors else []
+    if embed_video and video_path.exists():
+        oversize_warning = embed_video_oversize_warning(video_path.stat().st_size)
+        if oversize_warning is not None:
+            report_errors.append(oversize_warning)
+
     html_content = render_html_report_pro(
         video_name=video_path.name,
         video_path=report_video_source,
@@ -150,7 +165,7 @@ def save_html_report_pro(
         executive_summary=executive_summary,
         findings=findings_data,
         segments=segments,
-        errors=errors or [],
+        errors=report_errors,
         embed_video=embed_video,
         language=language,
     )

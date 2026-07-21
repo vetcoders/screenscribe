@@ -356,6 +356,53 @@ def test_html_pro_report_uses_relative_video_source_without_file_scheme(tmp_path
     assert (output.parent / "sample.mov").exists()
 
 
+def test_save_html_pro_warns_when_embed_video_exceeds_limit(monkeypatch, tmp_path: Path) -> None:
+    """Oversized --embed-video via the save path must surface the in-report warning.
+
+    Regression for P2: the renderer only receives the sanitized basename, so its
+    `Path(video_path).exists()` embed-size guard never fired in the save path. The
+    size check now runs in save_html_report_pro against the real source path, so an
+    oversized video links by filename AND explains why in the report's errors section.
+    """
+    detection = _sample_detection()
+    screenshot = tmp_path / "shot.jpg"
+    screenshot.write_bytes(b"fake")
+    video = tmp_path / "source" / "big-recording.mov"
+    video.parent.mkdir(parents=True, exist_ok=True)
+    video.write_bytes(b"0")
+    output = tmp_path / "out" / "report.html"
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    class _FakeStat:
+        st_size = 60 * 1024 * 1024  # 60MB, over the 50MB embed threshold
+
+    real_stat = Path.stat
+
+    def _fake_stat(self, *args, **kwargs):
+        if self == video:
+            return _FakeStat()
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _fake_stat)
+
+    save_html_report_pro(
+        detections=[detection],
+        screenshots=[(detection, screenshot)],
+        video_path=video,
+        output_path=output,
+        segments=_sample_segments(),
+        embed_video=True,
+    )
+
+    html = output.read_text(encoding="utf-8")
+    assert "Pipeline Errors" in html or "Błędy pipeline" in html
+    assert "exceeding the 50MB embed limit" in html
+    assert "60MB" in html
+    # Links by filename (basename), never the absolute source path.
+    assert 'src="big-recording.mov"' in html
+    assert str(video.parent) not in html
+
+
 def test_html_pro_report_surfaces_pipeline_errors_when_ai_summary_missing() -> None:
     findings = [
         {
