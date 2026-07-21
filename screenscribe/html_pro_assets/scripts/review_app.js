@@ -53,12 +53,6 @@
 var DEBUG;
 if (typeof DEBUG === 'undefined') { DEBUG = typeof window !== 'undefined' && window.location?.search?.includes('debug=1'); }
 
-// "Momenty (N)" tab counter must sum AI findings + manual moments (dispatcher
-// decision). The span's server-rendered initial value is the AI-only count;
-// cache it once on first read so later updates (which mutate the same span)
-// don't re-read our own running total.
-let aiFindingsCount = null;
-
 const reportState = {
     findings: {},
     manualFrames: [],
@@ -1207,10 +1201,7 @@ function updateReviewMeta() {
             if (counts[sev] !== undefined) counts[sev] += 1;
         }
     });
-    const findingsBtn = document.querySelector('.tab-btn[data-tab="findings"]');
-    if (findingsBtn) {
-        findingsBtn.textContent = t('review.findings') + ' (' + counts.total + ')';
-    }
+    updateFindingsTabCount(counts.total);
 }
 
 // =============================================================================
@@ -3004,19 +2995,24 @@ function manualFrameEffectiveSeverity(frame) {
     return modelSeverity === 'none' ? '' : (modelSeverity || '');
 }
 
-// Keeps the header tab counter in sync with manual moment add/remove, so
-// "Momenty (N)" never lags behind the "Ręczne momenty" panel count.
-function updateFindingsTabCount() {
+// Single source of truth for the "Momenty (N)" tab counter: the live AI
+// findings total (not-rejected .finding articles, as computed by
+// updateReviewMeta) plus manual moments. Only the #findings-count span text is
+// touched, so the server-rendered button structure — and the shell DOM contract
+// asserting <span id="findings-count">N</span> — stays intact. The AI count is
+// always supplied fresh by updateReviewMeta, so nothing is cached and the total
+// can never go stale as findings are accepted/rejected or moments added/removed.
+function updateFindingsTabCount(aiFindingsCount) {
     const tabCount = document.getElementById('findings-count');
     if (!tabCount) return;
-    if (aiFindingsCount === null) {
-        aiFindingsCount = parseInt(tabCount.textContent, 10) || 0;
-    }
     tabCount.textContent = String(aiFindingsCount + reportState.manualFrames.length);
 }
 
 function renderManualFrames() {
-    updateFindingsTabCount();
+    // Recompute the meta so the tab counter reflects the new manual-moment total
+    // (updateReviewMeta owns the AI count and delegates rendering to
+    // updateFindingsTabCount).
+    updateReviewMeta();
 
     const section = document.getElementById('manualFindingsSection');
     const list = document.getElementById('manualFindingsList');
@@ -3848,15 +3844,14 @@ function setLanguage(lang, { persist = true } = {}) {
 
     applyTranslations(document);
 
-    // Update tab buttons with count preservation
+    // Tab labels carry data-i18n spans, so applyTranslations above already
+    // localizes them. The summary/export buttons hold no count; only re-set
+    // their text (the findings button is left untouched so its
+    // #findings-count span survives — updateReviewMeta below refreshes it).
     document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
         const tab = btn.dataset.tab;
         if (tab === 'summary') btn.textContent = t('review.summary');
         if (tab === 'export') btn.textContent = t('review.export');
-        if (tab === 'findings') {
-            const count = btn.textContent.match(/\((\d+)\)/);
-            btn.textContent = t('review.findings') + (count ? ` (${count[1]})` : '');
-        }
     });
 
     if (persist) {
