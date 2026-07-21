@@ -484,6 +484,44 @@ class TestProviderEnvPrecedence:
         assert config.llm_api_key == "ambient-openai-key"  # pragma: allowlist secret
         assert config.vision_api_key == "ambient-openai-key"  # pragma: allowlist secret
 
+    def test_openai_env_key_on_default_libraxis_endpoint_blocks(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        # Provenance: a key from the explicit OPENAI_API_KEY env var is PROVEN to
+        # be an OpenAI key. Sent to the default LibraxisAI endpoint it must hard
+        # block -- exactly the safety case the gate existed for (Codex P1). This
+        # is stricter than an ambiguous `sk-` key from other sources, which warns.
+        clean_env.setenv("OPENAI_API_KEY", "sk-ambient-openai-key")  # pragma: allowlist secret
+        config = ScreenScribeConfig()
+
+        config._load_from_env()
+
+        assert config.openai_env_key_slots == {"llm", "vision"}
+        errors = config.validate()
+        assert any("OPENAI_API_KEY" in error for error in errors)
+        assert any("No request was sent" in error for error in errors)
+        # The secret is never echoed into the error text.
+        assert "sk-ambient-openai-key" not in "\n".join(errors)  # pragma: allowlist secret
+
+    def test_generic_sk_via_screenscribe_env_on_libraxis_endpoint_warns_only(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        # A generic `sk-` key supplied through SCREENSCRIBE_LLM_API_KEY (not the
+        # OPENAI_API_KEY provenance) keeps the softened warning-only behavior on a
+        # LibraxisAI endpoint: OpenAI-compatible gateways share the `sk-` shape.
+        clean_env.setenv(
+            "SCREENSCRIBE_LLM_API_KEY",  # pragma: allowlist secret
+            "sk-generic-gateway-key",  # pragma: allowlist secret
+        )
+        config = ScreenScribeConfig()
+
+        config._load_from_env()
+
+        assert config.openai_env_key_slots == set()
+        assert config.validate() == []
+        warnings = config.mismatch_warnings({"llm"})
+        assert any("libraxis" in w.lower() and "openai" in w.lower() for w in warnings)
+
 
 class TestKeyEndpointMismatchWarning:
     """mismatch_warnings() flags (never blocks/re-routes) a key<->endpoint mismatch.

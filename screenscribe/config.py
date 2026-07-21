@@ -104,6 +104,13 @@ class ScreenScribeConfig:
     # loads the standard-priority dictionary. An empty dictionary is a safe no-op.
     keywords: "KeywordsConfig | None" = field(default=None, repr=False)
 
+    # Provenance: which per-endpoint key slots ("llm"/"vision") were filled from
+    # the explicit ``OPENAI_API_KEY`` env var. That source PROVES the key is an
+    # OpenAI key (unlike an ambiguous ``sk-`` shape from a config file or a
+    # ``SCREENSCRIBE_*_API_KEY`` override), so sending it to a LibraxisAI endpoint
+    # stays a hard block in :meth:`validate`. Not persisted, not part of equality.
+    openai_env_key_slots: set[str] = field(default_factory=set, repr=False, compare=False)
+
     @staticmethod
     def _normalize_api_base(value: str) -> str:
         """Strip endpoint suffixes so callers can derive one canonical `/v1` tree."""
@@ -270,6 +277,18 @@ class ScreenScribeConfig:
                 errors.append(
                     f"{label} provider mismatch: a LibraxisAI API key would be sent to OpenAI.\n"
                     "  No request was sent. Run `screenscribe config setup` and choose LibraxisAI."
+                )
+            elif endpoint_provider == "libraxis" and provider in self.openai_env_key_slots:
+                # Provenance-proven OpenAI key (from the explicit OPENAI_API_KEY
+                # env var) aimed at a LibraxisAI endpoint. Unlike an ambiguous
+                # `sk-` key of unknown origin -- which stays a warning because
+                # OpenAI-compatible gateways share the shape -- the env source
+                # proves this is an OpenAI key, so it must never reach LibraxisAI.
+                errors.append(
+                    f"{label} provider mismatch: an OpenAI API key (from OPENAI_API_KEY) "
+                    "would be sent to LibraxisAI.\n"
+                    "  No request was sent. Run `screenscribe config setup` and choose OpenAI, "
+                    f"or set SCREENSCRIBE_{label.upper()}_API_KEY to your LibraxisAI key."
                 )
 
         return errors
@@ -493,8 +512,10 @@ class ScreenScribeConfig:
                 if env_key == "OPENAI_API_KEY":
                     if not self.llm_api_key:
                         self.llm_api_key = value
+                        self.openai_env_key_slots.add("llm")
                     if not self.vision_api_key:
                         self.vision_api_key = value
+                        self.openai_env_key_slots.add("vision")
                 elif env_key == "LIBRAXIS_API_KEY":
                     if not self.stt_api_key:
                         self.stt_api_key = value
