@@ -26,8 +26,9 @@ from __future__ import annotations
 
 import logging
 import tempfile
+import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -40,6 +41,59 @@ if TYPE_CHECKING:
     from .transcribe import TranscriptionResult
 
 logger = logging.getLogger(__name__)
+
+
+class ResponseChainSession(Protocol):
+    """Structural view of the analyze/review session needed to advance the
+    shared VLM/STT conversation-chain head under its lock."""
+
+    last_response_id: str
+    lock: threading.RLock
+
+
+def advance_response_id_cas(
+    session: ResponseChainSession,
+    expected: str,
+    new_response_id: str,
+    *,
+    logger: logging.Logger,
+) -> bool:
+    """Compare-and-set the shared conversation-chain head (``last_response_id``).
+
+    Both servers chain VLM/STT calls through ``previous_response_id``: an
+    operation reads the current head, runs a long *unlocked* upstream call, then
+    writes the new id back. Two operations that overlapped both read the same
+    head; the one that writes second would clobber the id the first already
+    committed, so the next analysis chains from a stale/overwritten id.
+
+    This advances the head to ``new_response_id`` only when BOTH hold:
+
+    - ``new_response_id`` is non-empty — an empty id must never clobber a valid
+      head (the existing BH29/BH45/BH46/BH49 guard, folded in here);
+    - the head still equals ``expected`` — the value this operation read when it
+      began. If the head moved, a concurrent operation finished first and owns
+      the newer id; this (losing) writer keeps that newer id and logs at debug
+      rather than overwriting it.
+
+    Runs under ``session.lock`` (a reentrant :class:`threading.RLock`) so it
+    composes with a caller that already holds the lock. Returns ``True`` iff the
+    head was advanced.
+    """
+    with session.lock:
+        if not new_response_id:
+            return False
+        current = session.last_response_id
+        if current != expected:
+            logger.debug(
+                "last_response_id CAS lost: head moved from %r to %r during the "
+                "operation; keeping the newer id and discarding %r",
+                expected,
+                current,
+                new_response_id,
+            )
+            return False
+        session.last_response_id = new_response_id
+        return True
 
 
 # Generic, user-safe message handed to API clients in place of raw exception

@@ -8,6 +8,7 @@ Turns the report viewer into a lightweight local web app:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import mimetypes
@@ -30,6 +31,7 @@ from . import __version__
 from .server_common import (
     MAX_AUDIO_BYTES,
     VALID_MARKER_SEVERITIES,
+    advance_response_id_cas,
     install_stt_upload_cap,
     read_upload_capped,
     sanitized_error,
@@ -360,6 +362,19 @@ def create_review_app(
         video_path=video_path.resolve(),
     )
 
+    # Serializes the whole /api/save read-modify-write cycle (load report.json ->
+    # merge session markers + posted human review -> atomic write). The atomic
+    # write (BH30 fsync+replace) already guards against a torn file, but two
+    # concurrent saves each load->merge->write independently: the second writer's
+    # load predates the first writer's replace, so it overwrites report.json with
+    # a report_data that never saw the first save's contribution (last-writer-wins
+    # drops a reviewer's verdict). The session's threading.RLock does NOT help
+    # here — every save coroutine runs on the one event-loop thread, so the RLock
+    # is reentrant and never blocks a second coroutine. A dedicated asyncio.Lock
+    # is the primitive that actually serializes overlapping async saves. Saves are
+    # short local file I/O, so full serialization is cheap.
+    save_lock = asyncio.Lock()
+
     def report_json_path() -> Path:
         report_path = session.output_dir / session.report_filename
         if report_path.exists():
@@ -637,9 +652,13 @@ def create_review_app(
                 # conversation chain when the finding actually carried a
                 # response_id. An empty id would clobber the valid chain head
                 # with a blank, breaking the previous_response_id chaining the
-                # next manual-frame analysis relies on.
-                if finding.response_id:
-                    session.last_response_id = finding.response_id
+                # next manual-frame analysis relies on. Compare-and-set against
+                # previous_response_id (read at :537): a concurrent analysis that
+                # finished first owns the newer head, so this call must not
+                # overwrite it with an id chained off the stale head.
+                advance_response_id_cas(
+                    session, previous_response_id, finding.response_id, logger=logger
+                )
                 marker.status = "completed"
 
             return {
@@ -742,6 +761,12 @@ def create_review_app(
         filename = audio.filename or "recording.webm"
         content_type = audio.content_type or "audio/webm"
 
+        # Snapshot the chain head before the unlocked STT call so the write-back
+        # can compare-and-set: a VLM/STT that finished first must not be clobbered
+        # by this call landing later (mirror of analyze-side).
+        with session.lock:
+            previous_response_id = session.last_response_id
+
         try:
             # BH13: transcribe_browser_audio makes blocking HTTP STT calls (plus
             # a possible ffmpeg-normalization fallback). Running it directly in
@@ -756,15 +781,16 @@ def create_review_app(
                 config=config,
             )
             quality_warning = validate_browser_stt_result(result)
-            with session.lock:
-                # BH46/BH49 mirror (analyze-side): only advance the shared
-                # conversation chain on a real STT response_id. An empty id would
-                # clobber the valid chain head with a blank, breaking the
-                # previous_response_id the next manual-frame analysis relies on.
-                # NOTE: STT and VLM still share one chain field here (as on the
-                # analyze side); full STT/VLM chain separation is deferred design.
-                if result.response_id:
-                    session.last_response_id = result.response_id
+            # BH46/BH49 mirror (analyze-side): only advance the shared
+            # conversation chain on a real STT response_id (empty id must not
+            # clobber a valid head), and only if the head has not moved since we
+            # read it — compare-and-set drops the write when a concurrent
+            # operation already advanced the chain. NOTE: STT and VLM still share
+            # one chain field here (as on the analyze side); full STT/VLM chain
+            # separation is deferred design.
+            advance_response_id_cas(
+                session, previous_response_id, result.response_id, logger=logger
+            )
             return JSONResponse(
                 content=serialize_stt_result(result, quality_warning=quality_warning)
             )
@@ -903,6 +929,10 @@ def create_review_app(
         markers and results to the disk report.json."""
         import json
 
+        # Serialize the entire load->merge->write cycle: a concurrent save must
+        # not load report.json before this one's atomic replace lands, or it
+        # would overwrite with a stale snapshot and drop this save's verdicts.
+        await save_lock.acquire()
         try:
             with session.lock:
                 markers = list(session.markers.values())
@@ -1077,6 +1107,8 @@ def create_review_app(
         except Exception as e:
             logger.error("Failed to save review state: %s", e)
             raise HTTPException(status_code=500, detail="Failed to save review state.") from e
+        finally:
+            save_lock.release()
 
     app.mount(
         "/",

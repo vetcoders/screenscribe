@@ -18,6 +18,13 @@ from screenscribe.transcribe import Segment, TranscriptionResult
 # rejection (mirrors ``VALID_BROWSER_AUDIO`` in test_analyze_server_stt.py).
 VALID_BROWSER_AUDIO = b"voice-data" + (b"x" * 2048)
 
+# A valid 1x1 PNG (passes the manual-frame magic-byte gate), for the concurrency
+# tests that need a real frame on disk.
+PNG_1X1_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+    "+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
+
 
 @pytest.fixture
 def review_workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -1851,3 +1858,231 @@ def test_review_state_returns_member_annotations(
     ], survivor
     # A standalone finding carries an empty list, never a missing key.
     assert findings.get("6", {}).get("member_annotations") == []
+
+
+# ---------------------------------------------------------------------------
+# Concurrency contract (W4 fix/concurrency-contract) — real asyncio.gather.
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_saves_serialize_the_report_load_write_cycle(
+    review_workspace: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two overlapping /api/save calls must serialize their load->merge->write.
+
+    The read-modify-write of report.json (``json.load`` -> merge -> ``json.dump``
+    inside the atomic write) must run as one indivisible unit per save. Without
+    the per-report ``asyncio.Lock`` two concurrent saves both ``json.load`` before
+    either ``json.dump``, so the second writer's load predates the first writer's
+    replace and clobbers it (last-writer-wins drops a reviewer's verdict). The
+    session ``threading.RLock`` cannot fix this: both saves run on the one
+    event-loop thread, so the reentrant RLock never serializes them.
+
+    We assert the observable serialization directly: the interleaving of file
+    load/dump events must be ``[load, dump, load, dump]`` (each save's cycle runs
+    to completion before the next begins), never ``[load, load, dump, dump]``.
+    The reviewer's verdict then also survives the concurrent body-less save.
+    """
+    import asyncio
+    import json
+    import threading
+
+    import httpx
+
+    output_dir, report_file, video_path = review_workspace
+    json_path = output_dir / "screen_report.json"
+    json_path.write_text(
+        json.dumps({"video": "screen.mov", "findings": [{"id": 1}]}),
+        encoding="utf-8",
+    )
+
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    token = app.state.session_token
+
+    # Record the report.json file load/dump events across both saves. json.load
+    # is only reached by load_report_json; json.dump only by the atomic write.
+    events: list[str] = []
+    events_lock = threading.Lock()
+    orig_load = json.load
+    orig_dump = json.dump
+
+    def rec_load(*a: Any, **k: Any) -> Any:
+        with events_lock:
+            events.append("load")
+        return orig_load(*a, **k)
+
+    def rec_dump(*a: Any, **k: Any) -> Any:
+        with events_lock:
+            events.append("dump")
+        return orig_dump(*a, **k)
+
+    monkeypatch.setattr(json, "load", rec_load)
+    monkeypatch.setattr(json, "dump", rec_dump)
+
+    verdict_body = {
+        "video": "screen.mov",
+        "reviewer": "alex",
+        "reviewed_at": "2026-07-14T00:00:00Z",
+        "findings": [
+            {"id": 1, "human_review": {"verdict": "accepted", "notes": "real bug"}},
+        ],
+        "manual_frames": [],
+    }
+
+    async def _run() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1",
+            headers={"X-ScreenScribe-Token": token},
+        ) as client:
+            # A live session marker makes the body-less save take the
+            # markers/results branch, so it, too, does a full load->merge->write
+            # against report.json (and would clobber the verdict when unlocked).
+            mark = await client.post(
+                "/api/manual-mark",
+                json={
+                    "timestamp": 3.0,
+                    "frame_base64": PNG_1X1_BASE64,
+                    "transcript": "t",
+                    "notes": "n",
+                },
+            )
+            assert mark.status_code == 200
+
+            verdict_save = client.post("/api/save", json=verdict_body)
+            # Empty JSON object -> review has no "findings" -> markers branch,
+            # which leaves human_review untouched (preserved from the load).
+            bodyless_save = client.post("/api/save", content=b"{}")
+            r1, r2 = await asyncio.gather(verdict_save, bodyless_save)
+            assert r1.status_code == 200, r1.text
+            assert r2.status_code == 200, r2.text
+
+    asyncio.run(_run())
+
+    # Serialized: each save's load->dump completes before the next save's load.
+    # An interleaved (unlocked) run would read [load, load, dump, dump].
+    assert events == ["load", "dump", "load", "dump"], events
+
+    saved = json.loads(json_path.read_text(encoding="utf-8"))
+    # The reviewer's verdict survives the concurrent body-less save.
+    assert "human_review" in saved, saved
+    assert saved["human_review"]["findings"]["1"]["verdict"] == "accepted", saved
+
+
+def _reach_review_session(app: Any) -> Any:
+    """Walk the app's route closures to reach the live ReviewSession."""
+    from screenscribe import review_server as mod
+
+    for route in app.routes:
+        endpoint = getattr(route, "endpoint", None)
+        closure = getattr(endpoint, "__closure__", None)
+        if not closure:
+            continue
+        for cell in closure:
+            val = cell.cell_contents
+            if isinstance(val, mod.ReviewSession):
+                return val
+    raise AssertionError("could not reach ReviewSession")
+
+
+def test_concurrent_manual_analyses_last_response_id_uses_cas(
+    review_workspace: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Overlapping manual-frame analyses must not clobber the chain head.
+
+    Both analyses read ``last_response_id == ""`` at start. The fast one finishes
+    first and commits its id; the slow one returns later having read the stale
+    ``""`` and must LOSE the compare-and-set instead of overwriting the newer
+    head. Without CAS the late writer would clobber the head with an id chained
+    off a stale predecessor.
+    """
+    import asyncio
+    import json
+    import threading
+    from types import SimpleNamespace
+
+    import httpx
+
+    output_dir, report_file, video_path = review_workspace
+    (output_dir / "screen_report.json").write_text(
+        json.dumps({"video": "screen.mov", "findings": []}), encoding="utf-8"
+    )
+
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    token = app.state.session_token
+
+    slow_has_read = threading.Event()
+    release_slow = threading.Event()
+
+    def fake_vlm(**kwargs: Any) -> SimpleNamespace:
+        text = kwargs["detection"].segment.text
+        if "SLOW" in text:
+            # SLOW has already read last_response_id (== "") before this call.
+            slow_has_read.set()
+            release_slow.wait(5)
+            response_id = "slow-id"
+        else:
+            # FAST must not commit until SLOW has read the stale "" head.
+            slow_has_read.wait(5)
+            response_id = "fast-id"
+        return SimpleNamespace(
+            category="manual_capture",
+            severity="high",
+            summary="s",
+            issues_detected=[],
+            suggested_fix="",
+            affected_components=[],
+            response_id=response_id,
+            confidence="high",
+        )
+
+    monkeypatch.setattr("screenscribe.unified_analysis.analyze_finding_unified", fake_vlm)
+
+    async def _run() -> tuple[str, str]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1",
+            headers={"X-ScreenScribe-Token": token},
+        ) as client:
+            fast_id = (
+                await client.post(
+                    "/api/manual-mark",
+                    json={
+                        "timestamp": 1.0,
+                        "frame_base64": PNG_1X1_BASE64,
+                        "transcript": "FAST",
+                        "notes": "",
+                    },
+                )
+            ).json()["marker_id"]
+            slow_id = (
+                await client.post(
+                    "/api/manual-mark",
+                    json={
+                        "timestamp": 2.0,
+                        "frame_base64": PNG_1X1_BASE64,
+                        "transcript": "SLOW",
+                        "notes": "",
+                    },
+                )
+            ).json()["marker_id"]
+
+            t_fast = asyncio.create_task(client.post(f"/api/manual-analyze/{fast_id}"))
+            t_slow = asyncio.create_task(client.post(f"/api/manual-analyze/{slow_id}"))
+            r_fast = await t_fast
+            release_slow.set()
+            r_slow = await t_slow
+            return r_fast.json()["status"], r_slow.json()["status"]
+
+    status_fast, status_slow = asyncio.run(_run())
+    assert status_fast == "completed"
+    assert status_slow == "completed"
+
+    session = _reach_review_session(app)
+    # Fast committed "fast-id"; slow read the stale "" and lost the CAS, so the
+    # head keeps the newer id rather than being clobbered by the late writer.
+    assert session.last_response_id == "fast-id"
