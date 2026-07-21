@@ -62,7 +62,9 @@ REVIEW_SURFACE = SurfaceConfig(
     title_prefix="Screenscribe",
     tabs=[
         TabConfig("summary", "summary"),
-        TabConfig("findings", "findings", count_value_key="findings_count"),
+        TabConfig(
+            "findings", "findings", count_id="findings-count", count_value_key="findings_count"
+        ),
         TabConfig("export", "export"),
     ],
     tabs_aria_key="tabs_aria",
