@@ -153,6 +153,11 @@ def test_review_shell_dom_contract() -> None:
         assert export_panel_idx < html.index(download) < footer_idx, download
     assert footer_idx < html.index('data-action="save-review"')
 
+    # The header "Momenty (N)" tab counter needs a span with a stable id so
+    # review_app.js can add manual moments to the AI findings count live
+    # (server only knows the AI count at render time).
+    assert '<span id="findings-count">1</span>' in html
+
     assert 'name="verdict-1" value="accepted"' in html
     assert 'name="verdict-1" value="rejected"' in html
     assert 'class="severity-select"' in html
