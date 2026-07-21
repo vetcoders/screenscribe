@@ -355,12 +355,10 @@ def test_embed_video_over_limit_warns_and_links_by_name(monkeypatch, tmp_path: P
 
     monkeypatch.setattr(Path, "stat", _fake_stat)
 
-    # Start from a non-empty (truthy) list: render_html_report_pro does
-    # `errors = errors or []` internally, which rebinds to a *new* list when
-    # given an empty one — an external `[]` would silently stop observing the
-    # append. A pre-seeded truthy list keeps the same object identity, so the
-    # append inside the render call is visible here too.
-    errors: list[dict[str, str]] = [{"stage": "seed", "message": "keep list truthy"}]
+    # An empty list is enough: render_html_report_pro now does
+    # `if errors is None: errors = []`, so a caller-supplied `[]` keeps its
+    # identity and the embed-size append below stays observable here.
+    errors: list[dict[str, str]] = []
     html_doc = render_html_report_pro(
         video_name=video_file.name,
         video_path=str(video_file),
