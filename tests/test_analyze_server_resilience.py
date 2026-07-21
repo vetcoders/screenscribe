@@ -413,3 +413,90 @@ def test_run_finalize_job_survives_vanished_job(sample_video: Path) -> None:
     # Must return cleanly (logging an error) rather than raising HTTPException.
     run_finalize_job("does-not-exist")  # no exception == pass
     assert mod is not None
+
+
+# ---------------------------------------------------------------------------
+# Concurrency contract (W4 fix/concurrency-contract) — real asyncio.gather.
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_analyses_last_response_id_uses_cas(
+    sample_video: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Overlapping analyses must not clobber the chain head.
+
+    Both analyses read ``last_response_id == ""`` at start. The fast one finishes
+    first and commits its id; the slow one returns later having read the stale
+    ``""`` and must LOSE the compare-and-set instead of overwriting the newer
+    head. Without CAS the late writer would clobber the head with an id chained
+    off a stale predecessor.
+    """
+    import asyncio
+    import threading
+
+    import httpx
+
+    app = create_analyze_app(sample_video, _config())
+    token = app.state.session_token
+
+    slow_has_read = threading.Event()
+    release_slow = threading.Event()
+
+    def fake_vlm(**kwargs: Any) -> Any:
+        text = kwargs["detection"].segment.text
+        if "SLOW" in text:
+            # SLOW has already read last_response_id (== "") before this call.
+            slow_has_read.set()
+            release_slow.wait(5)
+            return _finding(None, response_id="slow-id")
+        # FAST must not commit until SLOW has read the stale "" head.
+        slow_has_read.wait(5)
+        return _finding(None, response_id="fast-id")
+
+    monkeypatch.setattr("screenscribe.unified_analysis.analyze_finding_unified", fake_vlm)
+
+    async def _run() -> tuple[str, str]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1",
+            headers={"X-ScreenScribe-Token": token},
+        ) as client:
+            fast_id = (
+                await client.post(
+                    "/api/mark",
+                    json={
+                        "timestamp": 1.0,
+                        "frame_base64": PNG_1X1_BASE64,
+                        "transcript": "FAST",
+                        "notes": "",
+                    },
+                )
+            ).json()["marker_id"]
+            slow_id = (
+                await client.post(
+                    "/api/mark",
+                    json={
+                        "timestamp": 2.0,
+                        "frame_base64": PNG_1X1_BASE64,
+                        "transcript": "SLOW",
+                        "notes": "",
+                    },
+                )
+            ).json()["marker_id"]
+
+            t_fast = asyncio.create_task(client.post(f"/api/analyze/{fast_id}"))
+            t_slow = asyncio.create_task(client.post(f"/api/analyze/{slow_id}"))
+            r_fast = await t_fast
+            release_slow.set()
+            r_slow = await t_slow
+            return r_fast.json()["status"], r_slow.json()["status"]
+
+    status_fast, status_slow = asyncio.run(_run())
+    assert status_fast == "completed"
+    assert status_slow == "completed"
+
+    session = _reach_session(app)
+    # Fast committed "fast-id"; slow read the stale "" and lost the CAS, so the
+    # head keeps the newer id rather than being clobbered by the late writer.
+    assert session.last_response_id == "fast-id"
