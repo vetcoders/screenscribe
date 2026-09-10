@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.1.20] - 2026-09-14
+
 - **Fixed: STT models that reject `response_format=verbose_json` no longer abort
   the review.** The file transcription path (`review`, `transcribe`, and every
   chunk of a long recording) asks for `verbose_json` to get per-segment timing.
