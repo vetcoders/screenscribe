@@ -376,6 +376,11 @@ def semantic_prefilter(
                         },
                         json=request_body,
                     ) as response:
+                        if getattr(response, "is_error", False):
+                            # Read the (small) error body so the failure reason
+                            # can quote the provider's message; a streamed
+                            # response is otherwise closed before it is read.
+                            response.read()
                         response.raise_for_status()
 
                         line_count = 0
@@ -624,17 +629,49 @@ def _empty_stream_reason(stream: _PrefilterStream) -> str:
     return "Empty response from semantic pre-filter"
 
 
+def _http_error_detail(response: httpx.Response, endpoint: str) -> str:
+    """Provider message from an HTTP error body, truncated and URL-free."""
+    try:
+        body = response.json()
+    except Exception:  # body unread, not JSON, or not decodable
+        return ""
+    if not isinstance(body, dict):
+        return ""
+    error = body.get("error")
+    message: Any = error.get("message") if isinstance(error, dict) else error
+    if not isinstance(message, str) or not message.strip():
+        message = body.get("message") or body.get("detail")
+    if not isinstance(message, str):
+        return ""
+    detail = " ".join(message.split())
+    if endpoint:
+        detail = detail.replace(endpoint, endpoint_host(endpoint))
+    return detail[:200]
+
+
 def _describe_prefilter_failure(error: Exception, endpoint: str) -> str:
-    """User-facing reason for a pre-filter exception (never includes secrets)."""
+    """User-facing reason for a pre-filter exception (never includes secrets).
+
+    ``str()`` of httpx exceptions is never used: an HTTPStatusError embeds the
+    full request URL (userinfo and query included), and transport errors may
+    too. Only the endpoint host, the status code and a sanitized provider
+    message reach the user.
+    """
     host = endpoint_host(endpoint)
+    if isinstance(error, httpx.HTTPStatusError):
+        reason = f"HTTP {error.response.status_code} from {host}"
+        detail = _http_error_detail(error.response, endpoint)
+        return f"{reason}: {detail}" if detail else reason
     if isinstance(error, httpx.ConnectTimeout):
         return f"LLM host {host} was unreachable (connection or TLS handshake timed out)"
     if isinstance(error, httpx.ConnectError):
-        detail = str(error).strip()
-        return f"LLM host {host} was unreachable" + (f": {detail}" if detail else "")
+        return f"LLM host {host} was unreachable (connection failed)"
+    if isinstance(error, httpx.RequestError):
+        return f"{type(error).__name__} talking to {host}"
     if isinstance(error, StreamEventError):
         return f"LLM endpoint reported an error: {error}"
-    return str(error).strip() or type(error).__name__
+    message = str(error).strip()
+    return f"{type(error).__name__}: {message}" if message else type(error).__name__
 
 
 def _extract_stream_delta(chunk: dict[str, Any], verbose: bool = False) -> str:

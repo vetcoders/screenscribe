@@ -970,3 +970,76 @@ def test_prefilter_terminal_error_after_valid_partial_json_fails(
     assert result.pois == []
     assert result.error == expected_error
     assert len(attempts) == 1
+
+
+_USERINFO_ENDPOINT = (
+    "https://user:secret@api.example.com/v1/responses?key=abc"  # pragma: allowlist secret
+)
+
+
+def _assert_no_url_secrets(reason: str) -> None:
+    assert "secret" not in reason
+    assert "key=abc" not in reason
+    assert "user:" not in reason
+    assert "/v1/responses" not in reason
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected_error"),
+    [
+        (
+            401,
+            {"error": {"message": "Invalid API key"}},
+            "HTTP 401 from api.example.com: Invalid API key",
+        ),
+        (500, None, "HTTP 500 from api.example.com"),
+    ],
+)
+def test_prefilter_http_status_reason_hides_url_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+    status: int,
+    body: dict[str, Any] | None,
+    expected_error: str,
+) -> None:
+    """A real streamed HTTP error (MockTransport) reports status + host + the
+    provider message, never the endpoint URL's userinfo, path or query."""
+    config.llm_endpoint = _USERINFO_ENDPOINT
+    real_client = httpx.Client
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if body is None:
+            return httpx.Response(status)
+        return httpx.Response(status, json=body)
+
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client",
+        lambda *a, **k: real_client(transport=httpx.MockTransport(handler), **k),
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert result.error == expected_error
+    _assert_no_url_secrets(result.error)
+
+
+def test_prefilter_reason_never_uses_raw_httpx_strings() -> None:
+    """Transport errors whose message embeds the URL are reduced to type + host."""
+    from screenscribe.semantic_filter import _describe_prefilter_failure
+
+    request = httpx.Request("POST", _USERINFO_ENDPOINT)
+    connect = httpx.ConnectError(f"connect failed for {_USERINFO_ENDPOINT}", request=request)
+    read = httpx.ReadError(f"read failed for {_USERINFO_ENDPOINT}", request=request)
+
+    connect_reason = _describe_prefilter_failure(connect, _USERINFO_ENDPOINT)
+    read_reason = _describe_prefilter_failure(read, _USERINFO_ENDPOINT)
+
+    assert connect_reason == "LLM host api.example.com was unreachable (connection failed)"
+    assert read_reason == "ReadError talking to api.example.com"
+    _assert_no_url_secrets(connect_reason)
+    _assert_no_url_secrets(read_reason)
+    assert _describe_prefilter_failure(ValueError("bad json"), _USERINFO_ENDPOINT) == (
+        "ValueError: bad json"
+    )

@@ -27,6 +27,10 @@
   after some text arrived, the pre-filter now fails (no partial findings, not
   checkpointed as complete) even if that text parses, and per-finding analysis
   falls back instead of accepting the truncated answer.
+- **Hardening: pre-filter failure reasons never include the endpoint URL.**
+  HTTP errors are reported as status, host and a short provider message, and
+  transport errors as type and host, so credentials or query parameters in a
+  configured endpoint URL cannot leak into output.
 - **Fixed: semantic pre-filter no longer hangs reasoning without an answer.**
   Root cause: the pre-filter sent no reasoning effort, so on a full transcript
   the default LLM reasoned in a loop for 11-20 minutes, emitted no text and
