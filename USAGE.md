@@ -80,7 +80,7 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--output`, `-o` | `<video>_review` next to the video | Output directory for screenshots and reports. |
+| `--output`, `-o` | `<video>_review` next to the video | Where the review is written. A path that does not exist yet becomes the review directory. An existing folder that is **not** a previous screenscribe review (e.g. `~/Downloads`) is used as a parent: the review goes to `<folder>/<video>_review`, and re-runs create `<video>_review_2`, … inside that folder. An existing previous review directory is reused as-is (with the overwrite/new/resume handling). With several videos, each goes to `<folder>/<video>_review`. |
 | `--prompt`, `-P` | none | Append custom instructions to the semantic, semantic-prefilter, and vision prompts. |
 | `--lang`, `-l` | `en` | Language code for transcription. |
 | `--local` | off | Use a local STT server instead of the cloud provider. |
@@ -597,6 +597,12 @@ confirms them with the vision model, writes JSON/Markdown/HTML reports, and
 opens the HTML report in your browser. Re-running preserves the prior report as
 `_2`, `_3`, …; pass `--force` to overwrite instead.
 
+A folder counts as a previous review only when it holds a `.screenscribe_cache/`
+checkpoint or this video's own `<video>_report.{json,md,html}` (legacy
+`report.json` / `report.html` also count). Unrelated files such as someone
+else's `notes_report.md` never do, so `review demo.mov -o ~/Downloads` writes
+`~/Downloads/demo_review` instead of versioning `~/Downloads` itself.
+
 For a batch with shared context:
 
 ```bash
@@ -634,7 +640,8 @@ bundle text-only, and `--force` to reuse a directory in place.
 
 ### Review reports
 
-Written per video into the output directory (default `<video>_review`):
+Written per video into the review directory (default `<video>_review` next to
+the video; with `-o <existing folder>` it is `<folder>/<video>_review`):
 
 - `<video>_report.json` — findings, transcript, transcript segments, executive
   summary, and any errors. Machine-readable for ticketing or agent workflows.
@@ -678,6 +685,13 @@ a problem with your video. You can:
 Other STT errors are handled the same friendly way: `500/502/503/504` (temporary
 server error → retry with `--resume`), `401/403` (credentials rejected → check
 your STT key/endpoint), and network failures (check connection and endpoint).
+
+### Output directory cannot be created
+
+If `-o` points somewhere screenscribe cannot write (permission denied, a
+read-only volume, or a file sitting where a folder should be), `review` stops
+with an "Output Directory Error" naming the path and the reason, and exits with
+code 1 — no traceback. Pass `-o` with a folder you can write to.
 
 ### No audio track
 

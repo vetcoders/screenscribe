@@ -12,11 +12,13 @@ through the console **via the cli module object** so the historical
 ``cli.py`` re-exports every public name here back into its namespace.
 """
 
+import errno
 from pathlib import Path
 from typing import Any
 
 import httpx
 import typer
+from rich.markup import escape
 from rich.panel import Panel
 
 from .api_utils import APIError
@@ -72,6 +74,26 @@ def _build_transcript_timeline_coverage_message(
         "or compressed on this recording.\n"
         "Continuing the review; for tighter timestamp alignment, try chunked "
         "transcription or a shorter recording."
+    )
+
+
+def _build_output_dir_error_message(path: Path, exc: OSError) -> str:
+    """Turn an output-directory ``mkdir`` OSError into actionable guidance."""
+    blocked = Path(exc.filename) if exc.filename else path
+    if isinstance(exc, PermissionError):
+        reason = "permission denied"
+    elif exc.errno == errno.EROFS:
+        reason = "the file system is read-only"
+    elif isinstance(exc, (NotADirectoryError, FileExistsError)):
+        reason = "a file (not a folder) already exists at that location"
+    else:
+        reason = exc.strerror or str(exc)
+    where = "" if blocked == path else f"\n[dim]Blocked at:[/] {escape(str(blocked))}"
+    return (
+        f"Cannot create the output directory: {escape(str(path))}\n"
+        f"[dim]Reason:[/] {escape(reason)}{where}\n\n"
+        "Pass [bold]-o[/] with a folder you can write to, for example one inside "
+        "your home directory."
     )
 
 

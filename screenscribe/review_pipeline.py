@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import typer
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Prompt
 
@@ -42,6 +44,8 @@ from .checkpoint import (
     serialize_transcription,
     serialize_unified_finding,
 )
+from .cli_messages import _build_output_dir_error_message
+from .cli_paths import _is_dir, is_review_directory
 from .config import ScreenScribeConfig
 from .detect import format_timestamp
 from .keywords import KeywordsConfig
@@ -224,7 +228,18 @@ def run_review(
         elif len(videos) > 1:
             # Batch mode with -o: use subdirectories
             base_output = output / f"{video_stem}_review"
+        elif _is_dir(output) and not is_review_directory(output, video_stem):
+            # Single video, -o names an existing ordinary folder (not a previous
+            # review): treat it as the PARENT, exactly like batch mode. Re-runs
+            # then version inside it (<stem>_review_2), never next to it.
+            base_output = output / f"{video_stem}_review"
+            console.print(
+                f"[dim]{escape(str(output))} is an existing folder, not a previous "
+                f"review; writing the review into {escape(base_output.name)}[/]"
+            )
         else:
+            # -o does not exist yet, or IS a previous screenscribe review:
+            # use it as the review directory itself.
             base_output = output
 
         # Handle existing reviews: append _2, _3, etc. unless --force.
@@ -255,7 +270,7 @@ def run_review(
                 f"({base_output.name})[/]"
             )
         else:
-            video_output, version = cli._find_next_review_path(base_output)
+            video_output, version = cli._find_next_review_path(base_output, video_stem=video_stem)
             # A checkpoint only survives in base_output after a *partial*/failed
             # run; a completed run deletes it on success. Resume is only sound
             # when a *valid* one exists -- otherwise "resume" would start fresh in
@@ -290,7 +305,18 @@ def run_review(
                 # non-TTY / CI: deterministic auto-bump, no prompt.
                 _announce_new_version(console, base_output.name, video_output.name)
 
-        video_output.mkdir(parents=True, exist_ok=True)
+        try:
+            video_output.mkdir(parents=True, exist_ok=True)
+        except OSError as mkdir_error:
+            console.print()
+            console.print(
+                Panel(
+                    _build_output_dir_error_message(video_output, mkdir_error),
+                    title="[bold red]Output Directory Error[/]",
+                    border_style="red",
+                )
+            )
+            raise typer.Exit(1) from None
 
         console.print(f"\n[blue]Video:[/] [link=file://{video}]{video}[/link]")
         console.print(f"[blue]Output:[/] [link=file://{video_output}]{video_output}[/link]")

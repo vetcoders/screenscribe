@@ -414,7 +414,11 @@ def review(
         typer.Option(
             "--output",
             "-o",
-            help="Output directory for screenshots and reports",
+            help=(
+                "Review directory for screenshots and reports. A new path becomes the "
+                "review directory; an existing folder that is not a previous review is "
+                "used as a parent (<folder>/<video>_review)"
+            ),
         ),
     ] = None,
     prompt: Annotated[

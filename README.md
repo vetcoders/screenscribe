@@ -471,7 +471,9 @@ screenscribe was built international-first, with Polish available as an opt-in:
 
 ## Output artifacts
 
-A `review` run writes, per video, into the output directory:
+A `review` run writes, per video, into its review directory (`<video>_review`
+next to the video by default; `-o` names it, and an existing folder that is not a
+previous review is used as a parent, giving `<folder>/<video>_review`):
 
 - `<video>_report.json` — machine-readable findings, transcript, and summary.
 - `<video>_report.md` — human- and agent-readable Markdown report.

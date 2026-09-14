@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Fixed: `review -o <existing folder>` no longer mistakes an ordinary folder
+  for a previous review.** A folder is a previous review only when it holds a
+  `.screenscribe_cache/` checkpoint or this video's own `<video>_report.*`
+  (legacy `report.json`/`report.html` still count); an unrelated
+  `*_report.md` no longer qualifies. An existing ordinary folder is now used as
+  a parent (`<folder>/<video>_review`, re-runs version inside it), matching
+  batch mode, instead of creating a `<folder>_2` sibling. A path that does not
+  exist, or a real previous review, behaves as before.
+- **Fixed: an output directory that cannot be created is a clear error.**
+  Permission denied, read-only volumes and file-in-the-way paths now print an
+  "Output Directory Error" with the path and reason and exit with code 1,
+  instead of a raw traceback.
+
 ## [0.1.19] - 2026-08-23
 
 - **Security: provider endpoints are classified by canonical DNS host boundaries.**
