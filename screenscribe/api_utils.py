@@ -130,8 +130,9 @@ def extract_stream_error_event(chunk: dict[str, Any]) -> StreamEventError | None
     - ``{"type": "response.incomplete", "response": {"incomplete_details": {"reason"}}}``
     - an untyped JSON body with a top-level ``error`` (a non-SSE error reply).
 
-    ``event_type`` is ``"response.incomplete"`` for incomplete responses so a
-    caller holding partial content can decide not to discard it.
+    Every recognized shape is a terminal failure of the response: callers must
+    not accept partial content that streamed before it. ``event_type`` names the
+    event so messages can say which kind of failure it was.
     """
     chunk_type = str(chunk.get("type", "") or "")
 

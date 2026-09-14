@@ -530,19 +530,27 @@ def semantic_prefilter(
                 error=empty_reason,
             )
 
+        if reported_error is not None:
+            # The stream ended with a terminal provider error (error /
+            # response.failed / response.incomplete) AFTER some text arrived.
+            # Even if that partial text parses, it is a truncated answer: using
+            # it would silently drop findings and checkpoint a stage that never
+            # completed. Fail loudly with the provider's reason instead.
+            partial_reason = (
+                f"LLM endpoint reported an error: {reported_error}; "
+                "the partial output was discarded"
+            )
+            console.print(f"[red]Semantic pre-filter failed: {escape(partial_reason)}[/]")
+            return SemanticFilterResult(
+                pois=[],
+                response_id=response_id,
+                failed=True,
+                error=partial_reason,
+            )
+
         # Parse JSON from content. strict=True so unparseable model output is
         # raised (-> failed=True below), not silently treated as zero findings.
-        try:
-            pois = _parse_prefilter_response(content, transcription, strict=True)
-        except json.JSONDecodeError as parse_error:
-            if reported_error is None:
-                raise
-            # Partial output cut short by a reported error (e.g. an incomplete
-            # response): the provider's reason beats a bare JSON parse error.
-            raise RuntimeError(
-                f"LLM endpoint reported an error: {reported_error}; "
-                "the partial output could not be parsed"
-            ) from parse_error
+        pois = _parse_prefilter_response(content, transcription, strict=True)
 
         console.print(
             f"[green]Semantic pre-filter complete:[/] identified {len(pois)} points of interest"

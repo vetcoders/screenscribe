@@ -257,13 +257,11 @@ def analyze_finding_unified_streaming(
                                 # before this attempt streamed any model output;
                                 # after that it fails fast to the text-only /
                                 # non-streaming fallback instead of re-running a
-                                # long generation. response.incomplete keeps
-                                # partial text.
+                                # long generation. response.incomplete is terminal
+                                # too: a truncated answer must not be accepted as a
+                                # normal finding.
                                 stream_error = extract_stream_error_event(chunk)
-                                if (
-                                    stream_error is not None
-                                    and stream_error.event_type != "response.incomplete"
-                                ):
+                                if stream_error is not None:
                                     if model_output_seen:
                                         stream_error.transient = False
                                     raise stream_error

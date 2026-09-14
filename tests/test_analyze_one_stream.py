@@ -514,3 +514,51 @@ def test_server_error_after_reasoning_is_not_retried(
     assert "effort" not in image_attempts[0]["reasoning"]
     text_only = [p for p in payloads if "input_image" not in json.dumps(p)]
     assert text_only and text_only[0]["reasoning"]["effort"] == "medium"
+
+
+def test_incomplete_after_partial_text_fails_image_attempt_and_falls_back(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``response.incomplete`` after partial text is a terminal error, not a normal
+    result: the image-backed attempt fails once (with the reason logged) and the
+    text-only fallback runs, exactly as for ``response.failed``."""
+    screenshot = tmp_path / "shot.jpg"
+    screenshot.write_bytes(b"fake-image")
+
+    lines = [
+        _delta_line('{"summary": "trunc'),
+        "data: "
+        + json.dumps(
+            {
+                "type": "response.incomplete",
+                "response": {"incomplete_details": {"reason": "max_output_tokens"}},
+            }
+        ),
+    ]
+    payloads: list[dict[str, Any]] = []
+
+    class _RecordingClient(_DropThenDoneClient):
+        def stream(self, *args: Any, **kwargs: Any) -> _DropThenDoneResponse:
+            payloads.append(kwargs.get("json") or {})
+            if len(payloads) == 1:
+                return _DropThenDoneResponse(lines)
+            return _DropThenDoneResponse([_delta_line("A"), "data: [DONE]"])
+
+    monkeypatch.setattr(
+        "screenscribe.unified_analysis.httpx.Client",
+        lambda *a, **k: _RecordingClient(_DropThenDoneResponse([])),
+    )
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda *_a, **_k: None)
+    config = _config()
+    config.verbose = True
+
+    result = analyze_finding_unified_streaming(_detection(), screenshot, config)
+
+    image_attempts = [p for p in payloads if "input_image" in json.dumps(p)]
+    text_only = [p for p in payloads if "input_image" not in json.dumps(p)]
+    assert len(image_attempts) == 1
+    assert len(text_only) == 1
+    assert result is not None
+    assert result.summary != '{"summary": "trunc'
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Response incomplete: max_output_tokens" in out

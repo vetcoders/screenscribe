@@ -22,7 +22,11 @@
   per-finding vision stream. Empty streams and
   unreachable hosts (connect/TLS handshake timeout) get explicit reasons, and
   the "Issue Detection Failed" panel shows the LLM endpoint host.
-
+- **Fixed: truncated LLM answers fail loudly instead of passing as results.**
+  When a stream ends with `error`, `response.failed` or `response.incomplete`
+  after some text arrived, the pre-filter now fails (no partial findings, not
+  checkpointed as complete) even if that text parses, and per-finding analysis
+  falls back instead of accepting the truncated answer.
 - **Fixed: semantic pre-filter no longer hangs reasoning without an answer.**
   Root cause: the pre-filter sent no reasoning effort, so on a full transcript
   the default LLM reasoned in a loop for 11-20 minutes, emitted no text and

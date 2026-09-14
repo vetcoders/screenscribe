@@ -923,3 +923,50 @@ def test_prefilter_reasoning_only_stream_without_error_is_actionable(
     assert result.failed is True
     assert "without an answer" in result.error
     assert "SCREENSCRIBE_LLM_REASONING_EFFORT=low" in result.error
+
+
+# --- PR #29 review: terminal errors after partial text, sanitized HTTP reasons --
+
+
+@pytest.mark.parametrize(
+    ("terminal_event", "expected_error"),
+    [
+        (
+            {
+                "type": "response.failed",
+                "response": {"error": {"code": "server_error", "message": "Upstream cut off"}},
+            },
+            "LLM endpoint reported an error: Upstream cut off (code: server_error); "
+            "the partial output was discarded",
+        ),
+        (
+            {
+                "type": "response.incomplete",
+                "response": {"incomplete_details": {"reason": "max_output_tokens"}},
+            },
+            "LLM endpoint reported an error: Response incomplete: max_output_tokens; "
+            "the partial output was discarded",
+        ),
+    ],
+)
+def test_prefilter_terminal_error_after_valid_partial_json_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+    terminal_event: dict[str, Any],
+    expected_error: str,
+) -> None:
+    """Partial text that parses as valid JSON must NOT become a result when the
+    stream then ends with a terminal provider error: failed=True, no POIs, no retry."""
+    attempts: list[int] = []
+    lines = [_OK_POI_DELTA, _event(terminal_event)]
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client", _sequenced_client([lines], attempts)
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert result.pois == []
+    assert result.error == expected_error
+    assert len(attempts) == 1
