@@ -758,8 +758,10 @@ def test_prefilter_connect_timeout_names_unreachable_host(
     result = semantic_prefilter(transcription, config)
 
     assert result.failed is True
-    assert "api.example.com" in result.error
-    assert "unreachable" in result.error
+    assert (
+        result.error == "LLM host api.example.com was unreachable "
+        "(connection or TLS handshake timed out)"
+    )
     assert "test-key" not in result.error
 
 
