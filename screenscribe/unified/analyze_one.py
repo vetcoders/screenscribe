@@ -13,7 +13,11 @@ from pathlib import Path
 
 import httpx
 
-from ..api_utils import extract_stream_error_event, retry_request
+from ..api_utils import (
+    extract_stream_error_event,
+    retry_request,
+    stream_chunk_has_model_output,
+)
 from ..config import ScreenScribeConfig
 from ..detect import Detection
 from ..keywords import format_keywords_hint
@@ -147,6 +151,9 @@ def analyze_finding_unified_streaming(
             same_provider=_may_chain_previous_response(
                 config, use_text_only_backend=use_text_only_backend
             ),
+            # Text-only goes to the LLM endpoint: bound its reasoning like the
+            # pre-filter. The vision request keeps the provider default.
+            reasoning_effort=config.get_llm_reasoning_effort() if use_text_only_backend else None,
         )
 
         # Tracks whether a *prior* attempt already forwarded stream deltas to the
@@ -173,12 +180,16 @@ def analyze_finding_unified_streaming(
             suppress the callbacks -- ``collected_content`` is still rebuilt from
             scratch and returned correctly, only the live re-emission is dropped. A
             provider error-event (``StreamEventError``) is retried only when it is
-            transient (overload / rate limit / server fault); otherwise it
-            propagates straight to the outer fallback, as before.
+            transient (overload / rate limit / server fault) AND arrived before
+            this attempt streamed any reasoning or text; otherwise it propagates
+            straight to the outer fallback, as before.
             """
             nonlocal emitted
             collected_content = ""
             response_id = ""
+            # Any reasoning/text delta in THIS attempt makes a later provider
+            # error event non-transient (see the stream loop).
+            model_output_seen = False
 
             # A retry that follows a mid-stream drop must not re-forward the
             # prefix the failed attempt already streamed to the consumer.
@@ -242,15 +253,22 @@ def analyze_finding_unified_streaming(
 
                                 # A provider error event inside the 200 stream.
                                 # Transient ones (overload / rate limit / server
-                                # fault) are retried by retry_request; the rest
-                                # propagate to the text-only / non-streaming
-                                # fallback. response.incomplete keeps partial text.
+                                # fault) are retried by retry_request, but only
+                                # before this attempt streamed any model output;
+                                # after that it fails fast to the text-only /
+                                # non-streaming fallback instead of re-running a
+                                # long generation. response.incomplete keeps
+                                # partial text.
                                 stream_error = extract_stream_error_event(chunk)
                                 if (
                                     stream_error is not None
                                     and stream_error.event_type != "response.incomplete"
                                 ):
+                                    if model_output_seen:
+                                        stream_error.transient = False
                                     raise stream_error
+                                if stream_chunk_has_model_output(chunk):
+                                    model_output_seen = True
 
                                 # Extract response ID FIRST, before any content
                                 # reconciliation. The canonical id often rides on the
@@ -448,6 +466,9 @@ def analyze_finding_unified(
                     stream=False,
                     same_provider=_may_chain_previous_response(
                         config, use_text_only_backend=use_text_only_backend
+                    ),
+                    reasoning_effort=(
+                        config.get_llm_reasoning_effort() if use_text_only_backend else None
                     ),
                 )
 

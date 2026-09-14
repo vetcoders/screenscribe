@@ -761,3 +761,163 @@ def test_prefilter_connect_timeout_names_unreachable_host(
     assert "api.example.com" in result.error
     assert "unreachable" in result.error
     assert "test-key" not in result.error
+
+
+# --- Reasoning effort + no retry after the model produced output -------------
+#
+# Live root cause (api.libraxis.cloud, model `programmer`): without an explicit
+# reasoning effort the model reasoned in a loop for 11-20 minutes, emitted no
+# output_text and ended with response.failed / server_error. Retrying that
+# "transient" code would multiply the hang, so a provider error after any model
+# output fails fast with an actionable reason.
+
+
+def _recording_client(lines: list[str], bodies: list[dict[str, Any]], attempts: list[int]) -> type:
+    """Like ``_sequenced_client`` but records each request JSON body."""
+    base = _sequenced_client([lines], attempts)
+
+    class _Client(base):  # type: ignore[misc,valid-type]
+        def stream(self, *args: Any, **kwargs: Any) -> Any:
+            bodies.append(kwargs.get("json") or {})
+            return super().stream(*args, **kwargs)
+
+    return _Client
+
+
+def test_prefilter_sends_default_medium_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    bodies: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client", _recording_client(_OK_LINES, bodies, [])
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is False
+    assert bodies[0]["reasoning"] == {"summary": "auto", "effort": "medium"}
+
+
+def test_prefilter_uses_configured_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    config.llm_reasoning_effort = "low"
+    bodies: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client", _recording_client(_OK_LINES, bodies, [])
+    )
+
+    semantic_prefilter(transcription, config)
+
+    assert bodies[0]["reasoning"]["effort"] == "low"
+
+
+def test_prefilter_chat_completions_request_has_no_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    config.llm_endpoint = "https://api.example.com/v1/chat/completions"
+    bodies: list[dict[str, Any]] = []
+    chat_lines = [
+        'data: {"choices": [{"delta": {"content": "{\\"points_of_interest\\": []}"}}]}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client", _recording_client(chat_lines, bodies, [])
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is False
+    assert "reasoning" not in bodies[0]
+
+
+def _reasoning_delta(text: str) -> str:
+    return _event({"type": "response.reasoning_summary_text.delta", "delta": text})
+
+
+def test_prefilter_failed_after_reasoning_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """The live failure: reasoning deltas, no text, then response.failed with a
+    transient-looking server_error -> exactly ONE attempt and an actionable reason."""
+    attempts: list[int] = []
+    lines = [
+        _event({"type": "response.created", "response": {"id": "resp_loop"}}),
+        _reasoning_delta("Need maybe include X covers..."),
+        _reasoning_delta("Need maybe include X covers..."),
+        _event(
+            {
+                "type": "response.failed",
+                "response": {
+                    "status": "failed",
+                    "error": {
+                        "code": "server_error",
+                        "message": (
+                            "The compatible provider rejected the request before it "
+                            "could be completed."
+                        ),
+                    },
+                },
+            }
+        ),
+    ]
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client", _sequenced_client([lines], attempts)
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert len(attempts) == 1
+    assert "The compatible provider rejected the request" in result.error
+    assert "server_error" in result.error
+    assert "SCREENSCRIBE_LLM_REASONING_EFFORT=low" in result.error
+
+
+def test_prefilter_failed_before_any_delta_is_retried(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """A server_error response.failed before any model output stays transient."""
+    attempts: list[int] = []
+    failing = [
+        _event(
+            {
+                "type": "response.failed",
+                "response": {"error": {"code": "server_error", "message": "Upstream down"}},
+            }
+        )
+    ]
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client",
+        _sequenced_client([failing, _OK_LINES], attempts),
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is False
+    assert len(attempts) == 2
+
+
+def test_prefilter_reasoning_only_stream_without_error_is_actionable(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    lines = [_reasoning_delta("thinking"), "data: [DONE]"]
+    monkeypatch.setattr("screenscribe.semantic_filter.httpx.Client", _sequenced_client([lines], []))
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert "without an answer" in result.error
+    assert "SCREENSCRIBE_LLM_REASONING_EFFORT=low" in result.error

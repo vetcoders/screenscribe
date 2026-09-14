@@ -435,6 +435,7 @@ moving to a new provider.
 | `SCREENSCRIBE_STT_MODEL` | `whisper-1` | OpenAI-Whisper-compatible. |
 | `SCREENSCRIBE_LLM_MODEL` | `programmer` | LibraxisAI default — change to your provider's model (e.g. `gpt-4o`). |
 | `SCREENSCRIBE_VISION_MODEL` | `programmer` | LibraxisAI default — change to your provider's vision model. |
+| `SCREENSCRIBE_LLM_REASONING_EFFORT` | `medium` | Reasoning effort sent with text-LLM Responses API calls (semantic pre-filter and text-only finding analysis): `minimal`, `low`, `medium`, or `high`. Not sent to Chat Completions endpoints or to the vision request. An invalid value warns and falls back to `medium`. Lower it to `low` if detection fails after the model reasons for a long time without answering. |
 
 ### Processing options
 
@@ -701,8 +702,14 @@ key). Reasons include the provider's own error from inside the response stream
 (e.g. `response.failed` / `response.incomplete` with its message and code), an
 empty stream with no events, or an unreachable host (connection or TLS handshake
 timeout). Transient in-stream errors (server errors, overload, rate limits) are
-retried automatically before the stage is reported as failed. Your transcript is
-saved; re-run with `--resume` to retry detection without re-transcribing.
+retried automatically, but only when they arrive before the model streamed any
+output; a failure after the model already reasoned or answered is reported at
+once instead of re-running a long generation. Your transcript is saved; re-run
+with `--resume` to retry detection without re-transcribing.
+
+If the reason says the model spent its budget reasoning without producing an
+answer, set `SCREENSCRIBE_LLM_REASONING_EFFORT=low` (default `medium`) or switch
+`SCREENSCRIBE_LLM_MODEL`.
 
 ### No audio track
 

@@ -32,6 +32,14 @@ DEFAULT_LLM_MODEL = "programmer"  # screenscribe product default (LibraxisAI pro
 # OpenAI vision model) via SCREENSCRIBE_VISION_MODEL when not on LibraxisAI.
 DEFAULT_VISION_MODEL = "programmer"
 
+# Reasoning effort sent with text-LLM Responses API requests (semantic pre-filter
+# and the text-only unified fallback). Without an explicit effort, reasoning
+# models on long prompts can reason in a loop for many minutes, emit no answer
+# and end with ``response.failed``. "medium" keeps the "liberal" pre-filter's
+# recall while bounding the time spent reasoning.
+LLM_REASONING_EFFORTS = ("minimal", "low", "medium", "high")
+DEFAULT_LLM_REASONING_EFFORT = "medium"
+
 # Config file locations (checked in order)
 # User config has priority - local .env is for development/examples only
 CONFIG_PATHS = [
@@ -77,6 +85,9 @@ class ScreenScribeConfig:
     stt_model: str = DEFAULT_STT_MODEL
     llm_model: str = DEFAULT_LLM_MODEL
     vision_model: str = DEFAULT_VISION_MODEL
+
+    # Reasoning effort for text-LLM Responses API calls (minimal/low/medium/high).
+    llm_reasoning_effort: str = DEFAULT_LLM_REASONING_EFFORT
 
     # Optional STT fallback (opt-in). The user supplies a second provider
     # (e.g. their own OpenAI key + endpoint); it is tried ONLY when the primary
@@ -192,6 +203,31 @@ class ScreenScribeConfig:
     def get_llm_api_key(self) -> str:
         """Get API key for LLM endpoint."""
         return self.llm_api_key or self.api_key
+
+    def get_llm_reasoning_effort(self) -> str:
+        """Reasoning effort for text-LLM Responses calls; invalid values fall back.
+
+        Loading already warns about an invalid configured value; this accessor
+        only guarantees a value the API accepts, even for a directly-built config.
+        """
+        effort = (self.llm_reasoning_effort or "").strip().lower()
+        return effort if effort in LLM_REASONING_EFFORTS else DEFAULT_LLM_REASONING_EFFORT
+
+    @staticmethod
+    def _normalize_reasoning_effort(value: str) -> str:
+        """Validate a configured reasoning effort; warn and use the default if invalid."""
+        effort = value.strip().lower()
+        if effort in LLM_REASONING_EFFORTS:
+            return effort
+        import warnings
+
+        warnings.warn(
+            f"Invalid SCREENSCRIBE_LLM_REASONING_EFFORT={value!r}; expected one of "
+            f"{', '.join(LLM_REASONING_EFFORTS)}. Using {DEFAULT_LLM_REASONING_EFFORT!r}.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return DEFAULT_LLM_REASONING_EFFORT
 
     def get_vision_api_key(self) -> str:
         """Get API key for Vision endpoint."""
@@ -509,6 +545,7 @@ class ScreenScribeConfig:
             "SCREENSCRIBE_STT_MODEL": "stt_model",
             "SCREENSCRIBE_LLM_MODEL": "llm_model",
             "SCREENSCRIBE_VISION_MODEL": "vision_model",
+            "SCREENSCRIBE_LLM_REASONING_EFFORT": "llm_reasoning_effort",
             # Processing
             "SCREENSCRIBE_LANGUAGE": "language",
             "SCREENSCRIBE_VISION": "use_vision_analysis",
@@ -573,6 +610,8 @@ class ScreenScribeConfig:
             setattr(self, attr, value.rstrip("/"))
         elif attr in self._BOOL_ATTRS:
             setattr(self, attr, value.lower() in ("true", "1", "yes"))
+        elif attr == "llm_reasoning_effort":
+            self.llm_reasoning_effort = self._normalize_reasoning_effort(value)
         else:
             setattr(self, attr, value)
 
@@ -621,6 +660,10 @@ class ScreenScribeConfig:
 
         if key_lower == "screenscribe_provider":
             self.provider = value.lower().strip()
+            return
+
+        if key_lower == "screenscribe_llm_reasoning_effort":
+            self.llm_reasoning_effort = self._normalize_reasoning_effort(value)
             return
 
         # STT fallback (checked first: "stt_fallback_api_key" also contains the
@@ -788,6 +831,11 @@ class ScreenScribeConfig:
             f"SCREENSCRIBE_STT_MODEL={self.stt_model}",
             f"SCREENSCRIBE_LLM_MODEL={self.llm_model}",
             f"SCREENSCRIBE_VISION_MODEL={self.vision_model}",
+            "",
+            "# Reasoning effort for the text LLM (semantic pre-filter, text-only analysis):",
+            "# minimal | low | medium | high. Lower it (e.g. low) if detection fails after",
+            "# the model reasons for a long time without answering.",
+            f"SCREENSCRIBE_LLM_REASONING_EFFORT={self.get_llm_reasoning_effort()}",
             "",
             sep,
             "# PROCESSING OPTIONS",

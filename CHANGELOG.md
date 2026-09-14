@@ -18,9 +18,22 @@
   events inside a 200 response stream (`error`, `response.failed`,
   `response.incomplete`) are captured and shown with their message and code
   instead of "Empty response"; transient ones (server error, overload, rate
-  limit) are retried, also for the per-finding vision stream. Empty streams and
+  limit) that arrive before any model output are retried, also for the
+  per-finding vision stream. Empty streams and
   unreachable hosts (connect/TLS handshake timeout) get explicit reasons, and
   the "Issue Detection Failed" panel shows the LLM endpoint host.
+
+- **Fixed: semantic pre-filter no longer hangs reasoning without an answer.**
+  Root cause: the pre-filter sent no reasoning effort, so on a full transcript
+  the default LLM reasoned in a loop for 11-20 minutes, emitted no text and
+  ended with `response.failed`. Text-LLM Responses API requests (pre-filter and
+  text-only finding analysis) now send `reasoning.effort`, default `medium`,
+  configurable with the new `SCREENSCRIBE_LLM_REASONING_EFFORT`
+  (`minimal`/`low`/`medium`/`high`); Chat Completions endpoints and the vision
+  request are unchanged. An in-stream provider error is retried only if it
+  arrives before the model streamed any output, so such a failure is reported
+  once (with a hint to lower the effort) instead of being retried for close to
+  an hour.
 
 ## [0.1.19] - 2026-08-23
 

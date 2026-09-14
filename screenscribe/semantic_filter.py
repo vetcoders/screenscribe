@@ -22,7 +22,9 @@ from .api_utils import (
     build_llm_request_body,
     endpoint_host,
     extract_stream_error_event,
+    responses_reasoning_options,
     retry_request,
+    stream_chunk_has_model_output,
 )
 from .config import ScreenScribeConfig
 from .keywords import KeywordsConfig, format_keywords_hint
@@ -310,34 +312,38 @@ def semantic_prefilter(
         # Build request with streaming enabled
         request_body = build_llm_request_body(config.llm_model, prompt, config.llm_endpoint)
         request_body["stream"] = True
-        # Enable reasoning summaries in stream (for thinking models)
-        request_body["reasoning"] = {"summary": "auto"}
+        # Responses API only: stream reasoning summaries (thinking models) with an
+        # explicit effort. Without one, reasoning models can loop for many minutes
+        # on a full transcript, emit no answer and end with response.failed.
+        reasoning = responses_reasoning_options(
+            config.llm_endpoint, config.get_llm_reasoning_effort()
+        )
+        if reasoning is not None:
+            request_body["reasoning"] = reasoning
         # Chain from STT response for thematic context
         if previous_response_id:
             request_body["previous_response_id"] = previous_response_id
             console.print(f"[dim]  Chaining from STT: {previous_response_id[:20]}...[/]")
 
-        def _stream_prefilter_once() -> tuple[str, str, StreamEventError | None, int, str]:
-            """Run one full streaming attempt.
-
-            Returns ``(content, response_id, reported_error, event_count, body)``:
-            ``reported_error`` is a non-transient provider error event seen in the
-            stream (``error`` / ``response.failed`` / ``response.incomplete``),
-            ``event_count`` the number of JSON ``data:`` events, and ``body`` the
-            first non-SSE text of a response that was not an event stream.
+        def _stream_prefilter_once() -> _PrefilterStream:
+            """Run one full streaming attempt and return what it produced.
 
             Raises httpx errors (status / transport) on failure so the caller's
             ``retry_request`` can retry the *transient* ones (429/5xx/timeout/
-            connect, honoring Retry-After). A *transient* provider error event
+            connect, honoring Retry-After). A transient provider error event
             inside the 200 stream is raised as ``StreamEventError`` for the same
-            retry path. Each call starts from fresh local accumulators, so a
-            retried attempt never duplicates or loses POIs streamed by an earlier
-            partial attempt.
+            retry path, but ONLY while the attempt has produced no model output:
+            once reasoning or text deltas arrived, re-running a possibly
+            many-minute generation is not transient, so the error is recorded
+            as non-transient and reported instead. Each call starts from fresh
+            local accumulators, so a retried attempt never duplicates or loses
+            POIs streamed by an earlier partial attempt.
             """
             content = ""
             reported_error: StreamEventError | None = None
             event_count = 0
             non_sse_body = ""
+            model_output_seen = False
             stream_preview = ""  # Last ~40 chars of output for live display
             reasoning_text = ""
             poi_count = 0
@@ -422,10 +428,14 @@ def semantic_prefilter(
                                     # are kept so an empty result names the cause.
                                     event_error = extract_stream_error_event(chunk)
                                     if event_error is not None:
-                                        if event_error.transient:
+                                        if event_error.transient and not model_output_seen:
                                             raise event_error
+                                        event_error.transient = False
                                         reported_error = event_error
                                         continue
+
+                                    if stream_chunk_has_model_output(chunk):
+                                        model_output_seen = True
 
                                     chunk_type = chunk.get("type", "")
 
@@ -485,23 +495,33 @@ def semantic_prefilter(
                                     # chunk; keep the stream alive.
                                     continue
 
-            return content, response_id, reported_error, event_count, non_sse_body
+            return _PrefilterStream(
+                content=content,
+                response_id=response_id,
+                reported_error=reported_error,
+                event_count=event_count,
+                non_sse_body=non_sse_body,
+                model_output_seen=model_output_seen,
+            )
 
         # Retry transient transport/HTTP failures (429/5xx/timeout/connect,
         # honoring Retry-After) before declaring the stage failed. Non-retriable
         # errors (401/403) fail fast, and exhausted retries propagate to the
         # except below -- both become a loud failed=True, never a silent empty.
-        content, response_id, reported_error, event_count, non_sse_body = retry_request(
+        stream = retry_request(
             _stream_prefilter_once,
             operation_name="Semantic pre-filter",
         )
+        content = stream.content
+        response_id = stream.response_id
+        reported_error = stream.reported_error
 
         if not content:
             # A 200 OK that streamed no usable text is NOT a healthy empty result
             # (that would be a parseable `{"points_of_interest": []}`). The model
             # returned nothing -- fail loudly instead of reporting "no issues",
             # and name the concrete cause whenever the endpoint reported one.
-            empty_reason = _empty_stream_reason(reported_error, event_count, non_sse_body)
+            empty_reason = _empty_stream_reason(stream)
             console.print(f"[red]Semantic pre-filter failed: {escape(empty_reason)}[/]")
             return SemanticFilterResult(
                 pois=[],
@@ -549,14 +569,39 @@ def semantic_prefilter(
         return SemanticFilterResult(pois=[], response_id="", failed=True, error=reason)
 
 
-def _empty_stream_reason(
-    reported_error: StreamEventError | None, event_count: int, non_sse_body: str
-) -> str:
+@dataclass
+class _PrefilterStream:
+    """What one pre-filter streaming attempt produced."""
+
+    content: str
+    response_id: str
+    # Non-transient provider error event (error / response.failed / incomplete).
+    reported_error: StreamEventError | None
+    # JSON ``data:`` events seen, and the first non-SSE text of a plain body.
+    event_count: int
+    non_sse_body: str
+    # Whether any reasoning or text delta arrived before the stream ended.
+    model_output_seen: bool
+
+
+# Appended when the model streamed reasoning but never produced an answer.
+_REASONING_ONLY_HINT = (
+    "The model spent its budget reasoning without producing an answer; try "
+    "SCREENSCRIBE_LLM_REASONING_EFFORT=low or a different SCREENSCRIBE_LLM_MODEL."
+)
+
+
+def _empty_stream_reason(stream: _PrefilterStream) -> str:
     """Name why a 200 stream produced no text, most specific cause first."""
-    if reported_error is not None:
-        return f"LLM endpoint reported an error: {reported_error}"
-    if event_count == 0:
-        body = non_sse_body.strip()
+    if stream.reported_error is not None:
+        reason = f"LLM endpoint reported an error: {stream.reported_error}"
+        if stream.model_output_seen:
+            reason = f"{reason}. {_REASONING_ONLY_HINT}"
+        return reason
+    if stream.model_output_seen:
+        return f"LLM stream ended without an answer. {_REASONING_ONLY_HINT}"
+    if stream.event_count == 0:
+        body = stream.non_sse_body.strip()
         if body:
             try:
                 parsed = json.loads(body)

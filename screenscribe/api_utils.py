@@ -188,6 +188,46 @@ def extract_stream_error_event(chunk: dict[str, Any]) -> StreamEventError | None
     return None
 
 
+_TEXT_OUTPUT_EVENT_TYPES = (
+    "response.output_text.delta",
+    "response.output_text.done",
+    "response.content_part.delta",
+    "content.delta",
+    "response.text.delta",
+)
+
+
+def stream_chunk_has_model_output(chunk: dict[str, Any]) -> bool:
+    """Whether an SSE chunk carries model output (a reasoning or text delta).
+
+    Used to decide if an in-stream provider error is still worth retrying: a
+    failure that arrives before the model produced anything is treated like an
+    HTTP 5xx, but once the model has reasoned or answered, re-running the whole
+    (possibly many-minute) generation is not transient -- fail fast instead.
+    """
+    chunk_type = str(chunk.get("type", "") or "")
+    if chunk_type.startswith("response.reasoning") and chunk_type.endswith((".delta", ".done")):
+        return True
+    if chunk_type in _TEXT_OUTPUT_EVENT_TYPES:
+        return True
+    choices = chunk.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        delta = choices[0].get("delta")
+        return isinstance(delta, dict) and bool(delta.get("content"))
+    return False
+
+
+def responses_reasoning_options(endpoint: str, effort: str) -> dict[str, str] | None:
+    """``reasoning`` block for a text-LLM request, or ``None`` for Chat Completions.
+
+    Responses API requests ask for streamed reasoning summaries AND an explicit
+    effort; Chat Completions endpoints do not accept this block at all.
+    """
+    if is_chat_completions_endpoint(endpoint):
+        return None
+    return {"summary": "auto", "effort": effort}
+
+
 def retry_after_seconds(error: Exception) -> float | None:
     """Return the server-advertised Retry-After delay in seconds, if present.
 

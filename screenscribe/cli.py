@@ -1259,6 +1259,7 @@ def config(
         console.print(f"  STT:    {cfg.stt_model}")
         console.print(f"  LLM:    {cfg.llm_model}")
         console.print(f"  Vision: {cfg.vision_model}")
+        console.print(f"  [dim](LLM reasoning effort: {cfg.get_llm_reasoning_effort()})[/]")
 
         # Processing
         console.print("\n[cyan]Processing:[/]")
