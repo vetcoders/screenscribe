@@ -26,7 +26,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from . import __version__
-from .api_utils import APIError
+from .api_utils import APIError, endpoint_host
 from .checkpoint import (
     PipelineCheckpoint,
     checkpoint_valid_for_video,
@@ -592,9 +592,11 @@ def run_review(
                     Panel(
                         "The semantic pre-filter (the LLM detection stage) failed, so no "
                         "findings could be produced.\n\n"
-                        f"[dim]Reason:[/] {detail}\n\n"
-                        "This is usually transient -- a rate limit, a network drop, or an "
-                        "invalid/expired API key. Your transcript was saved.",
+                        f"[dim]Reason:[/] {escape(detail)}\n"
+                        f"[dim]Endpoint:[/] {escape(endpoint_host(config.llm_endpoint))}\n\n"
+                        "Rate limits, provider outages and network drops are usually "
+                        "transient; an invalid or expired API key is not. Your transcript "
+                        "was saved.",
                         title="[bold red]Issue Detection Failed[/]",
                         border_style="red",
                     )

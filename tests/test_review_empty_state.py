@@ -207,6 +207,22 @@ def test_review_failed_prefilter_does_not_write_a_false_no_issues_report(
     assert "Traceback" not in result.output
 
 
+def test_review_failed_prefilter_panel_names_reason_and_endpoint_host(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The failure panel shows the reason next to the LLM endpoint host (no key),
+    so a provider outage can be told apart from a credentials problem."""
+    from screenscribe.api_utils import endpoint_host
+
+    result, _output_dir = _run_review_with_failed_prefilter(monkeypatch, tmp_path)
+    normalized_output = " ".join(result.output.split())
+    host = endpoint_host(ScreenScribeConfig(api_key="test-key").llm_endpoint)
+
+    assert "HTTP 401 Unauthorized" in normalized_output
+    assert f"Endpoint: {host}" in normalized_output
+    assert "test-key" not in result.output
+
+
 def test_review_failed_prefilter_is_not_checkpointed_as_complete(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

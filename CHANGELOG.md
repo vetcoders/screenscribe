@@ -14,6 +14,13 @@
   Permission denied, read-only volumes and file-in-the-way paths now print an
   "Output Directory Error" with the path and reason and exit with code 1,
   instead of a raw traceback.
+- **Fixed: semantic pre-filter failures name the real cause.** Provider error
+  events inside a 200 response stream (`error`, `response.failed`,
+  `response.incomplete`) are captured and shown with their message and code
+  instead of "Empty response"; transient ones (server error, overload, rate
+  limit) are retried, also for the per-finding vision stream. Empty streams and
+  unreachable hosts (connect/TLS handshake timeout) get explicit reasons, and
+  the "Issue Detection Failed" panel shows the LLM endpoint host.
 
 ## [0.1.19] - 2026-08-23
 

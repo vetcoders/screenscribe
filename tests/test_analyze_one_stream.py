@@ -430,3 +430,42 @@ def test_delta_without_consumer_does_not_suppress_a_later_callback(
         f"a consumer-less reasoning delta wrongly suppressed on_content on retry: {captured}"
     )
     assert result is not None
+
+
+def test_transient_stream_error_event_is_retried_before_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An in-stream ``response.failed`` with a transient code (server_error) is
+    retried on the image-backed call instead of degrading to text-only."""
+    screenshot = tmp_path / "shot.jpg"
+    screenshot.write_bytes(b"fake-image")
+
+    failed_line = "data: " + json.dumps(
+        {
+            "type": "response.failed",
+            "response": {"error": {"code": "server_error", "message": "Upstream overloaded"}},
+        }
+    )
+    attempts = {"n": 0}
+    payloads: list[str] = []
+
+    class _RecordingClient(_DropThenDoneClient):
+        def stream(self, *args: Any, **kwargs: Any) -> _DropThenDoneResponse:
+            payloads.append(json.dumps(kwargs.get("json")))
+            return super().stream(*args, **kwargs)
+
+    def _client_factory(*args: Any, **kwargs: Any) -> _DropThenDoneClient:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return _RecordingClient(_DropThenDoneResponse([failed_line]))
+        return _RecordingClient(_DropThenDoneResponse([_delta_line("A"), "data: [DONE]"]))
+
+    monkeypatch.setattr("screenscribe.unified_analysis.httpx.Client", _client_factory)
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda *_a, **_k: None)
+
+    result = analyze_finding_unified_streaming(_detection(), screenshot, _config())
+
+    assert attempts["n"] == 2, "a transient provider error event should be retried"
+    # The retry is still the image-backed request, not the text-only fallback.
+    assert "image" in payloads[1], "retry must keep the screenshot instead of degrading"
+    assert result is not None

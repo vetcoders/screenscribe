@@ -217,3 +217,79 @@ def test_retry_after_seconds_none_for_non_finite(raw: str) -> None:
 def test_retry_after_seconds_still_parses_finite() -> None:
     """C6.4/A5 regression guard: finite values are unaffected by the guard."""
     assert retry_after_seconds(_http_429("7")) == 7.0
+
+
+# --- stream error events -----------------------------------------------------
+
+
+def test_extract_stream_error_event_shapes() -> None:
+    from screenscribe.api_utils import extract_stream_error_event
+
+    assert extract_stream_error_event({"type": "response.output_text.delta", "delta": "x"}) is None
+    assert extract_stream_error_event({"type": "response.completed", "response": {}}) is None
+
+    nested = extract_stream_error_event(
+        {"type": "error", "error": {"type": "server_error", "message": "boom"}}
+    )
+    assert nested is not None and nested.transient and "boom" in str(nested)
+
+    failed = extract_stream_error_event(
+        {"type": "response.failed", "response": {"error": {"code": "invalid_prompt"}}}
+    )
+    assert failed is not None and not failed.transient
+    assert "invalid_prompt" in str(failed)
+
+    completed_failed = extract_stream_error_event(
+        {"type": "response.completed", "response": {"status": "failed"}}
+    )
+    assert str(completed_failed) == "Streaming response completed with failed status."
+
+    incomplete = extract_stream_error_event(
+        {
+            "type": "response.incomplete",
+            "response": {"incomplete_details": {"reason": "content_filter"}},
+        }
+    )
+    assert incomplete is not None
+    assert incomplete.event_type == "response.incomplete"
+    assert "content_filter" in str(incomplete)
+
+    assert extract_stream_error_event({"type": "error", "error": "not a dict"}) is not None
+
+
+def test_retry_request_retries_only_transient_stream_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from screenscribe.api_utils import StreamEventError
+
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda _d: None)
+    calls = 0
+
+    def transient_then_ok() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise StreamEventError("overloaded", code="overloaded_error", transient=True)
+        return "ok"
+
+    assert retry_request(transient_then_ok) == "ok"
+    assert calls == 2
+
+    permanent_calls = 0
+
+    def permanent() -> str:
+        nonlocal permanent_calls
+        permanent_calls += 1
+        raise StreamEventError("bad prompt", code="invalid_prompt")
+
+    with pytest.raises(StreamEventError):
+        retry_request(permanent)
+    assert permanent_calls == 1
+
+
+def test_endpoint_host_hides_credentials() -> None:
+    from screenscribe.api_utils import endpoint_host
+
+    url = "https://user:secret@llm.example.com:8443/v1/responses?k=1"  # pragma: allowlist secret
+    assert endpoint_host(url) == "llm.example.com"
+    assert endpoint_host("") == "unknown host"

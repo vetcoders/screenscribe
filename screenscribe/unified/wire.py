@@ -130,31 +130,6 @@ def _extract_stream_delta(chunk: dict[str, Any], verbose: bool = False) -> tuple
     return "", False
 
 
-def _extract_stream_error(chunk: dict[str, Any]) -> str:
-    """Extract provider-side stream error message from SSE chunk."""
-    chunk_type = str(chunk.get("type", ""))
-    if chunk_type == "error":
-        error_payload = chunk.get("error", {})
-        if isinstance(error_payload, dict):
-            message = error_payload.get("message")
-            if isinstance(message, str) and message.strip():
-                return message.strip()
-        return "Streaming provider returned an error event."
-
-    if chunk_type in ("response.completed", "response.done"):
-        response_payload = chunk.get("response", {})
-        if isinstance(response_payload, dict):
-            if response_payload.get("status") == "failed":
-                error_payload = response_payload.get("error", {})
-                if isinstance(error_payload, dict):
-                    message = error_payload.get("message")
-                    if isinstance(message, str) and message.strip():
-                        return message.strip()
-                return "Streaming response completed with failed status."
-
-    return ""
-
-
 def _extract_reasoning_delta(chunk: dict[str, Any]) -> str:
     """Extract reasoning summary delta from SSE chunk."""
     chunk_type = chunk.get("type", "")

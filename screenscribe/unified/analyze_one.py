@@ -13,7 +13,7 @@ from pathlib import Path
 
 import httpx
 
-from ..api_utils import retry_request
+from ..api_utils import extract_stream_error_event, retry_request
 from ..config import ScreenScribeConfig
 from ..detect import Detection
 from ..keywords import format_keywords_hint
@@ -31,7 +31,6 @@ from .wire import (
     _extract_reasoning_delta,
     _extract_response_id_from_stream,
     _extract_stream_delta,
-    _extract_stream_error,
 )
 
 
@@ -173,8 +172,9 @@ def analyze_finding_unified_streaming(
             that, once any delta has been forwarded (``emitted``), later attempts
             suppress the callbacks -- ``collected_content`` is still rebuilt from
             scratch and returned correctly, only the live re-emission is dropped. A
-            provider error-event (RuntimeError) is non-retriable and propagates
-            straight to the outer fallback, matching the previous behavior.
+            provider error-event (``StreamEventError``) is retried only when it is
+            transient (overload / rate limit / server fault); otherwise it
+            propagates straight to the outer fallback, as before.
             """
             nonlocal emitted
             collected_content = ""
@@ -240,9 +240,17 @@ def analyze_finding_unified_streaming(
                                 if not isinstance(chunk, dict):
                                     continue
 
-                                stream_error = _extract_stream_error(chunk)
-                                if stream_error:
-                                    raise RuntimeError(stream_error)
+                                # A provider error event inside the 200 stream.
+                                # Transient ones (overload / rate limit / server
+                                # fault) are retried by retry_request; the rest
+                                # propagate to the text-only / non-streaming
+                                # fallback. response.incomplete keeps partial text.
+                                stream_error = extract_stream_error_event(chunk)
+                                if (
+                                    stream_error is not None
+                                    and stream_error.event_type != "response.incomplete"
+                                ):
+                                    raise stream_error
 
                                 # Extract response ID FIRST, before any content
                                 # reconciliation. The canonical id often rides on the
@@ -306,7 +314,7 @@ def analyze_finding_unified_streaming(
                                 # (e.g. {"choices": [42]} -> choices[0].get(...)), a
                                 # shape-error the top-level isinstance guard cannot
                                 # catch. Skip this one chunk; keep the stream alive.
-                                # A provider error-event raises RuntimeError, which is
+                                # A provider error-event raises StreamEventError, which is
                                 # deliberately NOT caught here so it still propagates.
                                 continue
 
@@ -314,7 +322,7 @@ def analyze_finding_unified_streaming(
 
         # Retry transient transport/HTTP failures (429/5xx/timeout/network,
         # honoring Retry-After) on the image-backed call before degrading. A
-        # non-retriable error (400/401/403 or a provider RuntimeError) and an
+        # non-retriable error (400/401/403 or a non-transient provider error event) and an
         # exhausted retry both propagate to the except below -> text-only /
         # non-streaming fallback, exactly as before.
         collected_content, response_id = retry_request(

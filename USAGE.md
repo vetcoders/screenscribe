@@ -693,6 +693,17 @@ read-only volume, or a file sitting where a folder should be), `review` stops
 with an "Output Directory Error" naming the path and the reason, and exits with
 code 1 — no traceback. Pass `-o` with a folder you can write to.
 
+### Issue detection failed
+
+When the LLM detection stage (semantic pre-filter) fails, the "Issue Detection
+Failed" panel shows the concrete reason and the LLM endpoint host (never your
+key). Reasons include the provider's own error from inside the response stream
+(e.g. `response.failed` / `response.incomplete` with its message and code), an
+empty stream with no events, or an unreachable host (connection or TLS handshake
+timeout). Transient in-stream errors (server errors, overload, rate limits) are
+retried automatically before the stage is reported as failed. Your transcript is
+saved; re-run with `--resume` to retry detection without re-transcribing.
+
 ### No audio track
 
 `review` and `transcribe` require audio. On a silent recording they fail fast

@@ -4,6 +4,7 @@ import math
 import time
 from collections.abc import Callable
 from typing import Any, TypeVar
+from urllib.parse import urlsplit
 
 import httpx
 from rich.console import Console
@@ -36,6 +37,155 @@ class APIError(Exception):
     def __init__(self, message: str, status_code: int | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+def endpoint_host(endpoint: str | None) -> str:
+    """Return only the hostname of an endpoint URL (no scheme, userinfo, or query).
+
+    Safe for user-facing messages: credentials embedded in a URL never leak.
+    """
+    if not endpoint:
+        return "unknown host"
+    try:
+        host = urlsplit(endpoint).hostname
+    except ValueError:
+        host = None
+    return host or "unknown host"
+
+
+# Substrings of a provider error code/type that mark a stream error as
+# transient (worth retrying): overload, rate limit, timeouts, 5xx-style faults.
+_TRANSIENT_STREAM_ERROR_MARKERS = (
+    "server_error",
+    "rate_limit",
+    "too_many_requests",
+    "overload",
+    "capacity",
+    "unavailable",
+    "timeout",
+    "timed_out",
+    "bad_gateway",
+    "gateway_timeout",
+)
+
+
+class StreamEventError(RuntimeError):
+    """A provider error reported INSIDE an otherwise-200 SSE stream.
+
+    Responses-API streams can fail after the HTTP status is already 200 by
+    sending an ``error``, ``response.failed`` or ``response.incomplete`` event.
+    ``raise_for_status`` never sees those, so they are raised as this dedicated
+    exception. ``is_retriable_error`` retries it when ``transient`` is True, so
+    ``retry_request`` handles an in-stream overload exactly like an HTTP 503.
+    Subclasses ``RuntimeError`` so existing ``except RuntimeError`` handlers
+    keep catching provider error events.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "",
+        event_type: str = "",
+        transient: bool = False,
+    ) -> None:
+        detail = message
+        if code and code not in message:
+            detail = f"{message} (code: {code})"
+        super().__init__(detail)
+        self.code = code
+        self.event_type = event_type
+        self.transient = transient
+
+
+def _stream_error_fields(payload: Any) -> tuple[str, str]:
+    """Pull ``(message, code)`` from an error payload that may be a dict or str."""
+    if isinstance(payload, str):
+        return payload.strip(), ""
+    if not isinstance(payload, dict):
+        return "", ""
+    message = payload.get("message")
+    code = payload.get("code") or payload.get("type") or payload.get("status") or ""
+    return (
+        message.strip() if isinstance(message, str) else "",
+        str(code).strip() if code is not None else "",
+    )
+
+
+def _is_transient_stream_error(code: str, message: str) -> bool:
+    if code.isdigit():
+        return int(code) in RETRIABLE_STATUS_CODES
+    haystack = f"{code} {message}".lower().replace(" ", "_").replace("-", "_")
+    return any(marker in haystack for marker in _TRANSIENT_STREAM_ERROR_MARKERS)
+
+
+def extract_stream_error_event(chunk: dict[str, Any]) -> StreamEventError | None:
+    """Return the provider error carried by one SSE chunk, or ``None``.
+
+    Recognized shapes (Responses API and compatible providers):
+
+    - ``{"type": "error", "error": {...}}`` or ``{"type": "error", "code", "message"}``
+    - ``{"type": "response.failed", "response": {"error": {...}}}``
+    - ``{"type": "response.completed"|"response.done", "response": {"status": "failed"}}``
+    - ``{"type": "response.incomplete", "response": {"incomplete_details": {"reason"}}}``
+    - an untyped JSON body with a top-level ``error`` (a non-SSE error reply).
+
+    ``event_type`` is ``"response.incomplete"`` for incomplete responses so a
+    caller holding partial content can decide not to discard it.
+    """
+    chunk_type = str(chunk.get("type", "") or "")
+
+    if chunk_type == "error" or (not chunk_type and chunk.get("error")):
+        message, code = _stream_error_fields(chunk.get("error"))
+        top_message, top_code = _stream_error_fields(
+            {"message": chunk.get("message"), "code": chunk.get("code")}
+        )
+        message = message or top_message
+        code = code or top_code
+        message = message or "Streaming provider returned an error event."
+        return StreamEventError(
+            message,
+            code=code,
+            event_type=chunk_type or "error",
+            transient=_is_transient_stream_error(code, message),
+        )
+
+    response_payload = chunk.get("response")
+    if not isinstance(response_payload, dict):
+        response_payload = {}
+    status = str(response_payload.get("status", "") or "")
+
+    if chunk_type == "response.failed" or (
+        chunk_type in ("response.completed", "response.done") and status == "failed"
+    ):
+        message, code = _stream_error_fields(response_payload.get("error"))
+        if not message:
+            message = (
+                "Streaming response failed."
+                if chunk_type == "response.failed"
+                else "Streaming response completed with failed status."
+            )
+        return StreamEventError(
+            message,
+            code=code,
+            event_type=chunk_type,
+            transient=_is_transient_stream_error(code, message),
+        )
+
+    if chunk_type == "response.incomplete":
+        details = response_payload.get("incomplete_details")
+        reason = ""
+        if isinstance(details, dict) and details.get("reason"):
+            reason = str(details["reason"]).strip()
+        message = f"Response incomplete: {reason}" if reason else "Response incomplete."
+        return StreamEventError(
+            message,
+            code=reason,
+            event_type=chunk_type,
+            transient=_is_transient_stream_error(reason, ""),
+        )
+
+    return None
 
 
 def retry_after_seconds(error: Exception) -> float | None:
@@ -80,6 +230,11 @@ def is_retriable_error(error: Exception) -> bool:
     # ProtocolError but NOT a RemoteProtocolError, so this check excludes it).
     if isinstance(error, (httpx.NetworkError, httpx.RemoteProtocolError)):
         return True
+
+    # A provider error event inside a 200 stream: retry only transient ones
+    # (overload / rate limit / server fault), never e.g. invalid_prompt.
+    if isinstance(error, StreamEventError):
+        return error.transient
 
     # HTTP status errors - check the status code
     if isinstance(error, httpx.HTTPStatusError):
