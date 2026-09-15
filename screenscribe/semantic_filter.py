@@ -9,7 +9,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import httpx
 from rich.console import Console
@@ -41,10 +41,14 @@ POI_CATEGORIES = ("bug", "change", "ui", "performance", "accessibility", "other"
 PoiCategory = Literal["bug", "change", "ui", "performance", "accessibility", "other"]
 
 
-def _validate_poi_category(raw: str) -> PoiCategory:
-    """Narrow a raw string to a valid PointOfInterest category literal."""
-    if raw in POI_CATEGORIES:
-        return cast(PoiCategory, raw)
+def _validate_poi_category(raw: str, allowed: tuple[str, ...] = POI_CATEGORIES) -> str:
+    """Narrow a raw string to a valid POI category from the active vocabulary.
+
+    The active vocabulary is the default six unless a preset with its own
+    categories is running; anything outside it degrades to ``"other"``.
+    """
+    if raw in allowed:
+        return raw
     return "other"
 
 
@@ -109,7 +113,7 @@ class PointOfInterest:
 
     timestamp_start: float
     timestamp_end: float
-    category: Literal["bug", "change", "ui", "performance", "accessibility", "other"]
+    category: str  # one of the active POI categories (default six or preset's)
     confidence: float  # 0.0 - 1.0
     reasoning: str  # Why this was flagged
     transcript_excerpt: str  # The relevant text
@@ -240,6 +244,7 @@ def semantic_prefilter(
     config: ScreenScribeConfig,
     previous_response_id: str = "",
     keywords: KeywordsConfig | None = None,
+    categories: tuple[str, ...] | None = None,
 ) -> SemanticFilterResult:
     """
     Perform semantic pre-filtering on entire transcript.
@@ -262,6 +267,10 @@ def semantic_prefilter(
         keywords: Active keyword vocabulary hints (loaded by the caller). When
             ``None``, the built-in/global dictionary is loaded via the standard
             priority; an empty dictionary is a safe no-op.
+        categories: Active finding-category vocabulary (from the selected
+            preset). ``None`` keeps the default six categories; a preset's
+            categories replace the category enum offered to the model and the
+            validation set for parsed POIs.
 
     Returns:
         SemanticFilterResult with POIs and response_id for VLM context chaining
@@ -300,6 +309,14 @@ def semantic_prefilter(
         transcript_with_timestamps=transcript_text,
         keywords_hint=keywords_hint,
     )
+    # A preset with its own category vocabulary replaces the category enum the
+    # model is offered (the templates hard-code the default six).
+    active_categories = categories if categories else POI_CATEGORIES
+    if tuple(active_categories) != POI_CATEGORIES:
+        prompt = prompt.replace(
+            "bug|change|ui|performance|accessibility|other",
+            "|".join(active_categories),
+        )
     prompt = apply_analysis_prompt_override(prompt, config.analysis_prompt_override)
 
     console.print("[blue]Running semantic pre-filter on entire transcript...[/]")
@@ -557,7 +574,9 @@ def semantic_prefilter(
 
         # Parse JSON from content. strict=True so unparseable model output is
         # raised (-> failed=True below), not silently treated as zero findings.
-        pois = _parse_prefilter_response(content, transcription, strict=True)
+        pois = _parse_prefilter_response(
+            content, transcription, strict=True, categories=tuple(active_categories)
+        )
 
         console.print(
             f"[green]Semantic pre-filter complete:[/] identified {len(pois)} points of interest"
@@ -736,7 +755,11 @@ def _extract_content_from_response(result: dict[str, Any]) -> str:
 
 
 def _parse_prefilter_response(
-    content: str, transcription: TranscriptionResult, *, strict: bool = False
+    content: str,
+    transcription: TranscriptionResult,
+    *,
+    strict: bool = False,
+    categories: tuple[str, ...] = POI_CATEGORIES,
 ) -> list[PointOfInterest]:
     """Parse the pre-filter response into PointOfInterest objects.
 
@@ -745,6 +768,9 @@ def _parse_prefilter_response(
     "the model returned unparseable garbage" is reported as a FAILURE, not as a
     genuine "no points of interest" result. (A successfully-parsed but empty
     list still returns ``[]`` -- that is a real empty, not a failure.)
+
+    ``categories`` is the active category vocabulary (the default six unless a
+    preset is running); parsed categories outside it degrade to ``"other"``.
     """
     # Strip model control tokens
     content = re.sub(r"<\|[^|]+\|>\w*\s*", "", content)
@@ -808,7 +834,7 @@ def _parse_prefilter_response(
         poi = PointOfInterest(
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
-            category=_validate_poi_category(item.get("category", "other")),
+            category=_validate_poi_category(item.get("category", "other"), categories),
             confidence=_coerce_confidence(item.get("confidence", 0.5)),
             # A present-but-null string field (``"reasoning": null``) survives
             # ``.get(key, "")`` as None and later breaks ``None.strip()`` in
@@ -946,6 +972,8 @@ def poi_to_detection(
     poi: PointOfInterest,
     transcription: TranscriptionResult,
     detection_id: int | None = None,
+    *,
+    categories: tuple[str, ...] = POI_CATEGORIES,
 ) -> Any:
     """
     Convert a PointOfInterest to a Detection object for compatibility.
@@ -999,8 +1027,8 @@ def poi_to_detection(
     # Preserve the POI category. Detection.category is a plain str, so there is
     # no need to collapse performance/accessibility/other to 'ui'; doing so
     # falsified the VLM prompt hint and the report category (BH44). Narrow only
-    # to the validated POI vocabulary for safety.
-    category = poi.category if poi.category in POI_CATEGORIES else "other"
+    # to the active POI vocabulary (default six, or the preset's) for safety.
+    category = poi.category if poi.category in categories else "other"
 
     return Detection(
         segment=segment,
@@ -1011,7 +1039,10 @@ def poi_to_detection(
 
 
 def pois_to_detections(
-    pois: list[PointOfInterest], transcription: TranscriptionResult
+    pois: list[PointOfInterest],
+    transcription: TranscriptionResult,
+    *,
+    categories: tuple[str, ...] = POI_CATEGORIES,
 ) -> list[Any]:
     """Convert list of POIs to Detection objects with unique deterministic ids.
 
@@ -1025,6 +1056,9 @@ def pois_to_detections(
     Resolution: prefer the real first segment id when free, otherwise assign the
     deterministic synthetic fallback ``_SYNTHETIC_POI_ID_BASE + index`` (well above any
     plausible real id and unique per position). The same input yields the same ids.
+
+    ``categories`` is the active category vocabulary used to narrow POI
+    categories onto detections (default six, or the selected preset's).
     """
     detections = []
     used_ids: set[int] = set()
@@ -1037,5 +1071,7 @@ def pois_to_detections(
             while preferred in used_ids:  # defensive: keep the fallback unique too
                 preferred += 1
         used_ids.add(preferred)
-        detections.append(poi_to_detection(poi, transcription, detection_id=preferred))
+        detections.append(
+            poi_to_detection(poi, transcription, detection_id=preferred, categories=categories)
+        )
     return detections

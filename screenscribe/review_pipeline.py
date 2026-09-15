@@ -63,8 +63,10 @@ from .cli_paths import (
 from .config import ScreenScribeConfig
 from .detect import format_timestamp
 from .keywords import KeywordsConfig
+from .presets import Preset
 from .screenshots import extract_screenshots_for_detections
 from .semantic_filter import (
+    POI_CATEGORIES,
     SemanticFilterResult,
     deduplicate_pois,
     pois_to_detections,
@@ -216,6 +218,7 @@ def run_review(
     port: int,
     transcript_source: str = "auto",
     frame_interval: float = 5.0,
+    preset: "Preset | None" = None,
 ) -> None:
     """Run the per-video review pipeline for one or more videos.
 
@@ -226,12 +229,28 @@ def run_review(
     the audio source keeps the historical two-stage extract+STT path, while
     ``ocr`` skips audio extraction and builds the transcript from VLM-OCR'd
     frames taken every ``frame_interval`` seconds.
+
+    ``preset`` is the active analysis preset (``None`` = historical default).
+    Its categories become the detection vocabulary and, for non-default
+    presets, are recorded in the JSON report under a ``preset`` key.
     """
     # Break the cli<->review_pipeline cycle and keep the monkeypatch surface:
     # every patchable step below is called as cli.<name>.
     import screenscribe.cli as cli
 
     console = cli.console
+
+    # Active finding-category vocabulary (default six unless a preset with its
+    # own categories is running) and the report metadata for non-default
+    # presets. Default preset runs must stay bit-for-bit identical, so
+    # preset_meta is only emitted for non-default presets.
+    preset_categories: tuple[str, ...] | None = preset.categories if preset else None
+    active_categories: tuple[str, ...] = (
+        tuple(preset_categories) if preset_categories else POI_CATEGORIES
+    )
+    preset_meta: dict[str, Any] | None = None
+    if preset is not None and preset.name != "programming":
+        preset_meta = {"name": preset.name, "categories": list(preset.categories)}
 
     # Detection is ALWAYS the LLM semantic prefilter. Keywords are injected into
     # that prefilter prompt as vocabulary hints (see semantic_prefilter); there
@@ -721,6 +740,7 @@ def run_review(
                 config,
                 previous_response_id=stt_context,
                 keywords=keywords,
+                categories=preset_categories,
             )
 
             if filter_result.failed:
@@ -762,7 +782,7 @@ def run_review(
                 batch_context_response_id = filter_result.response_id
             if pois:
                 # Convert POIs to Detection objects for compatibility
-                detections = pois_to_detections(pois, transcription)
+                detections = pois_to_detections(pois, transcription, categories=active_categories)
                 console.print(
                     f"[green]Semantic pre-filter identified {len(detections)} findings[/]"
                 )
@@ -829,6 +849,7 @@ def run_review(
                 json_report=json_report,
                 markdown_report=markdown_report,
                 html_report=html_report,
+                preset_meta=preset_meta,
             )
 
             console.print()
@@ -860,9 +881,15 @@ def run_review(
         if dry_run:
             console.rule("[bold]Dry Run Results[/]")
             console.print(f"\n[green]Found {len(detections)} issues:[/]")
-            console.print(f"  • {sum(1 for d in detections if d.category == 'bug')} bugs")
-            console.print(f"  • {sum(1 for d in detections if d.category == 'change')} changes")
-            console.print(f"  • {sum(1 for d in detections if d.category == 'ui')} UI issues")
+            if tuple(active_categories) != POI_CATEGORIES:
+                # A preset with its own vocabulary: count per preset category.
+                for category in active_categories:
+                    count = sum(1 for d in detections if d.category == category)
+                    console.print(f"  • {count} {category}")
+            else:
+                console.print(f"  • {sum(1 for d in detections if d.category == 'bug')} bugs")
+                console.print(f"  • {sum(1 for d in detections if d.category == 'change')} changes")
+                console.print(f"  • {sum(1 for d in detections if d.category == 'ui')} UI issues")
 
             console.print("\n[bold]Sample detections:[/]")
             for i, d in enumerate(detections[:5], 1):
@@ -1231,6 +1258,7 @@ def run_review(
             json_report=json_report,
             markdown_report=markdown_report,
             html_report=html_report,
+            preset_meta=preset_meta,
         )
 
         # Show errors summary if any
