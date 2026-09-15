@@ -720,7 +720,10 @@ write to. The same panel is shown when every `_2` … `_99` version slot is
 already taken, and when `preprocess` cannot write a bundle file (for example
 the disk is full); files written before that error are left in place.
 `preprocess` reserves the output folder and checks that it is writable before
-extracting audio or transcribing, so these errors never cost a transcription.
+extracting audio or transcribing, so a folder that cannot be created, reserved
+or written, or running out of versions, stops before any STT call. A bundle
+write failure (for example a full disk) can only happen after transcription,
+so that transcription has already run when the error is reported.
 
 ### Issue detection failed
 

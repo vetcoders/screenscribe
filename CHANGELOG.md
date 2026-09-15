@@ -22,7 +22,9 @@
   write a bundle file (permission denied, disk full) also print an "Output
   Directory Error" instead of a traceback; partial files are left in place.
   The output folder is reserved and checked for writability before audio
-  extraction and transcription, so an unusable output never costs an STT call.
+  extraction and transcription, so folder creation, reservation, writability
+  and version-limit errors stop before any STT call; a bundle write failure
+  (e.g. disk full) is still reported after transcription has run.
 - **Fixed: `review --estimate` is read-only.** It prints the time table before
   any output-folder handling, so it no longer creates an empty output directory,
   shows the rerun prompt, or refuses a `--force` target.
