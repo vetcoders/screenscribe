@@ -4,6 +4,7 @@ import errno
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -677,3 +678,114 @@ def test_preprocess_audio_copy_failure_is_a_friendly_error(
     _assert_bundle_write_error(result, "No space left on device")
     assert base.is_dir()
     assert (base / "transcript.vtt").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Atomic slot reservation + writability probe, before any audio/STT work.     #
+# --------------------------------------------------------------------------- #
+
+
+def _forbid_audio_and_stt(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record extract/transcribe calls; the failure tests assert the list stays empty."""
+    calls: list[str] = []
+
+    def no_extract(_video: object) -> Path:
+        calls.append("extract_audio")
+        raise AssertionError("extract_audio must not run when the output is unusable")
+
+    def no_stt(*_a: object, **_k: object) -> TranscriptionResult:
+        calls.append("transcribe_audio")
+        raise AssertionError("transcription must not run when the output is unusable")
+
+    monkeypatch.setattr("screenscribe.cli.extract_audio", no_extract)
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", no_stt)
+    return calls
+
+
+def test_preprocess_slot_taken_after_allocation_is_reselected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``_2`` turns into a foreign file between allocation and use -> bundle in ``_3``."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    assert _run_preprocess(runner, video_path, None).exit_code == 0
+    slot_2 = tmp_path / "demo_preprocess_2"
+    foreign = b"appeared during the race"
+
+    import screenscribe.cli as cli_module
+
+    real_allocator = cli_module._find_next_versioned_path
+    raced: list[Path] = []
+
+    def racing_allocator(base: Path, **kwargs: Any) -> tuple[Path, int | None]:
+        path, version = real_allocator(base, **kwargs)
+        if not raced and path == slot_2:
+            slot_2.write_bytes(foreign)  # someone grabs the slot right after allocation
+            raced.append(path)
+        return path, version
+
+    monkeypatch.setattr("screenscribe.cli._find_next_versioned_path", racing_allocator)
+
+    result = _run_preprocess(runner, video_path, None)
+
+    assert result.exit_code == 0, result.output
+    assert raced == [slot_2]
+    assert slot_2.read_bytes() == foreign
+    assert _manifest_mode(tmp_path / "demo_preprocess_3") == "preprocess"
+
+
+def test_preprocess_force_on_unwritable_own_bundle_fails_before_stt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``--force`` on our own bundle that fails the write probe -> exit 1, no STT."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    base = tmp_path / "demo_preprocess"
+    assert _run_preprocess(runner, video_path, None).exit_code == 0
+    before = _snapshot(base)
+    calls = _forbid_audio_and_stt(monkeypatch)
+
+    def denied(*_a: object, **_k: object) -> object:
+        raise PermissionError(errno.EACCES, "Permission denied", str(base))
+
+    monkeypatch.setattr("screenscribe.cli_paths.tempfile.NamedTemporaryFile", denied)
+
+    result = _run_preprocess(runner, video_path, None, "--force")
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert "Traceback" not in result.output
+    assert "Output Directory Error" in normalized
+    assert "exists but cannot be written" in normalized
+    assert "permission denied" in normalized
+    assert calls == []
+    assert _snapshot(base) == before
+
+
+def test_preprocess_new_output_under_unwritable_parent_fails_before_stt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``-o`` naming a new folder whose parent cannot be written -> panel, no STT."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    calls = _forbid_audio_and_stt(monkeypatch)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    target = locked / "new-bundle"
+    real_mkdir = Path.mkdir
+
+    def guarded_mkdir(self: Path, *args: Any, **kwargs: Any) -> None:
+        if self == target or locked in self.parents:
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", guarded_mkdir)
+
+    result = _run_preprocess(runner, video_path, target)
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert "Traceback" not in result.output
+    assert "Output Directory Error" in normalized
+    assert "permission denied" in normalized
+    assert calls == []
+    assert list(locked.iterdir()) == []

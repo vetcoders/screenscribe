@@ -21,6 +21,8 @@
   a screenscribe preprocess bundle. Running out of versions and failing to
   write a bundle file (permission denied, disk full) also print an "Output
   Directory Error" instead of a traceback; partial files are left in place.
+  The output folder is reserved and checked for writability before audio
+  extraction and transcription, so an unusable output never costs an STT call.
 - **Fixed: `review --estimate` is read-only.** It prints the time table before
   any output-folder handling, so it no longer creates an empty output directory,
   shows the rerun prompt, or refuses a `--force` target.

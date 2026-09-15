@@ -716,6 +716,8 @@ reason, and exit with code 1 — no traceback. Pass `-o` with a folder you can
 write to. The same panel is shown when every `_2` … `_99` version slot is
 already taken, and when `preprocess` cannot write a bundle file (for example
 the disk is full); files written before that error are left in place.
+`preprocess` reserves the output folder and checks that it is writable before
+extracting audio or transcribing, so these errors never cost a transcription.
 
 ### Issue detection failed
 
