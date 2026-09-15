@@ -70,6 +70,7 @@ def save_enhanced_json_report(
     errors: list[dict[str, str]] | None = None,
     transcript: str = "",
     transcript_segments: list[Segment] | None = None,
+    preset_meta: dict[str, Any] | None = None,
 ) -> Path:
     """Save enhanced report with unified VLM analysis as JSON.
 
@@ -81,6 +82,9 @@ def save_enhanced_json_report(
         unified_findings: List of UnifiedFinding from unified VLM analysis
         executive_summary: Executive summary text
         errors: List of pipeline errors
+        preset_meta: Optional ``{"name": ..., "categories": [...]}`` for a
+            non-default analysis preset; recorded under a top-level
+            ``preset`` key. ``None`` keeps the historical report shape.
 
     Returns:
         Path to saved report
@@ -111,6 +115,8 @@ def save_enhanced_json_report(
         "errors": errors or [],
         "findings": [],
     }
+    if preset_meta:
+        report["preset"] = preset_meta
 
     # Build severity breakdown from unified findings
     if unified_findings:

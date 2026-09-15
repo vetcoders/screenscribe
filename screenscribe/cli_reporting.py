@@ -37,6 +37,7 @@ def _write_report_artifacts(
     json_report: bool,
     markdown_report: bool,
     html_report: bool,
+    preset_meta: dict[str, Any] | None = None,
 ) -> None:
     """Emit the JSON/Markdown/HTML report trio for one video.
 
@@ -45,6 +46,10 @@ def _write_report_artifacts(
     ``executive_summary``) and the main success path. Both callers route
     through this single site so output-format flags stay in lockstep
     regardless of how many findings landed.
+
+    ``preset_meta`` (``{"name": ..., "categories": [...]}`` for a non-default
+    preset) is recorded in the JSON report; ``None`` keeps the historical
+    report shape unchanged.
     """
     if json_report:
         save_enhanced_json_report(
@@ -57,6 +62,7 @@ def _write_report_artifacts(
             errors=errors,
             transcript=transcript,
             transcript_segments=transcript_segments,
+            preset_meta=preset_meta,
         )
 
     if markdown_report:

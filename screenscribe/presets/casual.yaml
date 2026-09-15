@@ -1,0 +1,107 @@
+# screenscribe preset: casual
+#
+# Informal product feedback: teammates or founders narrating what feels off,
+# in everyday language (Polish and English slang included). Same finding
+# categories as programming, with a relaxed dictionary and prompt focus.
+
+categories:
+  - bug
+  - change
+  - ui
+  - performance
+  - accessibility
+  - other
+
+prompt: |-
+  DOMAIN FOCUS - casual product feedback. The viewer is a teammate or founder
+  reacting to the product in everyday, informal language (slang, shortcuts,
+  mixed Polish/English). A finding counts as anything the narrator reacts to:
+  something broken, annoying, ugly, slow, confusing, or wished-for. Casual
+  phrasing ("to nie bangla", "sie wysypalo", "wtf", "would be nice") still
+  signals real findings - judge the intent, not the formality.
+
+keywords:
+  bug:
+    # Polish
+    - "to nie bangla"
+    - "sie wysypalo"
+    - "sie wywalilo"
+    - "kaput"
+    - "nie klika"
+    - "nie działa"
+    - "coś nie halo"
+    - "zepsute"
+    # English
+    - "crash"
+    - "wtf"
+    - "broken"
+    - "doesn't work"
+    - "weird"
+    - "glitch"
+
+  change:
+    # Polish
+    - "zmienmy"
+    - "lepiej by było"
+    - "lepiej by bylo"
+    - "można by"
+    - "mozna by"
+    - "fajnie by było"
+    - "fajnie by bylo"
+    - "wywalmy"
+    # English
+    - "would be nice"
+    - "let's change"
+    - "can we"
+    - "should we"
+    - "get rid of"
+
+  ui:
+    # Polish
+    - "brzydkie"
+    - "przeskakuje"
+    - "rozjeżdża się"
+    - "rozjezdza sie"
+    - "za dużo tego"
+    - "za duzo tego"
+    # English
+    - "ugly"
+    - "jumpy"
+    - "misaligned"
+    - "cluttered"
+    - "looks off"
+
+  performance:
+    # Polish
+    - "wolniutko"
+    - "zamula"
+    - "tnie"
+    - "wlecze się"
+    - "wlecze sie"
+    # English
+    - "sluggish"
+    - "laggy"
+    - "choppy"
+    - "takes ages"
+
+  accessibility:
+    # Polish
+    - "nic nie widać"
+    - "nic nie widac"
+    - "za małe literki"
+    - "za male literki"
+    - "nie da się przeczytać"
+    - "nie da sie przeczytac"
+    # English
+    - "can't read"
+    - "tiny text"
+    - "illegible"
+
+  other:
+    # Polish
+    - "hmm"
+    - "dziwne"
+    - "nie wiem"
+    # English
+    - "weird"
+    - "not sure"

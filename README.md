@@ -286,6 +286,9 @@ report and opens the HTML report in your browser. Key options:
   semantic LLM detection still runs.
 - `--keywords-file` — per-run keywords file. Keywords are always-on AI hints
   (see [Keywords](#screenscribe-keywords) below); an empty or missing file is safe.
+- `--preset` — switch the whole analysis profile (keyword dictionary, finding
+  categories, prompt focus): `programming` (default), `casual`, `medical`,
+  `veterinary`, or `custom` (requires `--keywords-file`).
 - `--resume` / `--force` — resume from a checkpoint, or overwrite a prior screenscribe
   review (never a folder screenscribe does not own).
 

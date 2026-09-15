@@ -1,0 +1,107 @@
+# screenscribe preset: medical
+#
+# Recordings of medical consultations, procedures, and clinical information
+# systems. Findings are clinical: observations, symptoms, abnormal results,
+# risks, and follow-up actions - not software bugs. Own categories and a
+# Polish+English clinical dictionary.
+
+categories:
+  - finding
+  - observation
+  - risk
+  - followup
+  - other
+
+prompt: |-
+  DOMAIN FOCUS - medicine. The viewer is a physician or clinician reviewing a
+  recording of a consultation, procedure, or clinical information system.
+  A finding counts as: a clinical symptom or abnormal result (finding),
+  a neutral clinical note (observation), a risk, contraindication, or
+  interaction (risk), or a follow-up action such as a control visit, ordered
+  test, or referral (followup). Use ONLY the finding categories: finding,
+  observation, risk, followup, other. The narration is the primary evidence;
+  on-screen clinical data (labs, imaging, charts) is context - do not invent
+  findings from the screenshot alone.
+
+keywords:
+  finding:
+    # Polish
+    - "objaw"
+    - "wynik"
+    - "stwierdzam"
+    - "widzę na obrazie"
+    - "widze na obrazie"
+    - "nieprawidłowy"
+    - "nieprawidlowy"
+    - "patologia"
+    - "zmiana"
+    - "bolesność"
+    - "bolesnosc"
+    - "skarży się"
+    - "skarzy sie"
+    - "rozpoznanie"
+    # English
+    - "finding"
+    - "presents with"
+    - "abnormal"
+    - "lesion"
+    - "symptom"
+    - "diagnosis"
+    - "positive for"
+
+  observation:
+    # Polish
+    - "obserwacja"
+    - "w wywiadzie"
+    - "pacjent zgłasza"
+    - "pacjent zglasza"
+    - "bez zmian"
+    - "w normie"
+    - "bez cech"
+    # English
+    - "observation"
+    - "patient reports"
+    - "unchanged"
+    - "within normal limits"
+    - "noted"
+
+  risk:
+    # Polish
+    - "ryzyko"
+    - "powikłanie"
+    - "powiklanie"
+    - "uwaga na"
+    - "przeciwwskazanie"
+    - "interakcja"
+    - "ostrożnie"
+    - "ostroznie"
+    # English
+    - "risk"
+    - "complication"
+    - "contraindication"
+    - "interaction"
+    - "watch for"
+
+  followup:
+    # Polish
+    - "kontrola"
+    - "za tydzień"
+    - "za tydzien"
+    - "zlecam"
+    - "badanie kontrolne"
+    - "wizyta kontrolna"
+    - "skierowanie"
+    # English
+    - "follow-up"
+    - "recheck"
+    - "order a test"
+    - "review in"
+    - "referral"
+
+  other:
+    # Polish
+    - "hmm"
+    - "nie wiem"
+    # English
+    - "not sure"
+    - "unclear"

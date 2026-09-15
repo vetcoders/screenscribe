@@ -1,0 +1,110 @@
+# screenscribe preset: veterinary
+#
+# Recordings of veterinary consultations, procedures, and clinic systems
+# (e.g. Vista). Findings are clinical observations about animal patients:
+# symptoms, exam findings, risks, and follow-up actions. Own categories and a
+# Polish+English veterinary dictionary.
+
+categories:
+  - finding
+  - observation
+  - risk
+  - followup
+  - other
+
+prompt: |-
+  DOMAIN FOCUS - veterinary medicine. The viewer is a veterinarian reviewing
+  a recording of an animal consultation, procedure, or a clinical information
+  system (e.g. Vista). A finding counts as: a clinical symptom or abnormal
+  exam/diagnostic result in the animal patient (finding), a neutral note or
+  history item often reported by the owner (observation), a risk,
+  contraindication, or toxicity concern (risk), or a follow-up action such as
+  a recheck, vaccination, deworming, or ordered test (followup). Use ONLY the
+  finding categories: finding, observation, risk, followup, other. The
+  narration is the primary evidence; on-screen clinical data is context - do
+  not invent findings from the screenshot alone.
+
+keywords:
+  finding:
+    # Polish
+    - "objaw"
+    - "u psa"
+    - "u kota"
+    - "widzę na usg"
+    - "widze na usg"
+    - "nieprawidłowy"
+    - "nieprawidlowy"
+    - "zmiana skórna"
+    - "zmiana skorna"
+    - "kulawizna"
+    - "wymiotuje"
+    - "biegunka"
+    - "gorączka"
+    - "goraczka"
+    # English
+    - "finding"
+    - "presents with"
+    - "abnormal"
+    - "lesion"
+    - "lame"
+    - "vomiting"
+    - "diarrhea"
+    - "positive for"
+
+  observation:
+    # Polish
+    - "w wywiadzie"
+    - "właściciel zgłasza"
+    - "wlasciciel zglasza"
+    - "apetyt bez zmian"
+    - "w normie"
+    - "czynny"
+    - "pije normalnie"
+    # English
+    - "owner reports"
+    - "BAR"
+    - "eating normally"
+    - "within normal limits"
+    - "noted"
+
+  risk:
+    # Polish
+    - "ryzyko"
+    - "powikłanie"
+    - "powiklanie"
+    - "uwaga na"
+    - "przeciwwskazanie"
+    - "toksyczność"
+    - "toksycznosc"
+    - "narkoza"
+    # English
+    - "risk"
+    - "complication"
+    - "contraindication"
+    - "toxicity"
+    - "anesthesia risk"
+    - "watch for"
+
+  followup:
+    # Polish
+    - "kontrola"
+    - "za tydzień"
+    - "za tydzien"
+    - "szczepienie"
+    - "badanie kontrolne"
+    - "odrobaczenie"
+    - "zlecam"
+    # English
+    - "follow-up"
+    - "recheck"
+    - "vaccination"
+    - "deworming"
+    - "review in"
+
+  other:
+    # Polish
+    - "hmm"
+    - "nie wiem"
+    # English
+    - "not sure"
+    - "unclear"

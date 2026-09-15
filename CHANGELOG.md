@@ -24,6 +24,19 @@
   and all analysis stages, OCR results are cached per frame content hash, and
   the rest of the pipeline (semantic pre-filter, screenshots, unified VLM
   analysis, reports, response chaining) works unchanged on OCR segments.
+- **Added: `review --preset` — analysis presets for new domains.** A preset
+  bundles the keyword dictionary, the finding categories, and a prompt
+  fragment (who the viewer is, what counts as a finding). Shipped presets:
+  `programming` (the default — bit-for-bit the historical behavior), `casual`
+  (informal product feedback), `medical`, and `veterinary` (clinical
+  consultations, procedures, and clinic systems such as Vista, with
+  `finding/observation/risk/followup/other` categories and Polish+English
+  dictionaries). `--preset custom` builds the profile from your own
+  `--keywords-file` (its top-level keys become the categories) and fails with
+  instructions when the flag is missing. Keyword priority is now
+  `--keywords-file` > global file > preset dictionary > built-in default;
+  non-default presets record `preset` (name + categories) in the JSON report
+  and their category badges render in the HTML report.
 
 - **Internal: refresh runtime and development dependencies.** Updated the lockfile
   to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.

@@ -8,7 +8,8 @@ perform detection.
 Load priority:
 1. Explicit ``--keywords-file`` path (when provided).
 2. Global user file ``~/.config/screenscribe/keywords.yaml``.
-3. Built-in default (``default_keywords.yaml`` shipped with the package).
+3. Active preset dictionary (when a preset with inline keywords is selected).
+4. Built-in default (``default_keywords.yaml`` shipped with the package).
 
 There is intentionally NO current-working-directory auto-search: analysis
 must not depend on which directory the terminal sits in. Screenscribe
@@ -17,9 +18,13 @@ analyzes a video, not "the project in cwd".
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from .presets import Preset
 
 console = Console()
 
@@ -44,7 +49,14 @@ CATEGORIES: tuple[str, ...] = (
 
 @dataclass
 class KeywordsConfig:
-    """Keywords configuration: AI hints grouped by category."""
+    """Keywords configuration: AI hints grouped by category.
+
+    The six fixed fields hold the default (programming) categories. Presets
+    with their own category vocabulary store those categories in ``extra``
+    and record the full active category list in ``active_categories`` so
+    summaries and prompt hints iterate the preset's categories, not the
+    built-in six.
+    """
 
     bug: list[str] = field(default_factory=list)
     change: list[str] = field(default_factory=list)
@@ -52,41 +64,57 @@ class KeywordsConfig:
     performance: list[str] = field(default_factory=list)
     accessibility: list[str] = field(default_factory=list)
     other: list[str] = field(default_factory=list)
+    extra: dict[str, list[str]] = field(default_factory=dict)
+    active_categories: tuple[str, ...] = CATEGORIES
 
     @classmethod
-    def load(cls, keywords_file: Path | None = None) -> "KeywordsConfig":
+    def load(
+        cls, keywords_file: Path | None = None, *, preset: "Preset | None" = None
+    ) -> "KeywordsConfig":
         """Load keywords configuration following the locked load priority.
 
         Priority:
         1. Explicit ``keywords_file`` parameter (when it exists).
         2. Global user file (``~/.config/screenscribe/keywords.yaml``).
-        3. Built-in default file shipped with the package.
+        3. Active preset dictionary (when the preset carries inline keywords).
+        4. Built-in default file shipped with the package.
 
         There is no current-working-directory search.
 
         Args:
             keywords_file: Optional explicit path to a keywords file.
+            preset: Optional active analysis preset. Its categories become the
+                active category set (including non-default ones) and its inline
+                dictionary is the new third priority level.
 
         Returns:
             A :class:`KeywordsConfig`. Never raises; on any problem it warns
             and falls back to the built-in default.
         """
+        categories = preset.categories if preset is not None else CATEGORIES
+
         # 1. Explicit file.
         if keywords_file is not None:
             if keywords_file.exists():
-                return cls._load_from_file(keywords_file)
+                return cls._load_from_file(keywords_file, categories)
             console.print(f"[yellow]Keywords file not found: {keywords_file}[/]")
             console.print("[dim]Falling back to defaults[/]")
 
         # 2. Global user file.
         if GLOBAL_KEYWORDS_PATH.exists():
-            return cls._load_from_file(GLOBAL_KEYWORDS_PATH)
+            return cls._load_from_file(GLOBAL_KEYWORDS_PATH, categories)
 
-        # 3. Built-in default.
-        return cls._load_from_file(DEFAULT_KEYWORDS_PATH)
+        # 3. Active preset dictionary (only when the preset defines one).
+        if preset is not None and preset.keywords:
+            return cls._from_mapping(preset.keywords, categories)
+
+        # 4. Built-in default.
+        return cls._load_from_file(DEFAULT_KEYWORDS_PATH, categories)
 
     @classmethod
-    def _load_from_file(cls, path: Path) -> "KeywordsConfig":
+    def _load_from_file(
+        cls, path: Path, categories: tuple[str, ...] = CATEGORIES
+    ) -> "KeywordsConfig":
         """Load keywords from a YAML file, safely.
 
         Missing / empty / malformed input never raises: it warns and falls
@@ -100,46 +128,67 @@ class KeywordsConfig:
             # Empty file (``yaml.safe_load`` returns ``None``) is a no-op: an
             # empty dictionary is a valid, safe configuration.
             if data is None:
-                return cls()
+                return cls(active_categories=tuple(categories))
 
             if not isinstance(data, dict):
                 console.print(f"[yellow]Invalid keywords file format: {path}[/]")
-                return cls._load_defaults(path)
+                return cls._load_defaults(path, categories)
 
-            return cls(**{category: _as_phrase_list(data.get(category)) for category in CATEGORIES})
+            return cls._from_mapping(data, categories)
 
         except yaml.YAMLError as e:
             console.print(f"[yellow]Error parsing keywords file: {e}[/]")
-            return cls._load_defaults(path)
+            return cls._load_defaults(path, categories)
         except OSError as e:
             console.print(f"[yellow]Error reading keywords file: {e}[/]")
-            return cls._load_defaults(path)
+            return cls._load_defaults(path, categories)
 
     @classmethod
-    def _load_defaults(cls, failed_path: Path | None = None) -> "KeywordsConfig":
+    def _from_mapping(
+        cls, data: dict[object, object], categories: tuple[str, ...]
+    ) -> "KeywordsConfig":
+        """Build a config from a parsed mapping for the active category set.
+
+        Default categories land in the fixed fields; preset-specific
+        categories land in ``extra``.
+        """
+        fixed = {category: _as_phrase_list(data.get(category)) for category in CATEGORIES}
+        extra = {
+            category: _as_phrase_list(data.get(category))
+            for category in categories
+            if category not in CATEGORIES
+        }
+        return cls(**fixed, extra=extra, active_categories=tuple(categories))
+
+    @classmethod
+    def _load_defaults(
+        cls, failed_path: Path | None = None, categories: tuple[str, ...] = CATEGORIES
+    ) -> "KeywordsConfig":
         """Fall back to the built-in default keywords.
 
         If the failure happened while loading the built-in default itself,
         return an empty (safe) config instead of recursing.
         """
         if failed_path is not None and failed_path == DEFAULT_KEYWORDS_PATH:
-            return cls()
-        return cls._load_from_file(DEFAULT_KEYWORDS_PATH)
+            return cls(active_categories=tuple(categories))
+        return cls._load_from_file(DEFAULT_KEYWORDS_PATH, categories)
 
     def get_keywords(self, category: str) -> list[str]:
         """Get keywords for a specific category, or ``[]`` for an unknown one."""
         if category in CATEGORIES:
             return getattr(self, category)  # type: ignore[no-any-return]
-        return []
+        return self.extra.get(category, [])
 
     @property
     def total_keywords(self) -> int:
-        """Total number of keywords across all categories."""
-        return sum(len(self.get_keywords(category)) for category in CATEGORIES)
+        """Total number of keywords across all active categories."""
+        return sum(len(self.get_keywords(category)) for category in self.active_categories)
 
     def summary(self) -> str:
         """Return a human-readable summary of loaded keywords."""
-        parts = [f"{len(self.get_keywords(category))} {category}" for category in CATEGORIES]
+        parts = [
+            f"{len(self.get_keywords(category))} {category}" for category in self.active_categories
+        ]
         return "Keywords: " + ", ".join(parts)
 
 
@@ -167,7 +216,7 @@ def format_keywords_hint(config: KeywordsConfig) -> str:
     it unconditionally and it is a no-op when empty.
     """
     lines = []
-    for category in CATEGORIES:
+    for category in config.active_categories:
         phrases = config.get_keywords(category)
         if phrases:
             joined = ", ".join(f'"{phrase}"' for phrase in phrases)
