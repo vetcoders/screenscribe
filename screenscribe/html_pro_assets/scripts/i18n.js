@@ -171,7 +171,16 @@ window.I18N_BUNDLE = {
             "category_performance": "Performance",
             "category_accessibility": "Accessibility",
             "category_other": "Other",
-            "category_unknown": "Unknown"
+            "category_unknown": "Unknown",
+            "agentTitle": "screenscribe agent",
+            "agentToggle": "Open chat",
+            "agentCollapse": "Collapse chat",
+            "agentPlaceholder": "Ask about this recording…",
+            "agentSend": "Send",
+            "agentOffline": "Run `screenscribe serve` to chat about this report.",
+            "agentEmpty": "Ask anything about this recording.",
+            "agentLogo": "s",
+            "agentStreaming": "Thinking…"
         },
         "analyze": {
             "tab_capture": "Mark",
@@ -430,7 +439,16 @@ window.I18N_BUNDLE = {
             "category_performance": "Wydajność",
             "category_accessibility": "Dostępność",
             "category_other": "Inne",
-            "category_unknown": "Nieznane"
+            "category_unknown": "Nieznane",
+            "agentTitle": "agent screenscribe",
+            "agentToggle": "Otwórz czat",
+            "agentCollapse": "Zwiń czat",
+            "agentPlaceholder": "Pytaj o to nagranie…",
+            "agentSend": "Wyślij",
+            "agentOffline": "Uruchom `screenscribe serve`, aby porozmawiać o tym raporcie.",
+            "agentEmpty": "Zapytaj o to nagranie.",
+            "agentLogo": "s",
+            "agentStreaming": "Myślę…"
         },
         "analyze": {
             "tab_capture": "Oznaczanie",

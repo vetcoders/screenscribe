@@ -14,10 +14,12 @@ from typing import Any
 from ..html_pro.assets import (
     load_asset,
     load_css,
+    load_css_agent_panel,
     load_css_analyze_dashboard,
     load_css_screenscribe_theme,
     load_css_screenscribe_theme_polish,
     load_favicon_data_uri,
+    load_js_agent_panel,
     load_js_analyze_dashboard,
     load_js_i18n_runtime,
     load_js_jszip,
@@ -175,6 +177,7 @@ _SERVER_I18N: dict[str, dict[str, dict[str, str]]] = {
 }
 _STYLE_LOADERS: Mapping[str, Callable[[], str]] = {
     "analyze_dashboard": load_css_analyze_dashboard,
+    "agent_panel": load_css_agent_panel,
 }
 _SCRIPT_LOADERS: Mapping[str, Callable[[], str]] = {
     "i18n": load_js_i18n_runtime,
@@ -185,6 +188,7 @@ _SCRIPT_LOADERS: Mapping[str, Callable[[], str]] = {
     "analyze_dashboard": load_js_analyze_dashboard,
     "video_player": load_js_video_player,
     "review_app": load_js_review_app,
+    "agent_panel": load_js_agent_panel,
 }
 
 
