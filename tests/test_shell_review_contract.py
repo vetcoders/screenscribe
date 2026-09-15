@@ -183,6 +183,7 @@ def test_review_shell_dom_contract() -> None:
             "attachTabKeyboard",
             "class ScreenScribePlayer",
             "class ReviewVoiceRecorder",
+            "ScreenScribeAgentPanel",
         ],
     )
 
