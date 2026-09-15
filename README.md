@@ -332,6 +332,8 @@ Output bundle: `transcript.txt`, `transcript.timestamped.txt`,
 (by default) the extracted `audio.mp3`. It goes to `<video>_preprocess` next to
 the video; `-o` names the bundle directory, and an existing folder that is not a
 previous preprocess bundle is used as a parent (`<folder>/<video>_preprocess`).
+Existing files or folders that are not screenscribe bundles are never written
+into: they are skipped for the next free `_2`, `_3`, …, and `--force` refuses them.
 
 ### `screenscribe config`
 

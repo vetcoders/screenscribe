@@ -232,11 +232,11 @@ uv run screenscribe preprocess VIDEO [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--output`, `-o` | `<video>_preprocess` next to the video | Where the bundle is written. A path that does not exist yet becomes the bundle directory. An existing folder that is **not** a previous preprocess bundle (e.g. `~/Downloads`) is used as a parent: the bundle goes to `<folder>/<video>_preprocess`, and re-runs create `<video>_preprocess_2`, … inside that folder. An existing previous bundle directory is versioned next to itself (`_2`, `_3`, …). |
+| `--output`, `-o` | `<video>_preprocess` next to the video | Where the bundle is written. A path that does not exist yet becomes the bundle directory. An existing folder that is **not** a previous preprocess bundle (e.g. `~/Downloads`) is used as a parent: the bundle goes to `<folder>/<video>_preprocess`, and re-runs create `<video>_preprocess_2`, … inside that folder. An existing previous bundle directory is versioned next to itself (`_2`, `_3`, …). An existing file named by `-o` is an error. |
 | `--lang`, `-l` | `en` | Language code for transcription. |
 | `--local` | off | Use a local STT server. |
 | `--audio` / `--no-audio` | on | Include the extracted `audio.mp3` in the bundle. |
-| `--force` | off | Reuse the output directory even if a preprocess bundle already exists (otherwise a new `_2`, `_3`, … version is created). |
+| `--force` | off | Overwrite a previous preprocess bundle in place instead of creating a new `_2`, `_3`, … version. Only a screenscribe preprocess bundle (or a missing/empty folder) can be overwritten; if the target is a file or a non-empty folder screenscribe does not own, `preprocess` stops with an error and changes nothing. |
 
 **Examples**
 
@@ -261,9 +261,12 @@ is screenscribe's own manifest (a JSON object with `"mode": "preprocess"` and an
 `artifacts` object). A stray `transcript.txt` or another tool's
 `preprocess.json` never does, so `preprocess demo.mov -o ~/Downloads` writes
 `~/Downloads/demo_preprocess` instead of versioning `~/Downloads` itself.
-That rule only decides whether the base directory is versioned; a new version
-goes to the first `_2`, `_3`, … slot that does not exist or is an empty folder,
-so an existing non-empty `_N` (bundle or not) is never written into.
+The bundle directory itself (`<video>_preprocess`, or the `-o` path) is used
+when it does not exist or is empty. A previous bundle there is kept and a new
+version is created; a file or non-empty folder there that is not a preprocess
+bundle is skipped the same way (never written into). A new version goes to the
+first `_2`, `_3`, … slot that does not exist or is an empty folder, so an
+existing non-empty `_N` (bundle or not) is never written into either.
 
 ---
 
@@ -650,7 +653,7 @@ uv run screenscribe preprocess demo.mov
 
 Hand the resulting `transcript.txt` / `transcript.segments.json` /
 `preprocess.json` to a downstream model or agent. Use `--no-audio` to keep the
-bundle text-only, and `--force` to reuse a directory in place.
+bundle text-only, and `--force` to overwrite a previous bundle in place.
 
 ---
 

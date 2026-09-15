@@ -49,6 +49,7 @@ from .cli_estimate import (
     _show_estimate as _show_estimate,
 )
 from .cli_messages import (
+    _build_force_foreign_message,
     _build_output_dir_error_message,
 )
 from .cli_messages import (
@@ -75,7 +76,7 @@ from .cli_paths import (
 from .cli_paths import (
     _find_next_versioned_path as _find_next_versioned_path,
 )
-from .cli_paths import _is_dir, is_preprocess_bundle
+from .cli_paths import _is_dir, classify_output_slot, is_preprocess_bundle
 from .cli_reporting import (
     _print_report_artifact_paths as _print_report_artifact_paths,
 )
@@ -1051,7 +1052,10 @@ def preprocess(
         bool,
         typer.Option(
             "--force",
-            help="Reuse output directory even if preprocess artifacts already exist",
+            help=(
+                "Overwrite a previous screenscribe preprocess bundle in place instead of "
+                "versioning (never a file or folder screenscribe does not own)"
+            ),
         ),
     ] = False,
 ) -> None:
@@ -1101,7 +1105,22 @@ def preprocess(
                 ),
             )
         base_output = output
+    # A preprocess bundle's ownership marker IS its completed bundle (its own
+    # preprocess.json), so there is no "own_partial" state for preprocess.
+    base_state = classify_output_slot(
+        base_output,
+        owns_dir=is_preprocess_bundle,
+        has_completed_bundle=is_preprocess_bundle,
+    )
     if force:
+        # --force may overwrite only a free slot or screenscribe's own bundle. A
+        # foreign file/folder fails closed BEFORE anything is created or written.
+        if base_state == "foreign":
+            from .review_pipeline import _exit_output_dir_error
+
+            _exit_output_dir_error(
+                console, _build_force_foreign_message(base_output, "preprocess bundle")
+            )
         output_dir = base_output
     else:
         output_dir, version = _find_next_versioned_path(
@@ -1109,7 +1128,13 @@ def preprocess(
             owns_dir=is_preprocess_bundle,
             has_completed_bundle=is_preprocess_bundle,
         )
-        if version:
+        if version and base_state == "foreign":
+            # Someone else's file/folder sits at the base: not a previous bundle.
+            console.print(
+                f"[yellow]{escape(base_output.name)} exists and is not a screenscribe "
+                f"preprocess bundle; writing to {escape(output_dir.name)} instead.[/]"
+            )
+        elif version:
             console.print(
                 Panel(
                     f"[yellow]Found previous preprocess bundle at:[/] {base_output.name}\n"

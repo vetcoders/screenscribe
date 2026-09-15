@@ -15,6 +15,10 @@
   a previous bundle (a stray `transcript.txt` no longer does); any other existing
   folder is used as a parent (`<folder>/<video>_preprocess`), and an output
   directory that cannot be created shows the same "Output Directory Error".
+  Like `review`, a file or non-empty non-bundle folder at `<video>_preprocess`
+  is skipped for the next free version, `-o` naming an existing file is an
+  error, and `--force` refuses (exit 1, nothing changed) a target that is not
+  a screenscribe preprocess bundle.
 - **Fixed: `review --estimate` no longer creates an empty output directory.**
 - **Fixed: an output directory that cannot be created is a clear error.**
   Permission denied, read-only volumes and file-in-the-way paths now print an

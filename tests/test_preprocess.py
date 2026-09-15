@@ -389,6 +389,8 @@ def test_preprocess_output_is_an_existing_file_exits_with_friendly_error(
 
     result = _run_preprocess(runner, video_path, target)
     _assert_friendly_preprocess_output_error(result, "a file (not a folder) already exists")
+    assert target.read_bytes() == b"i am a file"
+    assert not (tmp_path / "taken_2").exists()
 
 
 def test_preprocess_output_permission_denied_exits_with_friendly_error(
@@ -436,3 +438,159 @@ def test_preprocess_version_slot_skips_ordinary_non_empty_folder(
     assert (slot_2 / "transcript.txt").read_bytes() == foreign_transcript
     assert (slot_2 / "preprocess.json").read_bytes() == foreign_manifest
     assert sorted(p.name for p in slot_2.iterdir()) == ["preprocess.json", "transcript.txt"]
+
+
+# --------------------------------------------------------------------------- #
+# Output slot ownership: foreign base slots are skipped, --force fails closed. #
+# --------------------------------------------------------------------------- #
+
+
+def _snapshot(root: Path) -> dict[str, bytes | None]:
+    """Every entry under ``root`` (and ``root`` itself) -> bytes, or None for dirs."""
+    entries = [root, *root.rglob("*")] if root.is_dir() else [root]
+    return {
+        str(entry.relative_to(root.parent)): (None if entry.is_dir() else entry.read_bytes())
+        for entry in entries
+    }
+
+
+def _make_foreign_dir(path: Path) -> dict[str, bytes | None]:
+    path.mkdir(parents=True)
+    (path / "notes.txt").write_bytes(b"my own notes\n")
+    (path / "transcript.txt").write_bytes(b"someone else's transcript\n")
+    (path / "preprocess.json").write_bytes(b'{"tool": "something-else"}')
+    return _snapshot(path)
+
+
+def test_preprocess_parent_rule_skips_foreign_base_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``-o X`` with a foreign non-empty ``X/demo_preprocess`` -> ``X/demo_preprocess_2``."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    parent = tmp_path / "X"
+    base = parent / "demo_preprocess"
+    before = _make_foreign_dir(base)
+
+    result = _run_preprocess(runner, video_path, parent)
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 0, result.output
+    assert _manifest_mode(parent / "demo_preprocess_2") == "preprocess"
+    assert _snapshot(base) == before
+    assert "demo_preprocess exists and is not a screenscribe preprocess bundle" in normalized
+    assert "Found Previous Preprocess Bundle" not in normalized
+
+
+def test_preprocess_parent_rule_skips_foreign_base_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``-o X`` with a FILE at ``X/demo_preprocess`` -> ``X/demo_preprocess_2``."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    parent = tmp_path / "X"
+    parent.mkdir()
+    base = parent / "demo_preprocess"
+    base.write_bytes(b"a file named like the bundle")
+
+    result = _run_preprocess(runner, video_path, parent)
+
+    assert result.exit_code == 0, result.output
+    assert _manifest_mode(parent / "demo_preprocess_2") == "preprocess"
+    assert base.read_bytes() == b"a file named like the bundle"
+
+
+def test_preprocess_default_output_skips_foreign_base(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No ``-o`` with a foreign ``<video dir>/demo_preprocess`` -> ``demo_preprocess_2``."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    base = tmp_path / "demo_preprocess"
+    before = _make_foreign_dir(base)
+
+    result = _run_preprocess(runner, video_path, None)
+
+    assert result.exit_code == 0, result.output
+    assert _manifest_mode(tmp_path / "demo_preprocess_2") == "preprocess"
+    assert _snapshot(base) == before
+
+
+def test_preprocess_empty_base_dir_is_used(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """An empty ``demo_preprocess`` base directory is free and written in place."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    base = tmp_path / "demo_preprocess"
+    base.mkdir()
+
+    result = _run_preprocess(runner, video_path, None)
+
+    assert result.exit_code == 0, result.output
+    assert _manifest_mode(base) == "preprocess"
+    assert not (tmp_path / "demo_preprocess_2").exists()
+
+
+def _assert_force_refused(result: Result) -> None:
+    normalized = " ".join(result.output.split())
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert "Traceback" not in result.output
+    assert "Output Directory Error" in normalized
+    assert "is not a screenscribe preprocess bundle folder" in normalized
+    assert "--force only overwrites a previous screenscribe preprocess bundle" in normalized
+    assert "review" not in normalized
+
+
+def _forbid_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_a: object, **_k: object) -> None:
+        raise AssertionError("--force on a foreign target must stop before any work")
+
+    monkeypatch.setattr("screenscribe.cli.extract_audio", boom)
+    monkeypatch.setattr("screenscribe.cli.write_preprocess_bundle", boom)
+
+
+def test_preprocess_force_refuses_foreign_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``--force`` onto a foreign non-empty base folder fails closed, nothing changes."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    _forbid_pipeline(monkeypatch)
+    base = tmp_path / "demo_preprocess"
+    before = _make_foreign_dir(base)
+    tree_before = sorted(p.name for p in tmp_path.iterdir())
+
+    result = _run_preprocess(runner, video_path, None, "--force")
+
+    _assert_force_refused(result)
+    assert _snapshot(base) == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == tree_before
+
+
+def test_preprocess_force_refuses_foreign_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``--force`` with a FILE at ``X/demo_preprocess`` fails closed, nothing changes."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    _forbid_pipeline(monkeypatch)
+    parent = tmp_path / "X"
+    parent.mkdir()
+    base = parent / "demo_preprocess"
+    base.write_bytes(b"a file named like the bundle")
+
+    result = _run_preprocess(runner, video_path, parent, "--force")
+
+    _assert_force_refused(result)
+    assert base.read_bytes() == b"a file named like the bundle"
+    assert sorted(p.name for p in parent.iterdir()) == ["demo_preprocess"]
+
+
+def test_preprocess_force_overwrites_own_bundle_in_place(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``--force`` on screenscribe's own bundle rewrites it in place (no ``_2``)."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    base = tmp_path / "demo_preprocess"
+    assert _run_preprocess(runner, video_path, None).exit_code == 0
+    (base / "transcript.txt").write_text("stale")
+
+    result = _run_preprocess(runner, video_path, None, "--force")
+
+    assert result.exit_code == 0, result.output
+    assert (base / "transcript.txt").read_text() == _sample_transcription().text
+    assert not (tmp_path / "demo_preprocess_2").exists()

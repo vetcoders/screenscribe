@@ -97,11 +97,15 @@ def _build_output_dir_error_message(path: Path, exc: OSError) -> str:
     )
 
 
-def _build_force_foreign_message(path: Path) -> str:
-    """Why ``--force`` refuses a target screenscribe does not own."""
+def _build_force_foreign_message(path: Path, artifact: str = "review") -> str:
+    """Why ``--force`` refuses a target screenscribe does not own.
+
+    ``artifact`` names what the command owns (``"review"`` for ``review``,
+    ``"preprocess bundle"`` for ``preprocess``).
+    """
     return (
-        f"{escape(str(path))} already exists and is not a screenscribe review folder.\n\n"
-        "[bold]--force[/] only overwrites a previous screenscribe review, so it will "
+        f"{escape(str(path))} already exists and is not a screenscribe {artifact} folder.\n\n"
+        f"[bold]--force[/] only overwrites a previous screenscribe {artifact}, so it will "
         "not overwrite or clean this location. Pass [bold]-o[/] with a new folder."
     )
 
