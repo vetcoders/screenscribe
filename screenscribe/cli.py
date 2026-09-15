@@ -1029,7 +1029,8 @@ def preprocess(
             help=(
                 "Output directory for preprocess artifacts. An existing folder that "
                 "is not a previous preprocess bundle is used as a parent "
-                "(<folder>/<video>_preprocess)."
+                "(<folder>/<video>_preprocess); files or folders screenscribe does not "
+                "own are skipped for the next free _2, _3, ... and never written into."
             ),
         ),
     ] = None,
