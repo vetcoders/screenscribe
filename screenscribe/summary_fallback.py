@@ -2,10 +2,13 @@
 
 import httpx
 from rich.console import Console
+from rich.markup import escape
 
 from .api_utils import (
     build_llm_request_body,
     extract_llm_response_text,
+    extract_response_payload_error,
+    redact_error_message,
     retry_request,
 )
 from .config import ScreenScribeConfig
@@ -46,7 +49,12 @@ def generate_detection_executive_summary(
                         "Authorization": f"Bearer {config.get_llm_api_key()}",
                         "Content-Type": "application/json",
                     },
-                    json=build_llm_request_body(config.llm_model, prompt, config.llm_endpoint),
+                    json=build_llm_request_body(
+                        config.llm_model,
+                        prompt,
+                        config.llm_endpoint,
+                        reasoning_effort=config.get_llm_reasoning_effort(),
+                    ),
                 )
                 response.raise_for_status()
                 return response
@@ -58,8 +66,14 @@ def generate_detection_executive_summary(
         )
 
         result = response.json()
+        # status failed/incomplete in a 200 body: no summary rather than partial text.
+        response_error = extract_response_payload_error(result)
+        if response_error is not None:
+            raise response_error
         return extract_llm_response_text(result, config.llm_endpoint)
 
     except Exception as e:
-        console.print(f"[yellow]Transcript-only executive summary failed: {e}[/]")
+        console.print(
+            f"[yellow]Transcript-only executive summary failed: {escape(redact_error_message(e))}[/]"
+        )
         return ""

@@ -281,7 +281,8 @@ report and opens the HTML report in your browser. Key options:
   semantic LLM detection still runs.
 - `--keywords-file` — per-run keywords file. Keywords are always-on AI hints
   (see [Keywords](#screenscribe-keywords) below); an empty or missing file is safe.
-- `--resume` / `--force` — resume from a checkpoint, or overwrite a prior review.
+- `--resume` / `--force` — resume from a checkpoint, or overwrite a prior screenscribe
+  review (never a folder screenscribe does not own).
 
 See [USAGE.md](https://github.com/vetcoders/screenscribe/blob/main/USAGE.md#screenscribe-review) for every flag.
 
@@ -442,10 +443,14 @@ OpenAI or any compatible provider.
 export SCREENSCRIBE_STT_MODEL=whisper-1
 export SCREENSCRIBE_LLM_MODEL=gpt-4o          # provider-specific
 export SCREENSCRIBE_VISION_MODEL=gpt-4o       # provider-specific
+export SCREENSCRIBE_LLM_REASONING_EFFORT=medium  # minimal|low|medium|high for text-LLM calls
 ```
 
 Defaults: STT `whisper-1`, LLM and vision `programmer` (the LibraxisAI
 default — change these to your provider's model names, e.g. `gpt-4o`).
+All text-LLM Responses API calls (pre-filter, text-only analysis, summaries,
+merge) send reasoning effort `medium`; lower it to `low` if detection fails after the model
+reasons for a long time without answering.
 
 ### Processing options
 
@@ -483,7 +488,9 @@ screenscribe was built international-first, with Polish available as an opt-in:
 
 ## Output artifacts
 
-A `review` run writes, per video, into the output directory:
+A `review` run writes, per video, into its review directory (`<video>_review`
+next to the video by default; `-o` names it, and an existing folder that is not a
+previous review is used as a parent, giving `<folder>/<video>_review`):
 
 - `<video>_report.json` — machine-readable findings, transcript, and summary.
 - `<video>_report.md` — human- and agent-readable Markdown report.

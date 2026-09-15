@@ -217,3 +217,281 @@ def test_retry_after_seconds_none_for_non_finite(raw: str) -> None:
 def test_retry_after_seconds_still_parses_finite() -> None:
     """C6.4/A5 regression guard: finite values are unaffected by the guard."""
     assert retry_after_seconds(_http_429("7")) == 7.0
+
+
+# --- stream error events -----------------------------------------------------
+
+
+def test_extract_stream_error_event_shapes() -> None:
+    from screenscribe.api_utils import extract_stream_error_event
+
+    assert extract_stream_error_event({"type": "response.output_text.delta", "delta": "x"}) is None
+    assert extract_stream_error_event({"type": "response.completed", "response": {}}) is None
+
+    nested = extract_stream_error_event(
+        {"type": "error", "error": {"type": "server_error", "message": "boom"}}
+    )
+    assert nested is not None and nested.transient and "boom" in str(nested)
+
+    failed = extract_stream_error_event(
+        {"type": "response.failed", "response": {"error": {"code": "invalid_prompt"}}}
+    )
+    assert failed is not None and not failed.transient
+    assert "invalid_prompt" in str(failed)
+
+    completed_failed = extract_stream_error_event(
+        {"type": "response.completed", "response": {"status": "failed"}}
+    )
+    assert str(completed_failed) == "Streaming response completed with failed status."
+
+    incomplete = extract_stream_error_event(
+        {
+            "type": "response.incomplete",
+            "response": {"incomplete_details": {"reason": "content_filter"}},
+        }
+    )
+    assert incomplete is not None
+    assert incomplete.event_type == "response.incomplete"
+    assert "content_filter" in str(incomplete)
+
+    assert extract_stream_error_event({"type": "error", "error": "not a dict"}) is not None
+
+
+def test_retry_request_retries_only_transient_stream_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from screenscribe.api_utils import StreamEventError
+
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda _d: None)
+    calls = 0
+
+    def transient_then_ok() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise StreamEventError("overloaded", code="overloaded_error", transient=True)
+        return "ok"
+
+    assert retry_request(transient_then_ok) == "ok"
+    assert calls == 2
+
+    permanent_calls = 0
+
+    def permanent() -> str:
+        nonlocal permanent_calls
+        permanent_calls += 1
+        raise StreamEventError("bad prompt", code="invalid_prompt")
+
+    with pytest.raises(StreamEventError):
+        retry_request(permanent)
+    assert permanent_calls == 1
+
+
+def test_endpoint_host_hides_credentials() -> None:
+    from screenscribe.api_utils import endpoint_host
+
+    url = "https://user:secret@llm.example.com:8443/v1/responses?k=1"  # pragma: allowlist secret
+    assert endpoint_host(url) == "llm.example.com"
+    assert endpoint_host("") == "unknown host"
+
+
+# --- URL redaction for printed / logged error messages -----------------------
+
+_USERINFO_URL = "https://user:secret@api.example.com/v1/responses?key=abc&api-version=1"  # pragma: allowlist secret
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "https://user:secret@api.example.com/v1/responses",  # pragma: allowlist secret
+            "https://***@api.example.com/v1/responses",
+        ),
+        (
+            "https://api.example.com/v1/responses?key=abc&api-version=2024-01-01",
+            "https://api.example.com/v1/responses?key=***&api-version=***",
+        ),
+        ("https://api.example.com/v1/responses", "https://api.example.com/v1/responses"),
+        ("http://localhost:8443/v1/responses", "http://localhost:8443/v1/responses"),
+        ("https://api.example.com/v1/responses#frag", "https://api.example.com/v1/responses"),
+        ("https://api.example.com/v1?sk-token-only", "https://api.example.com/v1?***"),
+        ("not a url at all", "unknown host"),
+        ("https://api.example.com:99999/bad-port", "unknown host"),
+        ("", "unknown host"),
+    ],
+)
+def test_redact_url(url: str, expected: str) -> None:
+    from screenscribe.api_utils import redact_url
+
+    assert redact_url(url) == expected
+
+
+def _assert_url_secrets_absent(text: str) -> None:
+    assert "secret" not in text
+    assert "user:" not in text
+    assert "abc" not in text
+
+
+def test_redact_error_message_http_status_error() -> None:
+    from screenscribe.api_utils import redact_error_message
+
+    request = httpx.Request("POST", _USERINFO_URL)
+    response = httpx.Response(401, request=request)
+    with pytest.raises(httpx.HTTPStatusError) as caught:
+        response.raise_for_status()
+
+    redacted = redact_error_message(caught.value)
+
+    _assert_url_secrets_absent(redacted)
+    assert redacted.splitlines()[0] == (
+        "Client error '401 Unauthorized' for url "
+        "'https://***@api.example.com/v1/responses?key=***&api-version=***'"
+    )
+
+
+def test_redact_error_message_plain_error_with_embedded_url() -> None:
+    from screenscribe.api_utils import redact_error_message
+
+    redacted = redact_error_message(RuntimeError(f"call to ({_USERINFO_URL}), failed"))
+
+    assert redacted == (
+        "call to (https://***@api.example.com/v1/responses?key=***&api-version=***), failed"
+    )
+
+
+def test_redact_error_message_request_error_without_request() -> None:
+    from screenscribe.api_utils import redact_error_message
+
+    assert redact_error_message(httpx.ConnectError("connection refused")) == "connection refused"
+    redacted = redact_error_message(httpx.ReadError(f"read failed: {_USERINFO_URL}"))
+    _assert_url_secrets_absent(redacted)
+
+
+def test_retry_request_log_redacts_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+
+    from rich.console import Console
+
+    buffer = io.StringIO()
+    monkeypatch.setattr(
+        "screenscribe.api_utils.console", Console(file=buffer, width=500, color_system=None)
+    )
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda _d: None)
+    request = httpx.Request("POST", _USERINFO_URL)
+    calls = 0
+
+    def unavailable_then_ok() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            httpx.Response(503, request=request).raise_for_status()
+        return "ok"
+
+    assert retry_request(unavailable_then_ok, operation_name="LLM call") == "ok"
+    output = buffer.getvalue()
+    _assert_url_secrets_absent(output)
+    error_line = next(line for line in output.splitlines() if line.startswith("  Error:"))
+    assert error_line == (
+        "  Error: Server error '503 Service Unavailable' for url "
+        "'https://***@api.example.com/v1/responses?key=***&api-version=***'"
+    )
+
+
+# --- Non-streaming Responses bodies: answer extraction and status errors -----
+
+
+def test_extract_llm_response_text_skips_reasoning_item() -> None:
+    from screenscribe.api_utils import extract_llm_response_text
+
+    payload = {
+        "output": [
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "thinking..."}]},
+            {"type": "message", "content": [{"type": "output_text", "text": "ANSWER"}]},
+        ],
+        "text": {"format": {"type": "text"}},
+        "reasoning": {"effort": "medium", "summary": "auto"},
+    }
+
+    assert extract_llm_response_text(payload, "https://api.example.com/v1/responses") == "ANSWER"
+
+
+def test_build_llm_request_body_reasoning_effort() -> None:
+    from screenscribe.api_utils import build_llm_request_body
+
+    responses = build_llm_request_body(
+        "m", "p", "https://api.example.com/v1/responses", reasoning_effort="low"
+    )
+    chat = build_llm_request_body(
+        "m", "p", "https://api.example.com/v1/chat/completions", reasoning_effort="low"
+    )
+    plain = build_llm_request_body("m", "p", "https://api.example.com/v1/responses")
+
+    assert responses["reasoning"] == {"summary": "auto", "effort": "low"}
+    assert "reasoning" not in chat
+    assert "reasoning" not in plain
+
+
+def test_extract_response_payload_error() -> None:
+    from screenscribe.api_utils import extract_response_payload_error
+
+    assert extract_response_payload_error({"status": "completed", "error": None}) is None
+    failed = extract_response_payload_error(
+        {"status": "failed", "error": {"code": "server_error", "message": "rejected"}}
+    )
+    incomplete = extract_response_payload_error(
+        {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}}
+    )
+    error_only = extract_response_payload_error({"error": {"message": "bad request"}})
+
+    assert str(failed) == "rejected (code: server_error)"
+    assert str(incomplete) == "Response incomplete: max_output_tokens"
+    assert str(error_only) == "bad request"
+
+
+# --- Provider-supplied text is URL-redacted at the source ---------------------
+
+_GATEWAY_URL = "https://user:secret@gw.example.com/x?key=abc"  # pragma: allowlist secret
+
+
+def _assert_gateway_secrets_absent(text: str) -> None:
+    assert "secret" not in text
+    assert "key=abc" not in text
+    assert "user:" not in text
+
+
+def test_stream_event_error_redacts_provider_message_and_code() -> None:
+    from screenscribe.api_utils import StreamEventError
+
+    error = StreamEventError(f"upstream {_GATEWAY_URL} refused", code=f"bad_url:{_GATEWAY_URL}")
+
+    _assert_gateway_secrets_absent(str(error))
+    _assert_gateway_secrets_absent(error.code)
+    assert str(error) == (
+        "upstream https://***@gw.example.com/x?key=*** refused "
+        "(code: bad_url:https://***@gw.example.com/x?key=***)"
+    )
+
+
+def test_extract_response_payload_error_redacts_urls() -> None:
+    from screenscribe.api_utils import extract_response_payload_error
+
+    error = extract_response_payload_error(
+        {"status": "failed", "error": {"code": "server_error", "message": f"via {_GATEWAY_URL}"}}
+    )
+
+    assert str(error) == "via https://***@gw.example.com/x?key=*** (code: server_error)"
+
+
+def test_redaction_handles_uppercase_scheme() -> None:
+    from screenscribe.api_utils import redact_error_message, redact_urls_in_text
+
+    upper = "HTTPS://user:secret@GW.example.com/x?key=abc"  # pragma: allowlist secret
+
+    in_text = redact_urls_in_text(f"call {upper} failed")
+    in_error = redact_error_message(RuntimeError(f"call {upper} failed"))
+
+    for redacted in (in_text, in_error):
+        assert "secret" not in redacted
+        assert "key=abc" not in redacted
+        assert "user:" not in redacted
+    assert in_text == "call https://***@gw.example.com/x?key=*** failed"

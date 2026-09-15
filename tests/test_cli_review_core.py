@@ -31,6 +31,11 @@ from screenscribe.cli import (
     app,
     version_callback,
 )
+from screenscribe.cli_paths import (
+    OutputVersionsExhaustedError,
+    classify_review_slot,
+    is_review_directory,
+)
 from screenscribe.config import ScreenScribeConfig
 from screenscribe.validation import APIKeyError, ModelValidationError
 
@@ -110,6 +115,60 @@ def test_find_next_review_path_detects_markdown_only_bundle(tmp_path: Path) -> N
     assert version == 2
 
 
+def test_find_next_review_path_ignores_foreign_report_files(tmp_path: Path) -> None:
+    """Unrelated ``*_report.md`` files (e.g. in ~/Downloads) are not a review bundle.
+
+    Regression: a glob-based ``*_report.*`` match made an ordinary folder holding
+    ``2026-08-17_notes_report.md`` look like a previous review. Such a folder is
+    foreign: it is never classified as the review's own and never written into
+    (the allocator moves on to a fresh slot). The ``-o`` parent rule keeps real
+    runs from ever passing such a folder as the base.
+    """
+    base = tmp_path / "Downloads"
+    base.mkdir()
+    (base / "2026-08-17_notes_report.md").write_text("# not screenscribe")
+    assert classify_review_slot(base, "demo") == "foreign"
+    assert _find_next_review_path(base, video_stem="demo") == (tmp_path / "Downloads_2", 2)
+
+
+def test_find_next_review_path_uses_explicit_stem(tmp_path: Path) -> None:
+    """A custom-named review dir versions when it holds THIS video's report."""
+    base = tmp_path / "my-run"
+    base.mkdir()
+    (base / "demo_report.json").write_text("{}")
+    assert _find_next_review_path(base, video_stem="demo") == (tmp_path / "my-run_2", 2)
+    # For another video the folder is foreign: never reused, a fresh slot is used.
+    assert _find_next_review_path(base, video_stem="other") == (tmp_path / "my-run_2", 2)
+
+
+def test_is_review_directory_rule(tmp_path: Path) -> None:
+    """Checkpoint dir, this video's report, or legacy markers -> review; else ordinary."""
+    ordinary = tmp_path / "ordinary"
+    ordinary.mkdir()
+    (ordinary / "2026-08-17_vc_report.md").write_text("# foreign")
+    (ordinary / "other_report.html").write_text("<html></html>")
+    assert not is_review_directory(ordinary, "demo")
+    assert not is_review_directory(tmp_path / "missing", "demo")
+
+    with_cache = tmp_path / "with_cache"
+    (with_cache / ".screenscribe_cache").mkdir(parents=True)
+    assert is_review_directory(with_cache, "demo")
+
+    stemmed = tmp_path / "stemmed"
+    stemmed.mkdir()
+    (stemmed / "demo_report.md").write_text("# done")
+    assert is_review_directory(stemmed, "demo")
+
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    (legacy / "report.json").write_text("{}")
+    assert is_review_directory(legacy, "demo")
+
+    a_file = tmp_path / "file.txt"
+    a_file.write_text("x")
+    assert not is_review_directory(a_file, "demo")
+
+
 def test_find_next_versioned_path_skips_consecutive_bundles(tmp_path: Path) -> None:
     """When _2 also holds a bundle, the next free slot is _3."""
     base = tmp_path / "out"
@@ -132,8 +191,11 @@ def test_find_next_versioned_path_raises_past_cap(tmp_path: Path, monkeypatch: A
         d = tmp_path / f"cap_{n}"
         d.mkdir()
         (d / "report.json").write_text("{}")
-    with pytest.raises(RuntimeError, match="Too many review versions"):
+    with pytest.raises(OutputVersionsExhaustedError) as caught:
         _find_next_versioned_path(base, artifact_markers=("report.json",))
+    assert isinstance(caught.value, RuntimeError)  # compat for older handlers
+    assert str(caught.value) == "Too many existing versions of cap (limit 2)"
+    assert "review" not in str(caught.value)
 
 
 # --------------------------------------------------------------------------- #

@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 from rich.console import Console
 
-from screenscribe.api_utils import is_chat_completions_endpoint
+from screenscribe.api_utils import is_chat_completions_endpoint, redact_error_message
 from screenscribe.config import ScreenScribeConfig
 
 console = Console()
@@ -173,7 +173,7 @@ def _check_llm_model(config: ScreenScribeConfig, model: str, model_type: str) ->
 
     except httpx.ConnectError as e:
         raise ModelValidationError(
-            f"Cannot connect to API: {e}",
+            f"Cannot connect to API: {redact_error_message(e)}",
             model_type=model_type,
             model_name=model,
         ) from e
@@ -182,7 +182,7 @@ def _check_llm_model(config: ScreenScribeConfig, model: str, model_type: str) ->
         # Protocol/transport errors (e.g. an illegal header from a malformed key)
         # would otherwise escape as a raw traceback. Re-wrap as a friendly error.
         raise ModelValidationError(
-            f"{model_type} endpoint check failed: {e}",
+            f"{model_type} endpoint check failed: {redact_error_message(e)}",
             model_type=model_type,
             model_name=model,
         ) from e
@@ -238,7 +238,7 @@ def _check_stt_model(config: ScreenScribeConfig) -> bool:
 
     except httpx.ConnectError as e:
         raise ModelValidationError(
-            f"Cannot connect to STT API: {e}",
+            f"Cannot connect to STT API: {redact_error_message(e)}",
             model_type="STT",
             model_name=config.stt_model,
         ) from e
@@ -247,7 +247,7 @@ def _check_stt_model(config: ScreenScribeConfig) -> bool:
         # Protocol/transport errors (e.g. an illegal header from a malformed key)
         # would otherwise escape as a raw traceback. Re-wrap as a friendly error.
         raise ModelValidationError(
-            f"STT endpoint check failed: {e}",
+            f"STT endpoint check failed: {redact_error_message(e)}",
             model_type="STT",
             model_name=config.stt_model,
         ) from e

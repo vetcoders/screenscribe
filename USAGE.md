@@ -81,7 +81,7 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--output`, `-o` | `<video>_review` next to the video | Output directory for screenshots and reports. |
+| `--output`, `-o` | `<video>_review` next to the video | Where the review is written. A path that does not exist yet becomes the review directory. An existing folder that is **not** a previous screenscribe review (e.g. `~/Downloads`) is used as a parent: the review goes to `<folder>/<video>_review`, and re-runs create `<video>_review_2`, … inside that folder. An existing previous review directory is reused as-is (with the overwrite/new/resume handling). With several videos, each goes to `<folder>/<video>_review`. |
 | `--prompt`, `-P` | none | Append custom instructions to the semantic, semantic-prefilter, and vision prompts. |
 | `--lang`, `-l` | `en` | Language code for transcription. |
 | `--local` | off | Use a local STT server instead of the cloud provider. |
@@ -92,7 +92,7 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 | `--embed-video` | off | Embed the video as base64 in the HTML report (only for files < 50 MB). |
 | `--keywords-file`, `-k` | global file | Per-run keywords YAML. Keywords are always-on AI hints (never replace the LLM, safe when empty); overrides the global `~/.config/screenscribe/keywords.yaml`. |
 | `--resume` | off | Resume from a previous checkpoint if available. |
-| `--force` | off | Force reprocessing and overwrite the existing review instead of versioning. |
+| `--force` | off | Force reprocessing and overwrite the existing review instead of versioning. Only a screenscribe review folder (or a missing/empty one) can be overwritten; if the target is a file or a non-empty folder screenscribe does not own, `review` stops with an error and changes nothing. |
 | `--estimate` | off | Show a time estimate (from video duration) without processing. |
 | `--dry-run` | off | **Not free.** Still runs paid transcription (STT, unless `--local`) and LLM issue detection, then stops before writing reports. For a zero-cost preview use `--estimate` instead. |
 | `--skip-validation` | off | Skip the model-availability check (faster start, may fail mid-pipeline). |
@@ -494,6 +494,7 @@ moving to a new provider.
 | `SCREENSCRIBE_STT_MODEL` | `whisper-1` | OpenAI-Whisper-compatible. |
 | `SCREENSCRIBE_LLM_MODEL` | `programmer` | LibraxisAI default — change to your provider's model (e.g. `gpt-4o`). |
 | `SCREENSCRIBE_VISION_MODEL` | `programmer` | LibraxisAI default — change to your provider's vision model. |
+| `SCREENSCRIBE_LLM_REASONING_EFFORT` | `medium` | Reasoning effort sent with all text-LLM Responses API calls (pre-filter, text-only analysis, summaries, merge): `minimal`, `low`, `medium`, or `high`. Not sent to Chat Completions endpoints or to the vision request. An invalid value warns and falls back to `medium`. Lower it to `low` if detection fails after the model reasons for a long time without answering. |
 
 ### Processing options
 
@@ -668,7 +669,21 @@ uv run screenscribe review demo.mov
 screenscribe transcribes, finds actionable moments, captures screenshots,
 confirms them with the vision model, writes JSON/Markdown/HTML reports, and
 opens the HTML report in your browser. Re-running preserves the prior report as
-`_2`, `_3`, …; pass `--force` to overwrite instead.
+`_2`, `_3`, … (the first slot that does not exist or is an empty folder; an
+existing non-empty `_N` is never written into); pass `--force` to overwrite
+instead.
+
+screenscribe never writes into a folder it does not own. If `<video>_review`
+already exists as a file or as a non-empty folder that is not a screenscribe
+review, the run moves on to the next free `_2`, `_3`, … slot and leaves that
+folder untouched. When no free slot is left below the version limit, `review`
+stops with an "Output Directory Error" asking for a new `-o` folder.
+
+A folder counts as a previous review only when it holds a `.screenscribe_cache/`
+checkpoint or this video's own `<video>_report.{json,md,html}` (legacy
+`report.json` / `report.html` also count). Unrelated files such as someone
+else's `notes_report.md` never do, so `review demo.mov -o ~/Downloads` writes
+`~/Downloads/demo_review` instead of versioning `~/Downloads` itself.
 
 For a batch with shared context:
 
@@ -707,7 +722,8 @@ bundle text-only, and `--force` to reuse a directory in place.
 
 ### Review reports
 
-Written per video into the output directory (default `<video>_review`):
+Written per video into the review directory (default `<video>_review` next to
+the video; with `-o <existing folder>` it is `<folder>/<video>_review`):
 
 - `<video>_report.json` — findings, transcript, transcript segments, executive
   summary, and any errors. Machine-readable for ticketing or agent workflows.
@@ -751,6 +767,30 @@ a problem with your video. You can:
 Other STT errors are handled the same friendly way: `500/502/503/504` (temporary
 server error → retry with `--resume`), `401/403` (credentials rejected → check
 your STT key/endpoint), and network failures (check connection and endpoint).
+
+### Output directory cannot be created
+
+If `-o` points somewhere screenscribe cannot write (permission denied, a
+read-only volume, or a file sitting where a folder should be), `review` stops
+with an "Output Directory Error" naming the path and the reason, and exits with
+code 1 — no traceback. Pass `-o` with a folder you can write to.
+
+### Issue detection failed
+
+When the LLM detection stage (semantic pre-filter) fails, the "Issue Detection
+Failed" panel shows the concrete reason and the LLM endpoint host (never your
+key). Reasons include the provider's own error from inside the response stream
+(e.g. `response.failed` / `response.incomplete` with its message and code), an
+empty stream with no events, or an unreachable host (connection or TLS handshake
+timeout). Transient in-stream errors (server errors, overload, rate limits) are
+retried automatically, but only when they arrive before the model streamed any
+output; a failure after the model already reasoned or answered is reported at
+once instead of re-running a long generation. Your transcript is saved; re-run
+with `--resume` to retry detection without re-transcribing.
+
+If the reason says the model spent its budget reasoning without producing an
+answer, set `SCREENSCRIBE_LLM_REASONING_EFFORT=low` (default `medium`) or switch
+`SCREENSCRIBE_LLM_MODEL`.
 
 ### No audio track
 
