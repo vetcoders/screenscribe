@@ -261,6 +261,9 @@ is screenscribe's own manifest (a JSON object with `"mode": "preprocess"` and an
 `artifacts` object). A stray `transcript.txt` or another tool's
 `preprocess.json` never does, so `preprocess demo.mov -o ~/Downloads` writes
 `~/Downloads/demo_preprocess` instead of versioning `~/Downloads` itself.
+That rule only decides whether the base directory is versioned; a new version
+goes to the first `_2`, `_3`, … slot that does not exist or is an empty folder,
+so an existing non-empty `_N` (bundle or not) is never written into.
 
 ---
 

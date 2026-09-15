@@ -407,3 +407,32 @@ def test_preprocess_output_permission_denied_exits_with_friendly_error(
         locked.chmod(0o700)
     _assert_friendly_preprocess_output_error(result, "permission denied")
     assert "demo_preprocess" in " ".join(result.output.split())
+
+
+def test_preprocess_version_slot_skips_ordinary_non_empty_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A real bundle at ``<base>`` plus an ordinary non-empty ``<base>_2`` must
+    version to ``<base>_3``: ``_2`` is occupied even though it is not a bundle,
+    so its foreign files are never overwritten."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    run_dir = tmp_path / "my-run"
+
+    first = _run_preprocess(runner, video_path, run_dir)
+    assert first.exit_code == 0, first.output
+    assert is_preprocess_bundle(run_dir)
+
+    slot_2 = tmp_path / "my-run_2"
+    slot_2.mkdir()
+    foreign_transcript = b"someone else's transcript\n"
+    foreign_manifest = b'{"tool": "something-else", "mode": "other"}'
+    (slot_2 / "transcript.txt").write_bytes(foreign_transcript)
+    (slot_2 / "preprocess.json").write_bytes(foreign_manifest)
+    assert not is_preprocess_bundle(slot_2)
+
+    second = _run_preprocess(runner, video_path, run_dir)
+    assert second.exit_code == 0, second.output
+    assert _manifest_mode(tmp_path / "my-run_3") == "preprocess"
+    assert (slot_2 / "transcript.txt").read_bytes() == foreign_transcript
+    assert (slot_2 / "preprocess.json").read_bytes() == foreign_manifest
+    assert sorted(p.name for p in slot_2.iterdir()) == ["preprocess.json", "transcript.txt"]
