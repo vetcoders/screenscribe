@@ -1,5 +1,6 @@
 """CLI interface for screenscribe video review automation."""
 
+import errno
 import os
 import shutil
 import socket
@@ -13,6 +14,7 @@ import httpx
 import typer
 import typer.rich_utils as _typer_rich_utils
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 
 from . import __version__
@@ -49,6 +51,13 @@ from .cli_estimate import (
     _show_estimate as _show_estimate,
 )
 from .cli_messages import (
+    _build_bundle_write_error_message,
+    _build_force_foreign_message,
+    _build_output_dir_error_message,
+    _build_output_slot_error_message,
+    _build_versions_exhausted_message,
+)
+from .cli_messages import (
     _build_transcript_timeline_coverage_message as _build_transcript_timeline_coverage_message,
 )
 from .cli_messages import (
@@ -65,6 +74,14 @@ from .cli_messages import (
 )
 from .cli_paths import (
     MAX_REVIEW_VERSIONS as MAX_REVIEW_VERSIONS,
+)
+from .cli_paths import (
+    OutputSlotError,
+    OutputVersionsExhaustedError,
+    _is_dir,
+    classify_output_slot,
+    is_preprocess_bundle,
+    reserve_output_slot,
 )
 from .cli_paths import (
     _find_next_review_path as _find_next_review_path,
@@ -1209,7 +1226,12 @@ def preprocess(
         typer.Option(
             "--output",
             "-o",
-            help="Output directory for preprocess artifacts",
+            help=(
+                "Output directory for preprocess artifacts. An existing folder that "
+                "is not a previous preprocess bundle is used as a parent "
+                "(<folder>/<video>_preprocess); files or folders screenscribe does not "
+                "own are skipped for the next free _2, _3, ... and never written into."
+            ),
         ),
     ] = None,
     language: Annotated[
@@ -1238,7 +1260,10 @@ def preprocess(
         bool,
         typer.Option(
             "--force",
-            help="Reuse output directory even if preprocess artifacts already exist",
+            help=(
+                "Overwrite a previous screenscribe preprocess bundle in place instead of "
+                "versioning (never a file or folder screenscribe does not own)"
+            ),
         ),
     ] = False,
 ) -> None:
@@ -1262,15 +1287,70 @@ def preprocess(
     if not local:
         _check_provider_config_or_exit(config, providers={"stt"})
 
-    base_output = output or (video.parent / f"{video.stem}_preprocess")
+    if output is None:
+        base_output = video.parent / f"{video.stem}_preprocess"
+    elif _is_dir(output) and not is_preprocess_bundle(output):
+        # -o names an existing ordinary folder (not a previous preprocess
+        # bundle): treat it as the PARENT, like `review -o`. Re-runs then
+        # version inside it (<stem>_preprocess_2), never next to it.
+        base_output = output / f"{video.stem}_preprocess"
+        console.print(
+            f"[dim]{escape(str(output))} is an existing folder, not a previous "
+            f"preprocess bundle; writing into {escape(base_output.name)}[/]"
+        )
+    else:
+        # -o does not exist yet, or IS a previous preprocess bundle: use it as
+        # the output directory itself. An existing FILE named by -o is an
+        # explicit, unusable target: stop instead of silently writing to a
+        # versioned sibling (same as `review -o`).
+        if output.exists() and not _is_dir(output):
+            from .review_pipeline import _exit_output_dir_error
+
+            _exit_output_dir_error(
+                console,
+                _build_output_dir_error_message(
+                    output, FileExistsError(errno.EEXIST, "File exists", str(output))
+                ),
+            )
+        base_output = output
+    # A preprocess bundle's ownership marker IS its completed bundle (its own
+    # preprocess.json), so there is no "own_partial" state for preprocess.
+    base_state = classify_output_slot(
+        base_output,
+        owns_dir=is_preprocess_bundle,
+        has_completed_bundle=is_preprocess_bundle,
+    )
     if force:
+        # --force may overwrite only a free slot or screenscribe's own bundle. A
+        # foreign file/folder fails closed BEFORE anything is created or written.
+        if base_state == "foreign":
+            from .review_pipeline import _exit_output_dir_error
+
+            _exit_output_dir_error(
+                console, _build_force_foreign_message(base_output, "preprocess bundle")
+            )
         output_dir = base_output
     else:
-        output_dir, version = _find_next_versioned_path(
-            base_output,
-            artifact_markers=("preprocess.json", "transcript.txt"),
-        )
-        if version:
+        try:
+            output_dir, version = _find_next_versioned_path(
+                base_output,
+                owns_dir=is_preprocess_bundle,
+                has_completed_bundle=is_preprocess_bundle,
+            )
+        except OutputVersionsExhaustedError as exhausted:
+            from .review_pipeline import _exit_output_dir_error
+
+            _exit_output_dir_error(
+                console,
+                _build_versions_exhausted_message(exhausted.base_path, exhausted.limit),
+            )
+        if version and base_state == "foreign":
+            # Someone else's file/folder sits at the base: not a previous bundle.
+            console.print(
+                f"[yellow]{escape(base_output.name)} exists and is not a screenscribe "
+                f"preprocess bundle; writing to {escape(output_dir.name)} instead.[/]"
+            )
+        elif version:
             console.print(
                 Panel(
                     f"[yellow]Found previous preprocess bundle at:[/] {base_output.name}\n"
@@ -1280,7 +1360,39 @@ def preprocess(
                 )
             )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Reserve the folder before any audio/STT work: create a new slot
+    # exclusively, re-check an existing one is still ours, and probe that it is
+    # writable, so an unusable output never costs a transcription. Only a
+    # freshly allocated version slot may be reselected on a race; --force and
+    # the base itself fail closed instead.
+    reselect_slot = None
+    if not (force or output_dir == base_output):
+
+        def reselect_slot() -> Path:
+            return _find_next_versioned_path(
+                base_output,
+                owns_dir=is_preprocess_bundle,
+                has_completed_bundle=is_preprocess_bundle,
+            )[0]
+
+    try:
+        output_dir = reserve_output_slot(
+            output_dir,
+            owns_dir=is_preprocess_bundle,
+            has_completed_bundle=is_preprocess_bundle,
+            reselect=reselect_slot,
+        )
+    except OutputSlotError as slot_error:
+        from .review_pipeline import _exit_output_dir_error
+
+        _exit_output_dir_error(console, _build_output_slot_error_message(slot_error))
+    except OutputVersionsExhaustedError as exhausted:
+        from .review_pipeline import _exit_output_dir_error
+
+        _exit_output_dir_error(
+            console,
+            _build_versions_exhausted_message(exhausted.base_path, exhausted.limit),
+        )
 
     console.print()
     console.print(
@@ -1320,14 +1432,20 @@ def preprocess(
         verbose=config.verbose,
     )
 
-    write_preprocess_bundle(
-        video_path=video.resolve(),
-        output_dir=output_dir.resolve(),
-        transcription=transcription,
-        duration_seconds=duration,
-        extracted_audio_path=audio_path,
-        include_audio=include_audio,
-    )
+    try:
+        write_preprocess_bundle(
+            video_path=video.resolve(),
+            output_dir=output_dir.resolve(),
+            transcription=transcription,
+            duration_seconds=duration,
+            extracted_audio_path=audio_path,
+            include_audio=include_audio,
+        )
+    except OSError as write_error:
+        # No cleanup: partial files stay so nothing the user may need is removed.
+        from .review_pipeline import _exit_output_dir_error
+
+        _exit_output_dir_error(console, _build_bundle_write_error_message(output_dir, write_error))
 
 
 config_app = typer.Typer(

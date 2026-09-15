@@ -169,6 +169,10 @@ def test_is_review_directory_rule(tmp_path: Path) -> None:
     assert not is_review_directory(a_file, "demo")
 
 
+def _has_report(path: Path) -> bool:
+    return (path / "report.json").is_file()
+
+
 def test_find_next_versioned_path_skips_consecutive_bundles(tmp_path: Path) -> None:
     """When _2 also holds a bundle, the next free slot is _3."""
     base = tmp_path / "out"
@@ -176,7 +180,9 @@ def test_find_next_versioned_path_skips_consecutive_bundles(tmp_path: Path) -> N
     (base / "report.json").write_text("{}")
     (tmp_path / "out_2").mkdir()
     (tmp_path / "out_2" / "report.json").write_text("{}")
-    path, version = _find_next_versioned_path(base, artifact_markers=("report.json",))
+    path, version = _find_next_versioned_path(
+        base, owns_dir=_has_report, has_completed_bundle=_has_report
+    )
     assert path == tmp_path / "out_3"
     assert version == 3
 
@@ -192,7 +198,7 @@ def test_find_next_versioned_path_raises_past_cap(tmp_path: Path, monkeypatch: A
         d.mkdir()
         (d / "report.json").write_text("{}")
     with pytest.raises(OutputVersionsExhaustedError) as caught:
-        _find_next_versioned_path(base, artifact_markers=("report.json",))
+        _find_next_versioned_path(base, owns_dir=_has_report, has_completed_bundle=_has_report)
     assert isinstance(caught.value, RuntimeError)  # compat for older handlers
     assert str(caught.value) == "Too many existing versions of cap (limit 2)"
     assert "review" not in str(caught.value)
@@ -322,6 +328,104 @@ def test_review_estimate_skips_validation_and_prints_table(
     assert result.exit_code == 0, result.output
     assert "Estimated Processing Time" in result.output
     assert "Total estimated time" in result.output
+    assert not (tmp_path / "v_review").exists()
+
+
+def test_review_estimate_does_not_create_output_dir(tmp_path: Path, monkeypatch: Any) -> None:
+    """--estimate with -o only prints estimates; it must not create the folder."""
+    video = tmp_path / "v.mov"
+    video.write_bytes(b"x")
+    target = tmp_path / "planned" / "out"
+
+    monkeypatch.setattr(cli, "check_ffmpeg_installed", lambda: None)
+    monkeypatch.setattr(cli, "_require_audio_or_exit", lambda _v: None)
+    monkeypatch.setattr(cli, "get_video_duration", lambda _v: 300.0)
+    monkeypatch.setattr(
+        cli.ScreenScribeConfig, "load", classmethod(lambda _c: ScreenScribeConfig())
+    )
+
+    result = runner.invoke(app, ["review", str(video), "-o", str(target), "--estimate"])
+    assert result.exit_code == 0, result.output
+    assert "Estimated Processing Time" in result.output
+    assert not (tmp_path / "planned").exists()
+
+
+def _estimate_stubs(monkeypatch: Any) -> None:
+    monkeypatch.setattr(cli, "check_ffmpeg_installed", lambda: None)
+    monkeypatch.setattr(cli, "_require_audio_or_exit", lambda _v: None)
+    monkeypatch.setattr(cli, "get_video_duration", lambda _v: 300.0)
+    monkeypatch.setattr(
+        cli.ScreenScribeConfig, "load", classmethod(lambda _c: ScreenScribeConfig())
+    )
+
+
+def _tree(root: Path) -> dict[str, bytes | None]:
+    return {
+        str(p.relative_to(root)): (None if p.is_dir() else p.read_bytes()) for p in root.rglob("*")
+    }
+
+
+def test_review_estimate_never_prompts_on_existing_review(tmp_path: Path, monkeypatch: Any) -> None:
+    """--estimate on a TTY with a completed review: no rerun prompt, no _2, no writes."""
+    video = tmp_path / "v.mov"
+    video.write_bytes(b"x")
+    review_dir = tmp_path / "v_review"
+    review_dir.mkdir()
+    (review_dir / "v_report.json").write_text("{}")
+    before = _tree(tmp_path)
+    _estimate_stubs(monkeypatch)
+
+    def boom(*_a: object, **_k: object) -> str:
+        raise AssertionError("--estimate must not reach the rerun UX")
+
+    monkeypatch.setattr("screenscribe.review_pipeline._stdin_is_tty", lambda: True)
+    monkeypatch.setattr("screenscribe.review_pipeline._prompt_rerun_action", boom)
+    monkeypatch.setattr("screenscribe.review_pipeline.Prompt.ask", boom)
+
+    result = runner.invoke(app, ["review", str(video), "--estimate"])
+
+    assert result.exit_code == 0, result.output
+    assert "Estimated Processing Time" in result.output
+    assert _tree(tmp_path) == before
+    assert not (tmp_path / "v_review_2").exists()
+
+
+def test_review_estimate_is_read_only_with_force_and_foreign_base(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """--estimate --force on a foreign base: no refusal panel, just the estimate."""
+    video = tmp_path / "v.mov"
+    video.write_bytes(b"x")
+    foreign = tmp_path / "v_review"
+    foreign.mkdir()
+    (foreign / "notes.txt").write_text("not a review")
+    before = _tree(tmp_path)
+    _estimate_stubs(monkeypatch)
+
+    result = runner.invoke(app, ["review", str(video), "--estimate", "--force"])
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 0, result.output
+    assert "Estimated Processing Time" in normalized
+    assert "Output Directory Error" not in normalized
+    assert _tree(tmp_path) == before
+
+
+def test_review_estimate_skips_output_parent_message(tmp_path: Path, monkeypatch: Any) -> None:
+    """--estimate with -o <ordinary folder>: no output resolution message, no subfolder."""
+    video = tmp_path / "v.mov"
+    video.write_bytes(b"x")
+    parent = tmp_path / "Downloads"
+    parent.mkdir()
+    _estimate_stubs(monkeypatch)
+
+    result = runner.invoke(app, ["review", str(video), "-o", str(parent), "--estimate"])
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 0, result.output
+    assert "Estimated Processing Time" in normalized
+    assert "is an existing folder" not in normalized
+    assert list(parent.iterdir()) == []
 
 
 def test_review_estimate_always_runs_the_semantic_prefilter(
