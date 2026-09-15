@@ -91,7 +91,13 @@ def redact_url(url: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
 
 
-def _redact_urls_in_text(text: str) -> str:
+def redact_urls_in_text(text: str) -> str:
+    """Return ``text`` with every ``http(s)://`` URL passed through ``redact_url``.
+
+    Trailing quotes/brackets/punctuation stay outside the redacted URL. Use it
+    for any provider- or server-supplied text that reaches output.
+    """
+
     def _replace(match: re.Match[str]) -> str:
         raw = match.group(0)
         stripped = raw.rstrip(_URL_TRAILING_PUNCTUATION)
@@ -115,7 +121,7 @@ def redact_error_message(error: BaseException) -> str:
             request_url = ""
         if request_url:
             message = message.replace(request_url, redact_url(request_url))
-    return _redact_urls_in_text(message)
+    return redact_urls_in_text(message)
 
 
 # Substrings of a provider error code/type that mark a stream error as
@@ -144,6 +150,10 @@ class StreamEventError(RuntimeError):
     ``retry_request`` handles an in-stream overload exactly like an HTTP 503.
     Subclasses ``RuntimeError`` so existing ``except RuntimeError`` handlers
     keep catching provider error events.
+
+    The message and code are provider-controlled, so URLs in them are redacted
+    here, at construction: every consumer that prints or interpolates the
+    exception (stream reasons, non-streaming payload errors, logs) is covered.
     """
 
     def __init__(
@@ -154,6 +164,8 @@ class StreamEventError(RuntimeError):
         event_type: str = "",
         transient: bool = False,
     ) -> None:
+        message = redact_urls_in_text(message)
+        code = redact_urls_in_text(code)
         detail = message
         if code and code not in message:
             detail = f"{message} (code: {code})"

@@ -446,3 +446,37 @@ def test_extract_response_payload_error() -> None:
     assert str(failed) == "rejected (code: server_error)"
     assert str(incomplete) == "Response incomplete: max_output_tokens"
     assert str(error_only) == "bad request"
+
+
+# --- Provider-supplied text is URL-redacted at the source ---------------------
+
+_GATEWAY_URL = "https://user:secret@gw.example.com/x?key=abc"  # pragma: allowlist secret
+
+
+def _assert_gateway_secrets_absent(text: str) -> None:
+    assert "secret" not in text
+    assert "key=abc" not in text
+    assert "user:" not in text
+
+
+def test_stream_event_error_redacts_provider_message_and_code() -> None:
+    from screenscribe.api_utils import StreamEventError
+
+    error = StreamEventError(f"upstream {_GATEWAY_URL} refused", code=f"bad_url:{_GATEWAY_URL}")
+
+    _assert_gateway_secrets_absent(str(error))
+    _assert_gateway_secrets_absent(error.code)
+    assert str(error) == (
+        "upstream https://***@gw.example.com/x?key=*** refused "
+        "(code: bad_url:https://***@gw.example.com/x?key=***)"
+    )
+
+
+def test_extract_response_payload_error_redacts_urls() -> None:
+    from screenscribe.api_utils import extract_response_payload_error
+
+    error = extract_response_payload_error(
+        {"status": "failed", "error": {"code": "server_error", "message": f"via {_GATEWAY_URL}"}}
+    )
+
+    assert str(error) == "via https://***@gw.example.com/x?key=*** (code: server_error)"

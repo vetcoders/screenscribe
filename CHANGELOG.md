@@ -33,7 +33,8 @@
   configured endpoint URL cannot leak into output. The same defense in depth now
   covers logs: retry messages, verbose endpoint and analysis-failure lines,
   summary/LLM-merge warnings, model-validation errors and config mismatch
-  messages redact URLs (userinfo and query values masked, fragment dropped).
+  messages redact URLs (userinfo and query values masked, fragment dropped),
+  including URLs inside provider-supplied error messages and response bodies.
   Screenscribe never reads credentials from endpoint URLs; keys are sent only in
   the Authorization header.
 - **Fixed: semantic pre-filter no longer hangs reasoning without an answer.**
