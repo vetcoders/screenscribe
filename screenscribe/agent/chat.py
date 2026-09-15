@@ -13,6 +13,9 @@ SSE (binding for w1-05)::
     event: tool_result  data: {"name", "result"}
     event: done         data: {"response_id": ...}
     event: error        data: {"message": ...}
+
+``tool_result.result`` may be a ``review_patch`` or ``review_plan`` object from
+the write tools. The SSE envelope is unchanged; the browser applies the patch.
 """
 
 from __future__ import annotations
