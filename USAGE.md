@@ -94,6 +94,7 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 | `--html` / `--no-html` | on | Save the interactive HTML report. |
 | `--embed-video` | off | Embed the video as base64 in the HTML report (only for files < 50 MB). |
 | `--keywords-file`, `-k` | global file | Per-run keywords YAML. Keywords are always-on AI hints (never replace the LLM, safe when empty); overrides the global `~/.config/screenscribe/keywords.yaml`. |
+| `--preset` | `programming` | Analysis preset: `programming`, `casual`, `medical`, `veterinary`, or `custom`. Switches the keyword dictionary, finding categories, and prompt focus. `custom` requires `--keywords-file`. |
 | `--resume` | off | Resume from a previous checkpoint if available. |
 | `--force` | off | Force reprocessing and overwrite the existing review instead of versioning. Only a screenscribe review folder (or a missing/empty one) can be overwritten; if the target is a file or a non-empty folder screenscribe does not own, `review` stops with an error and changes nothing. |
 | `--estimate` | off | Show a time estimate (from video duration) without processing. Read-only: it skips output-folder handling entirely (no rerun prompt, no `--force` check, nothing created). |
@@ -147,6 +148,30 @@ uv run screenscribe review silent-demo.mov --no-audio --prompt "No audio; the ex
 uv run screenscribe review silent-demo.mov --transcript-source ocr --frame-interval 2.5
 ```
 
+**Presets**
+
+`--preset` switches the whole analysis profile for a domain — three things at
+once: the keyword dictionary, the finding categories, and a prompt fragment
+describing who the viewer is and what counts as a finding:
+
+- `programming` (default) — the historical behavior, unchanged: the built-in
+  dictionary and the `bug/change/ui/performance/accessibility/other` categories.
+- `casual` — informal product feedback (everyday Polish/English slang), same
+  categories with a relaxed dictionary.
+- `medical` — clinical consultations and medical systems; findings use
+  `finding/observation/risk/followup/other` with a Polish+English clinical
+  dictionary.
+- `veterinary` — veterinary consultations, procedures, and clinic systems
+  (e.g. Vista); same clinical categories with a veterinary dictionary.
+- `custom` — your own profile, backed by `--keywords-file`; the file's
+  top-level keys become the finding categories. Without `--keywords-file`,
+  `review` stops with instructions.
+
+Priority for the keyword dictionary stays locked: `--keywords-file` > global
+`~/.config/screenscribe/keywords.yaml` > preset dictionary > built-in default.
+Non-default presets also record `preset` (name + categories) in the JSON
+report, and preset category badges render in the HTML report.
+
 **Examples**
 
 ```bash
@@ -154,6 +179,7 @@ uv run screenscribe review demo.mov
 uv run screenscribe review clip1.mov clip2.mov clip3.mov
 uv run screenscribe review ./recordings/session.mov --no-serve
 uv run screenscribe review demo.mov --force --keywords-file my-keywords.yaml
+uv run screenscribe review consult.mov --preset veterinary
 uv run screenscribe review demo.mov --no-vision           # skip the VLM step
 uv run screenscribe review demo.mov --lang en --prompt "Focus on accessibility issues"
 uv run screenscribe review demo.mov --estimate            # just the time estimate
