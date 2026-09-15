@@ -37,6 +37,16 @@
   `--keywords-file` > global file > preset dictionary > built-in default;
   non-default presets record `preset` (name + categories) in the JSON report
   and their category badges render in the HTML report.
+- **Added: review-agent chat on the report server.** `POST /api/agent/chat/stream`
+  (SSE) and `POST /api/agent/chat` continue a conversation about the loaded
+  report with tools (`list_findings`, `get_transcript`, `seek`, `show_frame`,
+  `get_report_summary`, optional `open_repo_file`). Primary provider is the
+  configured LLM Responses endpoint (`previous_response_id` chaining); Anthropic
+  is an optional fallback extra. Screen recordings are treated as secrets:
+  `SCREENSCRIBE_AGENT_EGRESS` defaults to `deny` for `trust=external` hosts.
+  xAI is external unless `SCREENSCRIBE_AGENT_PRIMARY_TRUST=internal`. The JSON
+  report now stores `analysis_passes.unified_analysis.response_id` so the next
+  review can resume the last VLM pass for free.
 
 - **Internal: refresh runtime and development dependencies.** Updated the lockfile
   to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.
