@@ -300,6 +300,16 @@ def _serialize_unified_analysis(finding: Any | None) -> dict[str, Any]:
     }
 
 
+def _last_pass_response_id(unified_findings: list[Any] | None) -> str | None:
+    """``response_id`` of the last unified finding that has one."""
+    last: str | None = None
+    for finding in unified_findings or []:
+        rid = getattr(finding, "response_id", "") or ""
+        if isinstance(rid, str) and rid.strip():
+            last = rid.strip()
+    return last
+
+
 def _build_analysis_passes(
     detections: list[Detection],
     screenshots: list[tuple[Detection, Path]],
@@ -332,5 +342,8 @@ def _build_analysis_passes(
             "count": unified_total,
             "matched_findings": matched_count,
             "unmatched_findings": max(len(screenshots) - matched_count, 0),
+            # Last VLM pass id so review-agent chat can resume with
+            # previous_response_id instead of reseeding the whole report.
+            "response_id": _last_pass_response_id(unified_findings),
         },
     }
