@@ -1,13 +1,15 @@
 """API utilities including retry logic with exponential backoff."""
 
 import math
+import re
 import time
 from collections.abc import Callable
 from typing import Any, TypeVar
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from rich.console import Console
+from rich.markup import escape
 
 console = Console()
 
@@ -51,6 +53,69 @@ def endpoint_host(endpoint: str | None) -> str:
     except ValueError:
         host = None
     return host or "unknown host"
+
+
+_URL_IN_TEXT = re.compile(r"https?://[^\s'\"<>]+")
+_URL_TRAILING_PUNCTUATION = "'\")]},.;:"
+
+
+def redact_url(url: str) -> str:
+    """Return ``url`` safe to print: no userinfo, no query values, no fragment.
+
+    Keeps scheme, host, port and path so the target stays recognizable.
+    Userinfo becomes ``***@`` and every query value becomes ``***`` (keys are
+    kept, e.g. ``?api-version=***&key=***``). Screenscribe never takes
+    credentials from an endpoint URL (keys travel in the Authorization header);
+    this is defense in depth for URLs echoed in logs and error messages.
+    Unparseable input returns ``"unknown host"``, never the raw string.
+    """
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+        port = parts.port
+    except (ValueError, TypeError, AttributeError):
+        return "unknown host"
+    if not parts.scheme or not host:
+        return "unknown host"
+    netloc = f"[{host}]" if ":" in host else host
+    if port is not None:
+        netloc = f"{netloc}:{port}"
+    if "@" in parts.netloc:
+        netloc = f"***@{netloc}"
+    # A bare query item (no "=") may itself be a token, so it is masked too.
+    query = "&".join(
+        f"{pair.split('=', 1)[0]}=***" if "=" in pair else "***"
+        for pair in parts.query.split("&")
+        if pair
+    )
+    return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
+
+
+def _redact_urls_in_text(text: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        stripped = raw.rstrip(_URL_TRAILING_PUNCTUATION)
+        return redact_url(stripped) + raw[len(stripped) :]
+
+    return _URL_IN_TEXT.sub(_replace, text)
+
+
+def redact_error_message(error: BaseException) -> str:
+    """``str(error)`` with every URL redacted (see ``redact_url``).
+
+    httpx exceptions embed the request URL in their message (e.g. an
+    HTTPStatusError's "for url '...'"). The exact request URL is replaced
+    first, then any remaining ``http(s)://`` URL in the text is redacted too.
+    """
+    message = str(error)
+    if isinstance(error, (httpx.RequestError, httpx.HTTPStatusError)):
+        try:
+            request_url = str(error.request.url)
+        except RuntimeError:  # RequestError.request is unset
+            request_url = ""
+        if request_url:
+            message = message.replace(request_url, redact_url(request_url))
+    return _redact_urls_in_text(message)
 
 
 # Substrings of a provider error code/type that mark a stream error as
@@ -344,7 +409,7 @@ def retry_request(
                 f"[yellow]{operation_name} failed (attempt {attempt + 1}/{max_retries + 1}), "
                 f"retrying in {delay:.1f}s...[/]"
             )
-            console.print(f"[dim]  Error: {e}[/]")
+            console.print(f"[dim]  Error: {escape(redact_error_message(e))}[/]")
 
             time.sleep(delay)
 

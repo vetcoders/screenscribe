@@ -22,6 +22,7 @@ from .api_utils import (
     build_llm_request_body,
     endpoint_host,
     extract_stream_error_event,
+    redact_url,
     responses_reasoning_options,
     retry_request,
     stream_chunk_has_model_output,
@@ -303,7 +304,7 @@ def semantic_prefilter(
     console.print("[blue]Running semantic pre-filter on entire transcript...[/]")
 
     if config.verbose:
-        console.print(f"[dim]  Endpoint: {config.llm_endpoint}[/]")
+        console.print(f"[dim]  Endpoint: {escape(redact_url(config.llm_endpoint))}[/]")
         console.print(f"[dim]  Model: {config.llm_model}[/]")
         console.print(f"[dim]  Segments: {len(transcription.segments)}[/]")
         console.print(f"[dim]  Transcript length: {len(transcript_text)} chars[/]")

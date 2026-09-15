@@ -2,10 +2,12 @@
 
 import httpx
 from rich.console import Console
+from rich.markup import escape
 
 from .api_utils import (
     build_llm_request_body,
     extract_llm_response_text,
+    redact_error_message,
     retry_request,
 )
 from .config import ScreenScribeConfig
@@ -61,5 +63,7 @@ def generate_detection_executive_summary(
         return extract_llm_response_text(result, config.llm_endpoint)
 
     except Exception as e:
-        console.print(f"[yellow]Transcript-only executive summary failed: {e}[/]")
+        console.print(
+            f"[yellow]Transcript-only executive summary failed: {escape(redact_error_message(e))}[/]"
+        )
         return ""

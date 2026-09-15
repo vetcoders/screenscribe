@@ -23,10 +23,12 @@ import json
 from collections.abc import Callable
 
 import httpx
+from rich.markup import escape
 
 from ..api_utils import (
     build_llm_request_body,
     extract_llm_response_text,
+    redact_error_message,
     retry_request,
 )
 from ..config import ScreenScribeConfig
@@ -214,7 +216,9 @@ def llm_merge_findings(
     try:
         raw = llm_caller(prompt)
     except Exception as exc:  # transport / provider failure -> safe no-op
-        console.print(f"[yellow]LLM-merge pass skipped (call failed): {exc}[/]")
+        console.print(
+            f"[yellow]LLM-merge pass skipped (call failed): {escape(redact_error_message(exc))}[/]"
+        )
         return findings
 
     groups = _parse_merge_groups(raw, len(findings))

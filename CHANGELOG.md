@@ -30,7 +30,12 @@
 - **Hardening: pre-filter failure reasons never include the endpoint URL.**
   HTTP errors are reported as status, host and a short provider message, and
   transport errors as type and host, so credentials or query parameters in a
-  configured endpoint URL cannot leak into output.
+  configured endpoint URL cannot leak into output. The same defense in depth now
+  covers logs: retry messages, verbose endpoint and analysis-failure lines,
+  summary/LLM-merge warnings, model-validation errors and config mismatch
+  messages redact URLs (userinfo and query values masked, fragment dropped).
+  Screenscribe never reads credentials from endpoint URLs; keys are sent only in
+  the Authorization header.
 - **Fixed: semantic pre-filter no longer hangs reasoning without an answer.**
   Root cause: the pre-filter sent no reasoning effort, so on a full transcript
   the default LLM reasoned in a loop for 11-20 minutes, emitted no text and

@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from .api_utils import redact_url
+
 if TYPE_CHECKING:
     from .keywords import KeywordsConfig
 
@@ -302,7 +304,7 @@ class ScreenScribeConfig:
             ):
                 errors.append(
                     f"{label} endpoint does not match the configured {declared_provider} preset.\n"
-                    f"  Endpoint in use: {endpoint}\n"
+                    f"  Endpoint in use: {redact_url(endpoint)}\n"
                     "  Run `screenscribe config setup` to rewrite one coherent provider preset."
                 )
                 continue
@@ -442,7 +444,7 @@ class ScreenScribeConfig:
             warnings.append(
                 f"{label} key/endpoint mismatch.\n"
                 f"  What: {detail}\n"
-                f"  Endpoint in use: {endpoint}\n"
+                f"  Endpoint in use: {redact_url(endpoint)}\n"
                 "  Note: OpenAI-compatible gateways legitimately use OpenAI-style "
                 "keys, so an ambiguous key on a LibraxisAI endpoint is a warning "
                 "and the run continues. Only a LibraxisAI key aimed at OpenAI is "

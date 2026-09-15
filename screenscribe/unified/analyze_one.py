@@ -12,9 +12,11 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
+from rich.markup import escape
 
 from ..api_utils import (
     extract_stream_error_event,
+    redact_error_message,
     retry_request,
     stream_chunk_has_model_output,
 )
@@ -382,7 +384,9 @@ def analyze_finding_unified_streaming(
     except Exception as e:
         if has_screenshot and not use_text_only_backend:
             if config.verbose:
-                console.print(f"[dim]Streaming image-backed analysis failed: {e}[/]")
+                console.print(
+                    f"[dim]Streaming image-backed analysis failed: {escape(redact_error_message(e))}[/]"
+                )
                 console.print("[dim]Retrying unified analysis without image...[/]")
             return analyze_finding_unified_streaming(
                 detection,
@@ -394,7 +398,7 @@ def analyze_finding_unified_streaming(
                 force_text_only=True,
             )
         if config.verbose:
-            console.print(f"[dim]Streaming analysis failed: {e}[/]")
+            console.print(f"[dim]Streaming analysis failed: {escape(redact_error_message(e))}[/]")
             console.print("[dim]Retrying unified analysis without streaming...[/]")
         return analyze_finding_unified(
             detection,
@@ -542,7 +546,9 @@ def analyze_finding_unified(
     except Exception as e:
         if has_screenshot and not use_text_only_backend:
             if config.verbose:
-                console.print(f"[dim]Unified image-backed analysis failed: {e}[/]")
+                console.print(
+                    f"[dim]Unified image-backed analysis failed: {escape(redact_error_message(e))}[/]"
+                )
                 console.print("[dim]Retrying unified analysis without image...[/]")
             return analyze_finding_unified(
                 detection,
@@ -551,5 +557,5 @@ def analyze_finding_unified(
                 previous_response_id=previous_response_id,
                 force_text_only=True,
             )
-        console.print(f"[yellow]Unified analysis failed: {e}[/]")
+        console.print(f"[yellow]Unified analysis failed: {escape(redact_error_message(e))}[/]")
         return None

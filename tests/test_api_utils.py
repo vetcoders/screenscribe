@@ -293,3 +293,105 @@ def test_endpoint_host_hides_credentials() -> None:
     url = "https://user:secret@llm.example.com:8443/v1/responses?k=1"  # pragma: allowlist secret
     assert endpoint_host(url) == "llm.example.com"
     assert endpoint_host("") == "unknown host"
+
+
+# --- URL redaction for printed / logged error messages -----------------------
+
+_USERINFO_URL = "https://user:secret@api.example.com/v1/responses?key=abc&api-version=1"  # pragma: allowlist secret
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "https://user:secret@api.example.com/v1/responses",  # pragma: allowlist secret
+            "https://***@api.example.com/v1/responses",
+        ),
+        (
+            "https://api.example.com/v1/responses?key=abc&api-version=2024-01-01",
+            "https://api.example.com/v1/responses?key=***&api-version=***",
+        ),
+        ("https://api.example.com/v1/responses", "https://api.example.com/v1/responses"),
+        ("http://localhost:8443/v1/responses", "http://localhost:8443/v1/responses"),
+        ("https://api.example.com/v1/responses#frag", "https://api.example.com/v1/responses"),
+        ("https://api.example.com/v1?sk-token-only", "https://api.example.com/v1?***"),
+        ("not a url at all", "unknown host"),
+        ("https://api.example.com:99999/bad-port", "unknown host"),
+        ("", "unknown host"),
+    ],
+)
+def test_redact_url(url: str, expected: str) -> None:
+    from screenscribe.api_utils import redact_url
+
+    assert redact_url(url) == expected
+
+
+def _assert_url_secrets_absent(text: str) -> None:
+    assert "secret" not in text
+    assert "user:" not in text
+    assert "abc" not in text
+
+
+def test_redact_error_message_http_status_error() -> None:
+    from screenscribe.api_utils import redact_error_message
+
+    request = httpx.Request("POST", _USERINFO_URL)
+    response = httpx.Response(401, request=request)
+    with pytest.raises(httpx.HTTPStatusError) as caught:
+        response.raise_for_status()
+
+    redacted = redact_error_message(caught.value)
+
+    _assert_url_secrets_absent(redacted)
+    assert redacted.splitlines()[0] == (
+        "Client error '401 Unauthorized' for url "
+        "'https://***@api.example.com/v1/responses?key=***&api-version=***'"
+    )
+
+
+def test_redact_error_message_plain_error_with_embedded_url() -> None:
+    from screenscribe.api_utils import redact_error_message
+
+    redacted = redact_error_message(RuntimeError(f"call to ({_USERINFO_URL}), failed"))
+
+    assert redacted == (
+        "call to (https://***@api.example.com/v1/responses?key=***&api-version=***), failed"
+    )
+
+
+def test_redact_error_message_request_error_without_request() -> None:
+    from screenscribe.api_utils import redact_error_message
+
+    assert redact_error_message(httpx.ConnectError("connection refused")) == "connection refused"
+    redacted = redact_error_message(httpx.ReadError(f"read failed: {_USERINFO_URL}"))
+    _assert_url_secrets_absent(redacted)
+
+
+def test_retry_request_log_redacts_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+
+    from rich.console import Console
+
+    buffer = io.StringIO()
+    monkeypatch.setattr(
+        "screenscribe.api_utils.console", Console(file=buffer, width=500, color_system=None)
+    )
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda _d: None)
+    request = httpx.Request("POST", _USERINFO_URL)
+    calls = 0
+
+    def unavailable_then_ok() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            httpx.Response(503, request=request).raise_for_status()
+        return "ok"
+
+    assert retry_request(unavailable_then_ok, operation_name="LLM call") == "ok"
+    output = buffer.getvalue()
+    _assert_url_secrets_absent(output)
+    error_line = next(line for line in output.splitlines() if line.startswith("  Error:"))
+    assert error_line == (
+        "  Error: Server error '503 Service Unavailable' for url "
+        "'https://***@api.example.com/v1/responses?key=***&api-version=***'"
+    )

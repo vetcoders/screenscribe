@@ -7,8 +7,9 @@ issue summary.
 from __future__ import annotations
 
 import httpx
+from rich.markup import escape
 
-from ..api_utils import retry_request
+from ..api_utils import redact_error_message, retry_request
 from ..config import ScreenScribeConfig
 from ._console import console
 from .finding import UnifiedFinding
@@ -122,7 +123,7 @@ def generate_unified_summary(findings: list[UnifiedFinding], config: ScreenScrib
         return fallback_summary
 
     except Exception as e:
-        console.print(f"[yellow]Executive summary failed: {e}[/]")
+        console.print(f"[yellow]Executive summary failed: {escape(redact_error_message(e))}[/]")
         return fallback_summary
 
 
