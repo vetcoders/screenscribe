@@ -51,6 +51,15 @@
   under `deny`. The JSON report now stores
   `analysis_passes.unified_analysis.response_id` so the next review can resume
   the last VLM pass for free.
+- **Added: review-patch write tools on the review agent.** The agent can
+  `set_verdict`, `set_severity`, `edit_finding`, and `add_finding`, or
+  `propose_review` a plan for a broad request. Tools never write `report.json`;
+  they return a `review_patch` / `review_plan` in the existing SSE `tool_result`
+  envelope so the browser stays the single writer (existing `/api/save` lock and
+  Undo/Reset). `review_finding_state` hydrates additive `summary_override` and
+  `category_override`. Auth is unchanged: empty API key + signed-in xAI account
+  bearer is enough. `merge_findings` / `unmerge_finding` return
+  `{"unsupported": true}` until the panel grows a patch-callable merge.
 
 - **Internal: refresh runtime and development dependencies.** Updated the lockfile
   to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.
