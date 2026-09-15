@@ -3102,6 +3102,50 @@ function seekToTimestamp(seconds) {
     });
 }
 
+function showAgentFrame(input) {
+    const payload = input && typeof input === 'object' ? input : {};
+    const findingId = payload.finding_id != null ? String(payload.finding_id) : '';
+    const timestamp = Number(payload.timestamp);
+    document.querySelectorAll('.ss-agent-highlight').forEach((node) => {
+        node.classList.remove('ss-agent-highlight');
+    });
+    let target = null;
+    if (findingId) {
+        target = document.querySelector(`.finding[data-finding-id="${findingId}"]`);
+    }
+    if (!target && Number.isFinite(timestamp)) {
+        const metas = document.querySelectorAll('.finding .finding-meta[data-timestamp]');
+        let bestDelta = Infinity;
+        metas.forEach((meta) => {
+            const value = Number(meta.dataset.timestamp);
+            if (!Number.isFinite(value)) return;
+            const delta = Math.abs(value - timestamp);
+            const article = meta.closest('.finding');
+            if (article && delta < bestDelta) {
+                bestDelta = delta;
+                target = article;
+            }
+        });
+    }
+    if (target) {
+        activateTab('findings');
+        target.classList.add('ss-agent-highlight');
+        const thumb = target.querySelector('.annotation-container');
+        if (thumb) thumb.classList.add('ss-agent-highlight');
+        if (typeof target.scrollIntoView === 'function') {
+            target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+    if (Number.isFinite(timestamp)) {
+        seekToTimestamp(timestamp);
+    }
+}
+
+window.__screenscribeAgentHost = {
+    seek: seekToTimestamp,
+    showFrame: showAgentFrame,
+};
+
 function exportTodoList() {
     const originalFindings = getOriginalFindingsList();
     const videoName = document.body.dataset.videoName || 'report';
