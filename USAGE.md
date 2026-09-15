@@ -576,6 +576,19 @@ moving to a new provider.
 | `SCREENSCRIBE_VISION` | `true` | Enable visual/screenshot (VLM) analysis (`false` = LLM-only; semantic detection still runs). |
 | `SCREENSCRIBE_LLM_MERGE` | `true` | Semantic LLM-merge pass that dedups cross-category paraphrases after the cheap heuristic dedup (`false`/`0`/`no` = heuristic-only dedup). A missing LLM API key also makes it a no-op. |
 
+### Review agent chat
+
+The review server exposes `POST /api/agent/chat` and `POST /api/agent/chat/stream` (SSE). Screen recordings contain secrets, so **external** providers are skipped unless you opt in.
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `SCREENSCRIBE_AGENT_EGRESS` | `deny` | `deny` skips providers whose trust is `external`. `allow` sends the loaded report (and therefore the recording's contents) to those hosts. |
+| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from the LLM host | `local` / `internal` / `external`. localhost is `local`; `api.libraxis.cloud` is `internal`; **xAI (`api.x.ai`) is `external` unless you set this to `internal`.** |
+
+Optional Anthropic fallback (skipped when unset): `ANTHROPIC_API_KEY` or `SCREENSCRIBE_AGENT_FALLBACK_API_KEY`. Install the extra with `pip install 'screenscribe[anthropic]'`.
+
+SSE events (UI contract): `token`, `tool_call`, `tool_result`, `done`, `error`. Request body: `{"message": str, "history": [{role, content}], "previous_response_id": str|null}`. The first turn resumes `analysis_passes.unified_analysis.response_id` when present; otherwise the agent is seeded from the report JSON.
+
 ### xAI, TTS and live STT
 
 | Variable | Purpose |

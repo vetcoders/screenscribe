@@ -44,6 +44,9 @@ Showcase = "https://github.com/vetcoders/screenscribe/blob/main/docs/SHOWCASE.md
 Issues = "https://github.com/vetcoders/screenscribe/issues"
 Changelog = "https://github.com/vetcoders/screenscribe/blob/main/CHANGELOG.md"
 
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40.0"]
+
 [project.scripts]
 screenscribe = "screenscribe.bootstrap:main"
 
