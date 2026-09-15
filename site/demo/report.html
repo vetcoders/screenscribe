@@ -426,6 +426,20 @@ body[data-window-mode="player"] .header-tabs {
     text-align: right;
 }
 
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    min-width: 0;
+}
+
+.header-right .meta {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .window-actions {
     display: flex;
     align-items: center;
@@ -455,6 +469,17 @@ body[data-window-mode="player"] .header-tabs {
     display: none !important;
 }
 
+@media (max-width: 1200px) {
+    .app-header {
+        flex-wrap: wrap;
+    }
+    .header-tabs {
+        order: 3;
+        max-width: none;
+        width: 100%;
+    }
+}
+
 @media (max-width: 900px) {
     .app-header {
         flex-wrap: wrap;
@@ -468,6 +493,53 @@ body[data-window-mode="player"] .header-tabs {
         width: 100%;
         justify-content: flex-start;
         overflow-x: auto;
+    }
+}
+
+@media (max-width: 600px) {
+    .app-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .header-left {
+        display: contents;
+    }
+    .app-header h1 {
+        grid-column: 1;
+        grid-row: 1;
+    }
+    .header-right {
+        grid-column: 2;
+        grid-row: 1;
+    }
+    .header-right .meta {
+        display: none;
+    }
+    .window-actions {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        width: 100%;
+        overflow: visible;
+    }
+    .header-tabs {
+        grid-column: 1 / -1;
+        grid-row: 3;
+    }
+    /* Analyze carries both speech- and UI-language controls in header-right.
+       Give that intrinsic-width group its own wrapping row on phones instead
+       of squeezing the non-wrapping wordmark into a competing grid column. */
+    body[data-surface-id="analyze"] .app-header {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    body[data-surface-id="analyze"] .header-right {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        width: 100%;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+    }
+    body[data-surface-id="analyze"] .header-tabs {
+        grid-row: 3;
     }
 }
 
@@ -1387,6 +1459,50 @@ body.is-resizing * {
     margin-top: var(--space-md);
 }
 
+.finding-merged-frames {
+    margin-top: var(--space-md);
+}
+
+.merged-frame-list {
+    display: grid;
+    gap: var(--space-sm);
+    margin: var(--space-xs) 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.merged-frame {
+    display: grid;
+    gap: var(--space-xs);
+    justify-items: start;
+    padding: var(--space-sm);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--surface-sunken);
+}
+
+.merged-frame-thumb {
+    display: block;
+    inline-size: min(100%, 240px);
+    max-inline-size: 100%;
+    block-size: auto;
+    max-block-size: 160px;
+    object-fit: contain;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+}
+
+.merged-frame-time {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--fs-2xs);
+}
+
+.merged-frame-transcript {
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
 .thumbnail {
     max-width: 280px;
     border-radius: var(--radius-md);
@@ -1694,7 +1810,8 @@ body.is-resizing * {
     position: absolute;
     top: 0;
     left: 0;
-    pointer-events: none;
+    pointer-events: auto;
+    cursor: default;
     border-radius: var(--radius-md);
 }
 
@@ -1702,6 +1819,46 @@ body.is-resizing * {
     pointer-events: auto;
     cursor: crosshair;
     touch-action: none;
+}
+
+.lightbox-annotation-svg.selecting {
+    pointer-events: auto;
+    cursor: default;
+    touch-action: none;
+}
+
+.lightbox-annotation-svg .annotation-selected {
+    outline: none;
+}
+
+.lightbox-annotation-svg .annotation-selection-box {
+    pointer-events: none;
+}
+
+.lightbox-annotation-svg .annotation-handle {
+    fill: var(--ss-accent);
+    stroke: var(--surface-primary);
+    stroke-width: 0.003;
+    cursor: nwse-resize;
+}
+
+.lightbox-annotation-svg .annotation-handle-start,
+.lightbox-annotation-svg .annotation-handle-end {
+    cursor: grab;
+}
+
+.lightbox-annotation-svg .annotation-handle-nw,
+.lightbox-annotation-svg .annotation-handle-se {
+    cursor: nwse-resize;
+}
+
+.lightbox-annotation-svg .annotation-handle-ne,
+.lightbox-annotation-svg .annotation-handle-sw {
+    cursor: nesw-resize;
+}
+
+.lightbox-annotation-svg .annotation-handle-size {
+    cursor: nwse-resize;
 }
 
 .lightbox-toolbar {
@@ -1768,6 +1925,7 @@ body.is-resizing * {
 }
 
 .lightbox-toolbar .undo-btn,
+.lightbox-toolbar .delete-btn,
 .lightbox-toolbar .clear-btn {
     padding: var(--space-xs) var(--space-sm);
     background: var(--surface-elevated);
@@ -1777,8 +1935,16 @@ body.is-resizing * {
     cursor: pointer;
     font-size: var(--fs-md);}
 
+.lightbox-toolbar .delete-btn,
 .lightbox-toolbar .clear-btn {
     color: var(--color-high);
+}
+
+.lightbox-toolbar .stroke-width-input,
+.lightbox-toolbar .font-size-input {
+    width: 72px;
+    accent-color: var(--ss-accent);
+    cursor: pointer;
 }
 
 .lightbox-toolbar .done-btn {
@@ -1992,6 +2158,7 @@ body.is-resizing * {
 .header-tabs .tab-btn:focus-visible,
 .lang-toggle button:focus-visible,
 .lightbox-toolbar .tool-btn:focus-visible,
+.lightbox-toolbar .delete-btn:focus-visible,
 .lightbox-close:focus-visible,
 .sidebar-resizer:focus-visible {
     outline: 2px solid var(--ss-accent);
@@ -2012,7 +2179,7 @@ body.is-resizing * {
 
 .export-buttons {
     display: flex;
-    gap: var(--space-sm);
+    gap: var(--space-sm) var(--space-lg);
     flex-wrap: wrap;
 }
 
@@ -2178,6 +2345,33 @@ footer::before {
 .merged-badge {
     background: color-mix(in srgb, var(--ss-accent) 25%, transparent);
     border: 1px solid var(--ss-accent);
+}
+
+.unmerge-finding-btn {
+    margin-left: auto;
+    padding: 0.35rem 0.7rem;
+    color: var(--text-primary);
+    background: var(--surface-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.unmerge-finding-btn:hover {
+    color: var(--ss-accent);
+    border-color: var(--ss-accent);
+    background: var(--surface-hover);
+}
+
+.export-buttons button.btn-reset-review {
+    color: var(--color-error);
+    border-color: color-mix(in srgb, var(--color-error) 55%, var(--border-default));
+}
+
+.export-buttons button.btn-reset-review:hover {
+    color: var(--color-error);
+    border-color: var(--color-error);
+    box-shadow: none;
 }
 
 .merged-from {
@@ -2710,12 +2904,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
         </div>
         <nav class="header-tabs" role="tablist" aria-label="Report sections">
-    <button class="tab-btn active" data-tab="summary" role="tab" aria-selected="true" aria-controls="tab-summary"><span data-i18n="summary">Summary</span></button>
-    <button class="tab-btn" data-tab="findings" role="tab" aria-selected="false" aria-controls="tab-findings"><span data-i18n="findings">Moments</span> (3)</button>
-    <button class="tab-btn" data-tab="export" role="tab" aria-selected="false" aria-controls="tab-export"><span data-i18n="export">Export</span></button>
+    <button class="tab-btn active" data-tab="summary" role="tab" aria-selected="true" tabindex="0" aria-controls="tab-summary"><span data-i18n="summary">Summary</span></button>
+    <button class="tab-btn" data-tab="findings" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-findings"><span data-i18n="findings">Moments</span> (<span id="findings-count">3</span>)</button>
+    <button class="tab-btn" data-tab="export" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-export"><span data-i18n="export">Export</span></button>
 </nav>
 
-        <div class="header-right" style="display:flex; align-items:center; gap: var(--space-md);">
+        <div class="header-right">
     <div class="meta">acme-notes-demo.mov</div>
     <div class="meta">2026-01-01 00:00</div>
     <div class="ui-language"><div class="lang-toggle" id="langToggle" role="group" aria-label="Language" data-i18n-attr="aria-label:language_toggle_aria"><button type="button" data-lang="en" aria-pressed="true" class="active">EN</button><button type="button" data-lang="pl" aria-pressed="false">PL</button></div></div>
@@ -2812,8 +3006,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                     </div>
                 </div>
                 <div class="review-field">
-                    <label data-i18n="changePriority">Change priority</label>
-                    <select class="severity-select">
+                    <label for="finding-priority-1" data-i18n="changePriority">Change priority</label>
+                    <select id="finding-priority-1" class="severity-select">
                         <option value="" data-i18n="noChange">-- No change --</option>
                         <option value="critical" data-i18n="critical">Critical</option>
                         <option value="high" data-i18n="high">High</option>
@@ -2823,7 +3017,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                 </div>
             </div>
             <div class="review-field notes">
-                <label data-i18n="notes">Notes / Actions</label>
+                <label for="finding-notes-1" data-i18n="notes">Notes / Actions</label>
                 <div class="ai-suggestions"><strong data-i18n="aiSuggestions">AI Suggestions:</strong> Confirm the write reaches the backend (network tab shows the request)., Surface a real error state when the write fails instead of a false success.</div>
                 <div class="notes-toolbar">
                     <button type="button"
@@ -2835,7 +3029,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                     </button>
                     <span class="notes-mic-status" data-finding-id="1"></span>
                 </div>
-                <textarea placeholder="Your notes, actions to take..." data-i18n="notesPlaceholder"></textarea>
+                <textarea placeholder="Your notes, actions to take..." id="finding-notes-1" data-i18n="notesPlaceholder"></textarea>
             </div>
         </div>
     </article>
@@ -2883,8 +3077,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                     </div>
                 </div>
                 <div class="review-field">
-                    <label data-i18n="changePriority">Change priority</label>
-                    <select class="severity-select">
+                    <label for="finding-priority-2" data-i18n="changePriority">Change priority</label>
+                    <select id="finding-priority-2" class="severity-select">
                         <option value="" data-i18n="noChange">-- No change --</option>
                         <option value="critical" data-i18n="critical">Critical</option>
                         <option value="high" data-i18n="high">High</option>
@@ -2894,7 +3088,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                 </div>
             </div>
             <div class="review-field notes">
-                <label data-i18n="notes">Notes / Actions</label>
+                <label for="finding-notes-2" data-i18n="notes">Notes / Actions</label>
                 <div class="ai-suggestions"><strong data-i18n="aiSuggestions">AI Suggestions:</strong> Raise icon color contrast to at least 4.5:1 against the toolbar background.</div>
                 <div class="notes-toolbar">
                     <button type="button"
@@ -2906,7 +3100,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                     </button>
                     <span class="notes-mic-status" data-finding-id="2"></span>
                 </div>
-                <textarea placeholder="Your notes, actions to take..." data-i18n="notesPlaceholder"></textarea>
+                <textarea placeholder="Your notes, actions to take..." id="finding-notes-2" data-i18n="notesPlaceholder"></textarea>
             </div>
         </div>
     </article>
@@ -2954,8 +3148,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                     </div>
                 </div>
                 <div class="review-field">
-                    <label data-i18n="changePriority">Change priority</label>
-                    <select class="severity-select">
+                    <label for="finding-priority-3" data-i18n="changePriority">Change priority</label>
+                    <select id="finding-priority-3" class="severity-select">
                         <option value="" data-i18n="noChange">-- No change --</option>
                         <option value="critical" data-i18n="critical">Critical</option>
                         <option value="high" data-i18n="high">High</option>
@@ -2965,7 +3159,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                 </div>
             </div>
             <div class="review-field notes">
-                <label data-i18n="notes">Notes / Actions</label>
+                <label for="finding-notes-3" data-i18n="notes">Notes / Actions</label>
                 <div class="ai-suggestions"><strong data-i18n="aiSuggestions">AI Suggestions:</strong> Collapse the sidebar below a breakpoint or make it a toggling drawer.</div>
                 <div class="notes-toolbar">
                     <button type="button"
@@ -2977,7 +3171,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                     </button>
                     <span class="notes-mic-status" data-finding-id="3"></span>
                 </div>
-                <textarea placeholder="Your notes, actions to take..." data-i18n="notesPlaceholder"></textarea>
+                <textarea placeholder="Your notes, actions to take..." id="finding-notes-3" data-i18n="notesPlaceholder"></textarea>
             </div>
         </div>
     </article>
@@ -3009,6 +3203,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
          download, so it stays in the footer. The TODO/JSON/ZIP artifact
          downloads live in the final Export tab (review_sidebar.html). -->
     <div class="export-buttons">
+        <button type="button" data-action="reset-review" class="btn-secondary btn-reset-review" data-i18n="resetReview">Reset review</button>
         <button type="button" data-action="save-review" class="btn-primary" data-i18n="saveToDisk">Save review</button>
     </div>
 </div>
@@ -3025,12 +3220,16 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         <svg id="lightbox-svg" class="lightbox-annotation-svg"></svg>
     </div>
     <div id="lightbox-toolbar" class="lightbox-toolbar" style="display: none;" role="toolbar" aria-label="Annotation tools">
+        <button type="button" class="tool-btn" data-tool="select" data-i18n="toolSelect">Select</button>
         <button type="button" class="tool-btn" data-tool="pen" data-i18n="toolPen">Pen</button>
         <button type="button" class="tool-btn" data-tool="rect" data-i18n="toolRect">Rect</button>
         <button type="button" class="tool-btn" data-tool="arrow" data-i18n="toolArrow">Arrow</button>
         <button type="button" class="tool-btn" data-tool="text" data-i18n="toolText">Text</button>
         <input type="color" class="color-picker" value="#ffffff" data-default-token="--annotation-color-default">
+        <input type="range" class="stroke-width-input" min="0.002" max="0.03" step="0.001" value="0.008" data-i18n-title="propStroke" title="Stroke width">
+        <input type="range" class="font-size-input" min="0.012" max="0.18" step="0.002" value="0.036" hidden data-i18n-title="propFontSize" title="Font size">
         <button type="button" class="undo-btn" data-i18n="toolUndo">Undo</button>
+        <button type="button" class="delete-btn" data-i18n="toolDelete">Delete</button>
         <button type="button" class="clear-btn" data-i18n="toolClear">Clear</button>
         <button type="button" class="done-btn" data-action="close-lightbox" data-i18n="toolDone">Done</button>
     </div>
@@ -3110,6 +3309,10 @@ window.I18N_BUNDLE = {
             "toolRect": "Rect",
             "toolArrow": "Arrow",
             "toolText": "Text",
+            "toolSelect": "Select",
+            "toolDelete": "Delete",
+            "propStroke": "Stroke width",
+            "propFontSize": "Font size",
             "toolUndo": "Undo",
             "toolClear": "Clear",
             "toolDone": "Done",
@@ -3166,9 +3369,15 @@ window.I18N_BUNDLE = {
             "mergeFindingsBtn": "Merge selected",
             "mergeNeedTwo": "Select at least 2 findings to merge",
             "mergeDone": "Findings merged into one",
+            "unmergeFinding": "Unmerge",
+            "unmergeDone": "Merged finding split into its original moments",
+            "unmergeUnavailable": "This merge cannot be split in the current review",
             "mergedBadge": "MERGED",
             "mergedFromLabel": "Merged from",
-            "mergeSelectLabel": "Select for merge",
+            "mergedFrom": "Merged from",
+            "mergedEvidence": "Merged evidence frames",
+            "mergeSelectLabel": "Select finding {{id}} for merge",
+            "mergedScreenshotAlt": "Merged finding screenshot at {{ts}}",
             "todoRejectedSection": "Rejected as false alarm",
             "findingSummary": "Summary:",
             "affectedComponents": "Affected Components",
@@ -3182,6 +3391,11 @@ window.I18N_BUNDLE = {
             "zipExported": "ZIP exported:",
             "zipError": "ZIP export error:",
             "saveToDisk": "Save review",
+            "resetReview": "Reset review",
+            "resetReviewConfirm": "Reset the entire review? This clears the reviewer name, decisions, notes, manual merges, and manual moments, including saved changes. This cannot be undone.",
+            "resetReviewDone": "Review reset to the generated report",
+            "resetReviewFailed": "Review reset failed: {{message}}",
+            "momentsCountDescription": "Moments: {{count}} total, including rejected",
             "detachReview": "Open Review Window",
             "focusReview": "Focus Review Window",
             "attachWorkspace": "Return to One Window",
@@ -3354,6 +3568,10 @@ window.I18N_BUNDLE = {
             "toolRect": "Prostokąt",
             "toolArrow": "Strzałka",
             "toolText": "Tekst",
+            "toolSelect": "Zaznacz",
+            "toolDelete": "Usuń",
+            "propStroke": "Grubość kreski",
+            "propFontSize": "Rozmiar czcionki",
             "toolUndo": "Cofnij",
             "toolClear": "Wyczyść",
             "toolDone": "Gotowe",
@@ -3410,9 +3628,15 @@ window.I18N_BUNDLE = {
             "mergeFindingsBtn": "Scal zaznaczone",
             "mergeNeedTwo": "Zaznacz co najmniej 2 znaleziska do scalenia",
             "mergeDone": "Znaleziska scalone w jedno",
+            "unmergeFinding": "Rozłącz",
+            "unmergeDone": "Scalone znalezisko rozdzielono na pierwotne momenty",
+            "unmergeUnavailable": "Tego scalenia nie można rozdzielić w bieżącej recenzji",
             "mergedBadge": "SCALONE",
             "mergedFromLabel": "Scalone z",
-            "mergeSelectLabel": "Zaznacz do scalenia",
+            "mergedFrom": "Scalone z",
+            "mergedEvidence": "Scalone klatki dowodowe",
+            "mergeSelectLabel": "Zaznacz znalezisko {{id}} do scalenia",
+            "mergedScreenshotAlt": "Screenshot scalonego znaleziska o {{ts}}",
             "todoRejectedSection": "Odrzucone jako fałszywy alarm",
             "findingSummary": "Podsumowanie:",
             "affectedComponents": "Powiązane komponenty",
@@ -3426,6 +3650,11 @@ window.I18N_BUNDLE = {
             "zipExported": "ZIP wyeksportowany:",
             "zipError": "Błąd eksportu ZIP:",
             "saveToDisk": "Zapisz recenzję",
+            "resetReview": "Resetuj recenzję",
+            "resetReviewConfirm": "Zresetować całą recenzję? Spowoduje to usunięcie nazwy recenzenta, decyzji, notatek, ręcznych scaleń i ręcznych momentów, również zapisanych zmian. Tej operacji nie można cofnąć.",
+            "resetReviewDone": "Recenzja została zresetowana do wygenerowanego raportu",
+            "resetReviewFailed": "Nie udało się zresetować recenzji: {{message}}",
+            "momentsCountDescription": "Momenty: łącznie {{count}}, w tym odrzucone",
             "detachReview": "Otwórz okno recenzji",
             "focusReview": "Pokaż okno recenzji",
             "attachWorkspace": "Wróć do jednego okna",
@@ -3683,6 +3912,49 @@ window.applyTranslations = applyTranslations;
 
 </script>
 <script>
+(function attachLayoutControl(root) {
+    const namespace = root.ScreenScribeLib || {};
+
+    function initShellLayout() {
+        const header = root.document?.querySelector('.app-header');
+        const documentElement = root.document?.documentElement;
+        if (!header || !documentElement) return null;
+
+        const syncHeaderHeight = () => {
+            const height = Math.ceil(header.getBoundingClientRect().height);
+            if (height > 0) {
+                documentElement.style.setProperty('--header-height', `${height}px`);
+            }
+        };
+
+        syncHeaderHeight();
+        const observer = typeof root.ResizeObserver === 'function'
+            ? new root.ResizeObserver(syncHeaderHeight)
+            : null;
+        observer?.observe(header);
+        root.addEventListener?.('resize', syncHeaderHeight);
+
+        return {
+            refresh: syncHeaderHeight,
+            destroy() {
+                observer?.disconnect();
+                root.removeEventListener?.('resize', syncHeaderHeight);
+            },
+        };
+    }
+
+    namespace.initShellLayout = initShellLayout;
+    root.ScreenScribeLib = namespace;
+
+    if (root.document?.querySelector('.app-header')) {
+        initShellLayout();
+    } else {
+        root.document?.addEventListener('DOMContentLoaded', initShellLayout, { once: true });
+    }
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
 (function attachLanguageControl(root) {
     const namespace = root.ScreenScribeLib || {};
 
@@ -3801,7 +4073,10 @@ window.applyTranslations = applyTranslations;
         options?.onTranscribingChange?.(true);
         options?.onStatus?.(options?.statusTranscribing, 'busy');
         try {
-            const response = await fetch('/api/stt', {
+            const endpoint = typeof options?.endpoint === 'function'
+                ? options.endpoint()
+                : (options?.endpoint || '/api/stt');
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 body: formData,
             });
@@ -3832,6 +4107,7 @@ window.applyTranslations = applyTranslations;
             audioChunks: [],
             stream: null,
             isRecording: false,
+            discardOnStop: false,
 
             async init() {
                 try {
@@ -3852,6 +4128,7 @@ window.applyTranslations = applyTranslations;
                 }
 
                 this.audioChunks = [];
+                this.discardOnStop = false;
                 try {
                     this.mediaRecorder = new MediaRecorder(this.stream, {
                         mimeType: options?.mimeType || 'audio/webm;codecs=opus',
@@ -3868,6 +4145,12 @@ window.applyTranslations = applyTranslations;
                 };
 
                 this.mediaRecorder.onstop = async () => {
+                    if (this.discardOnStop) {
+                        this.discardOnStop = false;
+                        this.audioChunks = [];
+                        options?.onDiscard?.(0);
+                        return;
+                    }
                     const audioSize = this.audioChunks.reduce((total, chunk) => {
                         const size = Number(chunk?.size || 0);
                         return total + (Number.isFinite(size) ? size : 0);
@@ -3921,6 +4204,16 @@ window.applyTranslations = applyTranslations;
                     this.stop();
                     return;
                 }
+                this.releaseStreamTracks();
+            },
+
+            cancel() {
+                this.discardOnStop = true;
+                if (this.mediaRecorder && this.isRecording) {
+                    this.stop();
+                    return;
+                }
+                this.audioChunks = [];
                 this.releaseStreamTracks();
             },
         };
@@ -4315,9 +4608,10 @@ class ScreenScribePlayer {
 
     formatTimePrecise(seconds) {
         const safe = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
-        const m = Math.floor(safe / 60);
-        const s = Math.floor(safe % 60);
-        const ms = Math.floor((safe % 1) * 1000);
+        const totalMilliseconds = Math.round(safe * 1000);
+        const m = Math.floor(totalMilliseconds / 60000);
+        const s = Math.floor((totalMilliseconds % 60000) / 1000);
+        const ms = totalMilliseconds % 1000;
         return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
     }
 
@@ -4397,12 +4691,17 @@ const reportState = {
     manualFrames: [],
     // Human-merge groups: each is { id, member_ids: [...], summary_override }.
     // `id` is the surviving (earliest-timestamp) finding id; the union of every
-    // member is recomputed from the original findings at export/build time so the
-    // editable summary is the only mutable state we persist here.
+    // member is recomputed from the original findings at export/build time. The
+    // editable summary plus pre-merge member review snapshots are persisted so
+    // the fold remains reversible after Save/reload.
     merges: [],
     reviewer: '',
     modified: false,
-    reportId: ''
+    reportId: '',
+    // Monotonic server-issued epoch for destructive review resets. Shared
+    // snapshots and manual-frame requests carry it so work started before a
+    // reset cannot overwrite the reset afterwards.
+    resetGeneration: 0,
 };
 
 const WINDOW_MODES = {
@@ -4459,6 +4758,49 @@ function createDefaultFindingState() {
         verdict: 'none',
         severity: null,
         notes: ''
+    };
+}
+
+function snapshotFindingReview(state) {
+    const source = state && typeof state === 'object' ? state : {};
+    return {
+        verdict: normalizeVerdict(source.verdict),
+        severity: source.severity || null,
+        notes: source.notes || '',
+        annotations: Array.isArray(source.annotations)
+            ? ensureAnnotationsHaveIds(source.annotations.map((annotation) => cloneAnnotation(annotation)))
+            : [],
+    };
+}
+
+function reviewFieldEquals(left, right) {
+    return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+function populatedReviewSnapshot(candidate) {
+    return candidate && typeof candidate === 'object' && Object.keys(candidate).length > 0
+        ? candidate
+        : null;
+}
+
+function resolveMergedSurvivorReview(entry, currentState) {
+    const current = snapshotFindingReview(currentState);
+    if (!entry || !entry.merged_review_baseline) {
+        return current;
+    }
+    const baseline = snapshotFindingReview(entry.merged_review_baseline);
+    const saved = snapshotFindingReview(entry.survivor_review || current);
+    return {
+        verdict: current.verdict,
+        severity: reviewFieldEquals(current.severity, baseline.severity)
+            ? saved.severity
+            : current.severity,
+        notes: reviewFieldEquals(current.notes, baseline.notes)
+            ? saved.notes
+            : current.notes,
+        annotations: reviewFieldEquals(current.annotations, baseline.annotations)
+            ? saved.annotations
+            : current.annotations,
     };
 }
 
@@ -4575,6 +4917,7 @@ function activateTab(tabId, { persist = true } = {}) {
         const isActive = button.dataset.tab === nextTabId;
         button.classList.toggle('active', isActive);
         button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        button.tabIndex = isActive ? 0 : -1;
     });
 
     document.querySelectorAll('.tab-content').forEach((content) => {
@@ -4682,6 +5025,7 @@ function buildPersistableState(modified) {
         merges: Array.isArray(reportState.merges) ? reportState.merges : [],
         reviewer: reportState.reviewer,
         modified,
+        resetGeneration: reportState.resetGeneration,
     };
 }
 
@@ -4736,6 +5080,14 @@ function rememberLocalSavedAt(savedAt) {
 }
 
 function isIncomingReviewEnvelopeFresher(envelope) {
+    const incomingGeneration = resetGenerationFromEnvelope(envelope);
+    const localGeneration = normalizeResetGeneration(reportState.resetGeneration);
+    // A destructive reset is authoritative regardless of wall-clock ordering.
+    // Conversely, a late write from work started before that reset must never
+    // win merely because its savedAt timestamp is newer.
+    if (incomingGeneration !== localGeneration) {
+        return incomingGeneration > localGeneration;
+    }
     const incoming = savedAtTime(envelope);
     // No usable timestamp on the incoming snapshot (legacy/older writer): it
     // cannot be proven stale, so let it through rather than silently dropping it.
@@ -4858,9 +5210,33 @@ function mergeManualFrameImages(currentFrames, incomingFrames) {
     });
 }
 
-function hydrateReportState(snapshot, { showRestoreToast = false } = {}) {
+function hydrateReportState(
+    snapshot,
+    { showRestoreToast = false, discardActiveEditor = false } = {}
+) {
     if (!snapshot || typeof snapshot !== 'object') {
         return;
+    }
+
+    const currentResetGeneration = normalizeResetGeneration(reportState.resetGeneration);
+    const incomingResetGeneration = normalizeResetGeneration(snapshot.resetGeneration);
+    if (incomingResetGeneration < currentResetGeneration) {
+        return;
+    }
+    const resetAdvanced = incomingResetGeneration > currentResetGeneration;
+    const resetHydration = discardActiveEditor || resetAdvanced;
+
+    // Reset is the only hydration that deliberately invalidates an active
+    // annotation edit. Ordinary draft/disk/cross-window hydration must not close
+    // the lightbox and silently discard a drawing in progress.
+    if (resetHydration && (currentLightboxFindingId || lightboxAnnotationTool)) {
+        closeLightbox({ saveAnnotations: false, restoreFocus: false });
+    }
+    if (resetHydration && manualFrameRuntime.currentFrame) {
+        closeManualFrameModal({ discardRecording: true });
+    }
+    if (resetHydration && voiceNoteRuntime.recognition) {
+        discardVoiceNoteCapture();
     }
 
     stateSyncRuntime.suppressEvents = true;
@@ -4871,6 +5247,7 @@ function hydrateReportState(snapshot, { showRestoreToast = false } = {}) {
     reportState.merges = Array.isArray(snapshot.merges) ? snapshot.merges : [];
     reportState.reviewer = snapshot.reviewer || '';
     reportState.modified = Boolean(snapshot.modified);
+    reportState.resetGeneration = Math.max(currentResetGeneration, incomingResetGeneration);
     stateSyncRuntime.suppressEvents = false;
 
     const reviewerInput = document.getElementById('reviewer-name');
@@ -4951,10 +5328,12 @@ async function hydrateReportStateFromDisk({ enrichManualFrameImagesOnly = false 
             || (snapshot?.findings && Object.keys(snapshot.findings).length > 0)
             || (Array.isArray(snapshot?.manualFrames) && snapshot.manualFrames.length > 0)
         );
-        if (!hasDiskState || reportState.modified) {
+        const resetAdvanced = normalizeResetGeneration(snapshot?.resetGeneration)
+            > normalizeResetGeneration(reportState.resetGeneration);
+        if ((!hasDiskState && !resetAdvanced) || (reportState.modified && !resetAdvanced)) {
             return;
         }
-        hydrateReportState(snapshot);
+        hydrateReportState(snapshot, { discardActiveEditor: resetAdvanced });
     } catch (error) {
         if (DEBUG) console.debug('No persisted review state available:', error);
     }
@@ -4977,12 +5356,30 @@ function savedAtTime(envelope) {
     return Number.isFinite(time) ? time : null;
 }
 
+function normalizeResetGeneration(value) {
+    const generation = Number(value);
+    return Number.isInteger(generation) && generation >= 0 ? generation : 0;
+}
+
+function resetGenerationFromEnvelope(envelope) {
+    const state = envelope?.state || envelope;
+    return normalizeResetGeneration(state?.resetGeneration);
+}
+
 function chooseReviewRestoreEnvelope(draftEnvelope, syncEnvelope) {
     if (!draftEnvelope) {
         return { envelope: syncEnvelope, source: 'sync' };
     }
     if (!syncEnvelope) {
         return { envelope: draftEnvelope, source: 'draft' };
+    }
+
+    const draftGeneration = resetGenerationFromEnvelope(draftEnvelope);
+    const syncGeneration = resetGenerationFromEnvelope(syncEnvelope);
+    if (draftGeneration !== syncGeneration) {
+        return syncGeneration > draftGeneration
+            ? { envelope: syncEnvelope, source: 'sync' }
+            : { envelope: draftEnvelope, source: 'draft' };
     }
 
     const draftTime = savedAtTime(draftEnvelope);
@@ -5334,18 +5731,24 @@ function openLightbox(img) {
     }
 }
 
-function closeLightbox() {
+function closeLightbox({ saveAnnotations = true, restoreFocus = true } = {}) {
     const lightbox = document.getElementById('lightbox');
+    const lightboxImg = document.getElementById('lightbox-img');
     const lightboxToolbar = document.getElementById('lightbox-toolbar');
 
-    // Save annotations before closing
-    if (lightboxAnnotationTool && currentLightboxFindingId) {
-        lightboxAnnotationTool.saveAnnotations();
+    // Cancel a pending image load so it cannot create a new annotation editor
+    // after a synchronized reset has already dismissed the lightbox.
+    if (lightboxImg) lightboxImg.onload = null;
 
-        // Update thumbnail canvas with new annotations
-        const thumbnailTool = annotationTools.get(currentLightboxFindingId);
-        if (thumbnailTool) {
-            thumbnailTool.refreshFromState();
+    if (lightboxAnnotationTool) {
+        if (saveAnnotations && currentLightboxFindingId) {
+            lightboxAnnotationTool.saveAnnotations();
+
+            // Update thumbnail canvas with new annotations
+            const thumbnailTool = annotationTools.get(currentLightboxFindingId);
+            if (thumbnailTool) {
+                thumbnailTool.refreshFromState();
+            }
         }
         lightboxAnnotationTool.destroy();
     }
@@ -5360,7 +5763,7 @@ function closeLightbox() {
         lightbox.__focusTrapHandler = null;
     }
     // Restore focus to the thumbnail (or whatever opened the lightbox).
-    if (lightboxReturnFocus && typeof lightboxReturnFocus.focus === 'function') {
+    if (restoreFocus && lightboxReturnFocus && typeof lightboxReturnFocus.focus === 'function') {
         lightboxReturnFocus.focus();
     }
     lightboxReturnFocus = null;
@@ -5503,17 +5906,11 @@ function bindThumbnailClicks(scope = document) {
 
 // Shared function to build review data - used by both JSON and ZIP export
 // =============================================================================
-// REVIEW META: live counters + findings filtering (stats cards are filters).
-// Rejected findings ("false alarm") disappear from the default list and all
-// deliverables; they stay reachable through the "Rejected" filter and are
-// recorded explicitly in saves/exports so they are not re-flagged later.
+// REVIEW META: live counter for logical moments represented in the review.
+// Rejected findings remain visible (dimmed + struck through) and therefore stay
+// in the tab count. Exports still record them separately so they are not
+// re-flagged later. A human merge counts as one logical moment, not N cards.
 // =============================================================================
-
-function getEffectiveSeverity(article) {
-    const findingId = article.dataset.findingId;
-    const override = reportState.findings[findingId]?.severity;
-    return override || article.dataset.severity || 'medium';
-}
 
 function getReviewStatus(article) {
     if (article.dataset.verdict === 'accepted') return 'accepted';
@@ -5529,21 +5926,7 @@ function updateReviewMeta() {
     const articles = Array.from(document.querySelectorAll('.finding')).filter(
         (article) => article.dataset.mergedAway !== 'true'
     );
-    const counts = { total: 0, critical: 0, high: 0, medium: 0, low: 0,
-        accepted: 0, rejected: 0, none: 0 };
-    articles.forEach((article) => {
-        const status = getReviewStatus(article);
-        counts[status] += 1;
-        if (status !== 'rejected') {
-            counts.total += 1;
-            const sev = getEffectiveSeverity(article);
-            if (counts[sev] !== undefined) counts[sev] += 1;
-        }
-    });
-    const findingsBtn = document.querySelector('.tab-btn[data-tab="findings"]');
-    if (findingsBtn) {
-        findingsBtn.textContent = t('review.findings') + ' (' + counts.total + ')';
-    }
+    updateFindingsTabCount(articles.length);
 }
 
 // =============================================================================
@@ -5856,6 +6239,7 @@ function mergeFindings(ids) {
     const expanded = [];
     const seen = new Set();
     const remaining = [];
+    const absorbedMerges = [];
     const pushMember = (id) => {
         const key = normId(id);
         if (seen.has(key)) return;
@@ -5870,6 +6254,7 @@ function mergeFindings(ids) {
     const selectedKeys = new Set(ids.map(normId));
     for (const m of reportState.merges) {
         if (selectedKeys.has(normId(m.id))) {
+            absorbedMerges.push(m);
             (m.member_ids || []).forEach(pushMember);
         } else {
             remaining.push(m);
@@ -5882,18 +6267,60 @@ function mergeFindings(ids) {
     if (group.length < 2) return null;
 
     const merged = mergeFindingGroup(group, null);
+    const memberReviews = {};
+    let retainedSurvivorReview = null;
+    absorbedMerges.forEach((entry) => {
+        Object.entries(entry.member_reviews || {}).forEach(([id, review]) => {
+            memberReviews[normId(id)] = snapshotFindingReview(review);
+        });
+        // Hidden members cannot change while folded, so their original
+        // snapshots stay authoritative. The visible survivor can be edited,
+        // however; when an earlier finding absorbs this group, preserve that
+        // current state instead of silently reverting it to the first merge's
+        // stale snapshot on the eventual unmerge.
+        const absorbedSurvivorKey = normId(entry.id);
+        const absorbedSurvivorReview = resolveMergedSurvivorReview(
+            entry,
+            reportState.findings[absorbedSurvivorKey]
+        );
+        // If it also survives the new group, keep its original pre-merge
+        // snapshot so undo can still remove the automatic accepted verdict.
+        // Its current notes/severity/annotations stay on the live survivor and
+        // are retained separately by unmergeFindings.
+        if (absorbedSurvivorKey !== normId(merged.id)) {
+            memberReviews[absorbedSurvivorKey] = absorbedSurvivorReview;
+        } else {
+            retainedSurvivorReview = absorbedSurvivorReview;
+        }
+    });
+    members.forEach((id) => {
+        const key = normId(id);
+        if (!memberReviews[key]) {
+            memberReviews[key] = snapshotFindingReview(reportState.findings[key]);
+        }
+    });
     reportState.merges = remaining;
-    reportState.merges.push({
+    const mergeEntry = {
         id: merged.id,
         member_ids: members,
         summary_override: null,
-    });
+        member_reviews: memberReviews,
+        survivor_review: null,
+        merged_review_baseline: null,
+    };
+    reportState.merges.push(mergeEntry);
 
     // Review state: the surviving finding is treated as accepted (the reviewer
     // deliberately kept it); absorbed members revert to "none" so they neither
     // ship as standalone findings nor leak into the rejected[] summary.
     if (!reportState.findings[merged.id]) {
         reportState.findings[merged.id] = createDefaultFindingState();
+    }
+    if (retainedSurvivorReview) {
+        reportState.findings[merged.id] = {
+            ...reportState.findings[merged.id],
+            ...retainedSurvivorReview,
+        };
     }
     reportState.findings[merged.id].verdict = 'accepted';
     for (const id of members) {
@@ -5903,6 +6330,8 @@ function mergeFindings(ids) {
         if (normId(id) === normId(merged.id)) continue;
         if (reportState.findings[id]) reportState.findings[id].verdict = 'none';
     }
+    mergeEntry.survivor_review = snapshotFindingReview(reportState.findings[merged.id]);
+    mergeEntry.merged_review_baseline = snapshotFindingReview(reportState.findings[merged.id]);
 
     reportState.modified = true;
     scheduleSharedStateSync();
@@ -6013,6 +6442,24 @@ function buildMergedReviewEntry(merged) {
     // Absorbed members' annotations are preserved as evidence (never rasterized
     // onto the survivor's image), so reviewer markup on members is not lost.
     if (r.memberAnnotations.length) human_review.member_annotations = r.memberAnnotations;
+    const mergeEntry = (reportState.merges || []).find(
+        (entry) => normId(entry.id) === normId(merged.id)
+    );
+    if (mergeEntry?.member_reviews && Object.keys(mergeEntry.member_reviews).length > 0) {
+        human_review.merged_member_reviews = mergeEntry.member_reviews;
+    }
+    if (mergeEntry) {
+        human_review.merged_survivor_review = resolveMergedSurvivorReview(
+            mergeEntry,
+            reportState.findings[normId(merged.id)]
+        );
+        human_review.merged_review_baseline = snapshotFindingReview({
+            verdict: r.verdict,
+            severity: r.severity,
+            notes: r.notes,
+            annotations: r.annotations,
+        });
+    }
     const result = { ...rest, human_review };
     if (merged.screenshot_path) {
         result.screenshot_path = merged.screenshot_path;
@@ -6053,6 +6500,27 @@ function updateMergeBar() {
         t('review.mergeFindingsBtn') + (count >= 2 ? ` (${count})` : '');
 }
 
+const MERGED_LIST_SEPARATOR = ', ';
+
+function refreshMergedCardDynamicTranslations(root = document) {
+    root.querySelectorAll('.finding-merged').forEach((article) => {
+        const rawCategory = article.dataset.mergedCategory || '';
+        const title = article.querySelector('.finding-title');
+        if (title) {
+            const catKey = 'review.category_' + rawCategory;
+            const catLabel = rawCategory ? t(catKey) : '';
+            title.textContent = (
+                catLabel && catLabel !== catKey ? catLabel : rawCategory
+            ).toUpperCase();
+        }
+        article.querySelectorAll('img.thumbnail[data-merged-timestamp]').forEach((img) => {
+            img.alt = t('review.mergedScreenshotAlt', {
+                ts: img.dataset.mergedTimestamp || '',
+            });
+        });
+    });
+}
+
 function renderMergedCard(merged) {
     const ua = merged.unified_analysis || {};
     const article = document.createElement('article');
@@ -6067,6 +6535,7 @@ function renderMergedCard(merged) {
     article.dataset.verdict = currentVerdict;
     article.dataset.severity = ua.severity || 'medium';
     article.dataset.merged = 'true';
+    article.dataset.mergedCategory = (merged.category || '').toString();
 
     const header = document.createElement('div');
     header.className = 'finding-header';
@@ -6080,22 +6549,31 @@ function renderMergedCard(merged) {
     const mergeCheckbox = document.createElement('input');
     mergeCheckbox.type = 'checkbox';
     mergeCheckbox.className = 'merge-select';
-    mergeCheckbox.setAttribute('aria-label', t('review.mergeSelectLabel'));
+    mergeCheckbox.setAttribute('aria-label', t('review.mergeSelectLabel', { id: merged.id }));
     mergeWrap.appendChild(mergeCheckbox);
     header.appendChild(mergeWrap);
     const title = document.createElement('span');
     title.className = 'finding-title';
     // Localize the category badge instead of upper-casing the raw EN enum; an
     // unmapped category falls back to its own upper-cased value.
-    const rawCategory = (merged.category || '').toString();
+    const rawCategory = article.dataset.mergedCategory;
     const catKey = 'review.category_' + rawCategory;
     const catLabel = rawCategory ? t(catKey) : '';
     title.textContent = (catLabel && catLabel !== catKey ? catLabel : rawCategory).toUpperCase();
     const badge = document.createElement('span');
     badge.className = 'severity-badge merged-badge';
+    badge.setAttribute('data-i18n', 'review.mergedBadge');
     badge.textContent = t('review.mergedBadge');
     header.appendChild(title);
     header.appendChild(badge);
+    const unmergeButton = document.createElement('button');
+    unmergeButton.type = 'button';
+    unmergeButton.className = 'btn-secondary unmerge-finding-btn';
+    unmergeButton.dataset.action = 'unmerge-finding';
+    unmergeButton.dataset.findingId = normId(merged.id);
+    unmergeButton.setAttribute('data-i18n', 'review.unmergeFinding');
+    unmergeButton.textContent = t('review.unmergeFinding');
+    header.appendChild(unmergeButton);
     article.appendChild(header);
 
     const content = document.createElement('div');
@@ -6105,6 +6583,8 @@ function renderMergedCard(merged) {
     const summaryField = document.createElement('div');
     summaryField.className = 'review-field merged-summary-field';
     const summaryLabel = document.createElement('label');
+    summaryLabel.className = 'merged-summary-label';
+    summaryLabel.setAttribute('data-i18n', 'review.findingSummary');
     summaryLabel.textContent = t('review.findingSummary');
     const summaryTextarea = document.createElement('textarea');
     summaryTextarea.className = 'merged-summary';
@@ -6127,15 +6607,27 @@ function renderMergedCard(merged) {
     if ((ua.action_items || []).length) {
         const actions = document.createElement('div');
         actions.className = 'ai-suggestions';
-        actions.textContent =
-            t('review.aiSuggestions') + ' ' + ua.action_items.join(', ');
+        const actionsLabel = document.createElement('span');
+        actionsLabel.className = 'merged-actions-label';
+        actionsLabel.setAttribute('data-i18n', 'review.aiSuggestions');
+        actionsLabel.textContent = t('review.aiSuggestions');
+        const actionsValue = document.createElement('span');
+        actionsValue.textContent = ' ' + ua.action_items.join(MERGED_LIST_SEPARATOR);
+        actions.appendChild(actionsLabel);
+        actions.appendChild(actionsValue);
         content.appendChild(actions);
     }
     if ((ua.affected_components || []).length) {
         const comps = document.createElement('div');
         comps.className = 'merged-components';
-        comps.textContent =
-            t('review.affectedComponents') + ': ' + ua.affected_components.join(', ');
+        const compsLabel = document.createElement('span');
+        compsLabel.className = 'merged-components-label';
+        compsLabel.setAttribute('data-i18n', 'review.affectedComponents');
+        compsLabel.textContent = t('review.affectedComponents');
+        const compsValue = document.createElement('span');
+        compsValue.textContent = ': ' + ua.affected_components.join(MERGED_LIST_SEPARATOR);
+        comps.appendChild(compsLabel);
+        comps.appendChild(compsValue);
         content.appendChild(comps);
     }
 
@@ -6143,7 +6635,14 @@ function renderMergedCard(merged) {
     from.className = 'merged-from';
     // Human-facing trail shows every source (surviving id + absorbed ids).
     const sources = [merged.id, ...(merged.merged_from_ids || [])];
-    from.textContent = t('review.mergedFromLabel') + ': ' + sources.join(', ');
+    const fromLabel = document.createElement('span');
+    fromLabel.className = 'merged-from-label';
+    fromLabel.setAttribute('data-i18n', 'review.mergedFromLabel');
+    fromLabel.textContent = t('review.mergedFromLabel');
+    const fromValue = document.createElement('span');
+    fromValue.textContent = ': ' + sources.join(MERGED_LIST_SEPARATOR);
+    from.appendChild(fromLabel);
+    from.appendChild(fromValue);
     content.appendChild(from);
 
     // The survivor's screenshot, as an inspect/annotate surface — a merged
@@ -6159,11 +6658,19 @@ function renderMergedCard(merged) {
         img.className = 'thumbnail';
         img.src = merged.screenshot;
         img.setAttribute('data-full', merged.screenshot);
+        img.dataset.mergedTimestamp = (
+            merged.timestamp_formatted || formatPreciseTime(merged.timestamp || 0)
+        );
+        img.alt = t('review.mergedScreenshotAlt', {
+            ts: img.dataset.mergedTimestamp,
+        });
+        img.setAttribute('data-i18n-title', 'media.manualFrameZoomTitle');
         img.title = t('media.manualFrameZoomTitle');
         const svg = document.createElement('svg');
         svg.className = 'annotation-svg';
         const hint = document.createElement('div');
         hint.className = 'annotation-hint';
+        hint.setAttribute('data-i18n', 'media.manualFrameAnnotateHint');
         hint.textContent = t('media.manualFrameAnnotateHint');
         container.appendChild(img);
         container.appendChild(svg);
@@ -6190,6 +6697,8 @@ function renderMergedCard(merged) {
     const verdictField = document.createElement('div');
     verdictField.className = 'review-field';
     const verdictLabel = document.createElement('label');
+    verdictLabel.className = 'merged-verdict-label';
+    verdictLabel.setAttribute('data-i18n', 'review.verdict');
     verdictLabel.textContent = t('review.verdict');
     verdictField.appendChild(verdictLabel);
     const radioGroup = document.createElement('div');
@@ -6204,6 +6713,7 @@ function renderMergedCard(merged) {
         radio.setAttribute('value', value);
         if (currentVerdict === value) radio.checked = true;
         const span = document.createElement('span');
+        span.setAttribute('data-i18n', labelKey);
         span.textContent = t(labelKey);
         wrap.appendChild(radio);
         wrap.appendChild(span);
@@ -6215,15 +6725,20 @@ function renderMergedCard(merged) {
     const sevField = document.createElement('div');
     sevField.className = 'review-field';
     const sevLabel = document.createElement('label');
+    sevLabel.className = 'merged-severity-label';
+    sevLabel.setAttribute('data-i18n', 'review.changePriority');
     sevLabel.textContent = t('review.changePriority');
-    sevField.appendChild(sevLabel);
     const sevSelect = document.createElement('select');
     sevSelect.className = 'severity-select';
+    sevSelect.id = 'merged-finding-priority-' + merged.id;
+    sevLabel.htmlFor = sevSelect.id;
+    sevField.appendChild(sevLabel);
     [['', 'review.noChange'], ['critical', 'review.critical'], ['high', 'review.high'],
         ['medium', 'review.medium'], ['low', 'review.low']].forEach(([value, labelKey]) => {
         const opt = document.createElement('option');
         opt.value = value;
         opt.setAttribute('value', value);
+        opt.setAttribute('data-i18n', labelKey);
         opt.textContent = t(labelKey);
         sevSelect.appendChild(opt);
     });
@@ -6235,9 +6750,15 @@ function renderMergedCard(merged) {
     const notesField = document.createElement('div');
     notesField.className = 'review-field notes';
     const notesLabel = document.createElement('label');
+    notesLabel.className = 'merged-notes-label';
+    notesLabel.setAttribute('data-i18n', 'review.notes');
     notesLabel.textContent = t('review.notes');
-    notesField.appendChild(notesLabel);
     const notesArea = document.createElement('textarea');
+    notesArea.className = 'merged-notes-area';
+    notesArea.id = 'merged-finding-notes-' + merged.id;
+    notesLabel.htmlFor = notesArea.id;
+    notesField.appendChild(notesLabel);
+    notesArea.setAttribute('data-i18n', 'review.notesPlaceholder');
     notesArea.setAttribute('placeholder', t('review.notesPlaceholder'));
     notesArea.value = state.notes || '';
     notesField.appendChild(notesArea);
@@ -6309,14 +6830,86 @@ function ensureMergeEntry(merged) {
     reportState.merges = Array.isArray(reportState.merges) ? reportState.merges : [];
     let entry = reportState.merges.find((x) => normId(x.id) === normId(merged.id));
     if (!entry) {
+        const hydratedReview = reportState.findings[normId(merged.id)] || {};
+        const memberReviews = hydratedReview.merged_member_reviews || {};
+        const persistedSurvivor = populatedReviewSnapshot(
+            hydratedReview.merged_survivor_review
+        );
+        const persistedBaseline = populatedReviewSnapshot(
+            hydratedReview.merged_review_baseline
+        );
         entry = {
             id: normId(merged.id),
             member_ids: [merged.id, ...(merged.merged_from_ids || [])].map(normId),
             summary_override: null,
+            member_reviews: memberReviews,
+            survivor_review: snapshotFindingReview(
+                persistedSurvivor
+                || memberReviews[normId(merged.id)]
+                || hydratedReview
+            ),
+            merged_review_baseline: snapshotFindingReview(
+                persistedBaseline || hydratedReview
+            ),
         };
         reportState.merges.push(entry);
     }
     return entry;
+}
+
+function unmergeFindings(survivorId) {
+    const survivorKey = normId(survivorId);
+    const entry = (reportState.merges || []).find(
+        (candidate) => normId(candidate.id) === survivorKey
+    );
+    if (!entry) return false;
+
+    const snapshots = entry.member_reviews || {};
+    const currentSurvivor = snapshotFindingReview(reportState.findings[survivorKey]);
+    const actualSurvivor = resolveMergedSurvivorReview(entry, currentSurvivor);
+    const memberIds = Array.from(new Set((entry.member_ids || []).map(normId)));
+    memberIds.forEach((memberId) => {
+        const memberSnapshot = snapshots[memberId];
+        const restored = memberSnapshot
+            ? snapshotFindingReview(memberSnapshot)
+            : createDefaultFindingState();
+        // Edits made on the merged card belong to the survivor when the group is
+        // split, but the merge's automatic `accepted` verdict is mechanics, not
+        // a new reviewer decision. Undo therefore restores the survivor's
+        // pre-merge verdict while retaining its current notes, severity and
+        // annotations. Other members recover their exact snapshots.
+        reportState.findings[memberId] = memberId === survivorKey
+            ? {
+                ...actualSurvivor,
+                verdict: memberSnapshot ? restored.verdict : actualSurvivor.verdict,
+            }
+            : restored;
+    });
+
+    reportState.merges = (reportState.merges || []).filter(
+        (candidate) => normId(candidate.id) !== survivorKey
+    );
+    reportState.modified = true;
+    return true;
+}
+
+function unmergeFindingGroup(survivorId) {
+    if (!unmergeFindings(survivorId)) {
+        showNotification(t('review.unmergeUnavailable'));
+        return false;
+    }
+    restoreMergesToDom();
+    // applyMergeToDom binds the survivor id to the generated merged card. Once
+    // the final group is removed that card is detached and the original finding
+    // becomes visible again, so rebuild the preview map before future lightbox
+    // edits target a stale container.
+    initAnnotationTools();
+    restoreUIFromState();
+    initMergeUI();
+    updateMergeBar();
+    scheduleSharedStateSync();
+    showNotification(t('review.unmergeDone'));
+    return true;
 }
 
 // Replay every persisted/data-side merge group into the DOM, idempotently. Used
@@ -6377,7 +6970,9 @@ function initMergeUI() {
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.className = 'merge-select';
-        checkbox.setAttribute('aria-label', t('review.mergeSelectLabel'));
+        checkbox.setAttribute('aria-label', t('review.mergeSelectLabel', {
+            id: article.dataset.findingId || '',
+        }));
         wrap.appendChild(checkbox);
         header.insertBefore(wrap, header.firstChild);
     });
@@ -6475,6 +7070,7 @@ function buildReviewData() {
         video: document.body.dataset.videoName,
         reviewed_at: new Date().toISOString(),
         reviewer: reportState.reviewer,
+        resetGeneration: normalizeResetGeneration(reportState.resetGeneration),
         findings: reviewedFindings,
         manual_frames: manualFrames,
     };
@@ -6682,6 +7278,57 @@ async function saveReviewToDisk() {
     } catch (error) {
         if (DEBUG) console.error('Save to disk failed:', error);
         showNotification(t('review.saveFailed', { message: error.message }));
+    }
+}
+
+async function resetReview() {
+    if (!confirm(t('review.resetReviewConfirm'))) {
+        return;
+    }
+
+    const button = document.querySelector('[data-action="reset-review"]');
+    if (button) button.disabled = true;
+    try {
+        let resetGeneration = normalizeResetGeneration(reportState.resetGeneration) + 1;
+        if (!isStaticDemo()) {
+            const response = await fetch('/api/reset-review', {
+                method: 'POST',
+                headers: { 'Accept': 'application/json' },
+            });
+            const payload = await fetchJsonOrThrow(response, 'Failed to reset review.');
+            resetGeneration = normalizeResetGeneration(
+                payload.resetGeneration ?? payload.state?.resetGeneration
+            );
+        }
+
+        const findings = {};
+        getOriginalFindingsList().forEach((finding) => {
+            findings[normId(finding.id)] = createDefaultFindingState();
+        });
+        hydrateReportState(
+            {
+                findings,
+                manualFrames: [],
+                merges: [],
+                reviewer: '',
+                modified: false,
+                resetGeneration,
+            },
+            { discardActiveEditor: true }
+        );
+        try {
+            localStorage.removeItem(stateSyncRuntime.draftKey);
+        } catch (error) {
+            if (DEBUG) console.debug('Could not clear review draft:', error);
+        }
+        reportState.modified = false;
+        persistSharedState();
+        showNotification(t('review.resetReviewDone'));
+    } catch (error) {
+        if (DEBUG) console.error('Reset review failed:', error);
+        showNotification(t('review.resetReviewFailed', { message: error.message }));
+    } finally {
+        if (button) button.disabled = false;
     }
 }
 
@@ -7155,6 +7802,8 @@ class ReviewVoiceRecorder {
         // Tracks whether the recognizer actually returned text for the current
         // take, so the "done" status never claims speech was added when none was.
         this.hasTranscript = false;
+        this.recordingGeneration = 0;
+        this.discarded = false;
         this.onTranscript = onTranscript;
         this.onStatus = onStatus;
         this.transport = window.ScreenScribeLib.createSttTransport({
@@ -7189,11 +7838,24 @@ class ReviewVoiceRecorder {
             statusTranscribing: t('review.voiceTranscribing'),
             statusReady: `${t('review.voiceReady')}. ${t('review.voiceMicOff')}`,
             fallbackMessage: 'Voice transcription failed.',
+            endpoint: () => `/api/stt?reset_generation=${this.recordingGeneration}`,
         });
     }
 
     async start() {
+        this.recordingGeneration = normalizeResetGeneration(reportState.resetGeneration);
+        this.discarded = false;
         const started = await this.transport.start();
+        if (
+            started
+            && (
+                this.discarded
+                || normalizeResetGeneration(reportState.resetGeneration) !== this.recordingGeneration
+            )
+        ) {
+            this.discard();
+            return false;
+        }
         if (!started) showNotification(t('review.voiceDenied'));
         return started;
     }
@@ -7210,6 +7872,13 @@ class ReviewVoiceRecorder {
     destroy() {
         this.transport.destroy();
         this.isRecording = this.transport.isRecording;
+    }
+
+    discard() {
+        this.discarded = true;
+        this.transport.cancel();
+        this.isRecording = this.transport.isRecording;
+        this.isTranscribing = false;
     }
 
     get stream() {
@@ -7256,6 +7925,7 @@ function setManualFrameStatus(message, tone = '') {
 }
 
 function openManualFrameModal(frame) {
+    frame._resetGeneration = normalizeResetGeneration(reportState.resetGeneration);
     manualFrameRuntime.currentFrame = frame;
 
     const modal = document.getElementById('manualFrameModal');
@@ -7287,11 +7957,15 @@ function openManualFrameModal(frame) {
     if (firstFocusable) firstFocusable.focus();
 }
 
-function closeManualFrameModal() {
+function closeManualFrameModal({ discardRecording = false } = {}) {
     const modal = document.getElementById('manualFrameModal');
     if (!modal) return;
 
-    manualFrameRuntime.recorder?.destroy();
+    if (discardRecording) {
+        manualFrameRuntime.recorder?.discard();
+    } else {
+        manualFrameRuntime.recorder?.destroy();
+    }
     manualFrameRuntime.currentFrame = null;
     modal.hidden = true;
     document.body.classList.remove('modal-open');
@@ -7337,7 +8011,32 @@ function manualFrameEffectiveSeverity(frame) {
     return modelSeverity === 'none' ? '' : (modelSeverity || '');
 }
 
+// Single source of truth for the "Momenty (N)" tab counter: every logical AI
+// moment currently represented by a visible card (including rejected) plus
+// manual moments. Only the #findings-count span text is
+// touched, so the server-rendered button structure — and the shell DOM contract
+// asserting <span id="findings-count">N</span> — stays intact. The AI count is
+// always supplied fresh by updateReviewMeta, so nothing is cached and the total
+// can never go stale as findings are accepted/rejected or moments added/removed.
+function updateFindingsTabCount(aiFindingsCount) {
+    const tabCount = document.getElementById('findings-count');
+    if (!tabCount) return;
+    const total = aiFindingsCount + reportState.manualFrames.length;
+    tabCount.textContent = String(total);
+    const tabButton = tabCount.closest('.tab-btn');
+    if (tabButton) {
+        const description = t('review.momentsCountDescription', { count: total });
+        tabButton.title = description;
+        tabButton.setAttribute('aria-label', description);
+    }
+}
+
 function renderManualFrames() {
+    // Recompute the meta so the tab counter reflects the new manual-moment total
+    // (updateReviewMeta owns the AI count and delegates rendering to
+    // updateFindingsTabCount).
+    updateReviewMeta();
+
     const section = document.getElementById('manualFindingsSection');
     const list = document.getElementById('manualFindingsList');
     const count = document.getElementById('manualFindingsCount');
@@ -7494,6 +8193,7 @@ async function deleteManualFrame(markerId) {
 // fall back to the previously persisted text, never that the UI is wrong.
 async function updateManualFrameMarker(markerId, transcript, notes) {
     const id = String(markerId);
+    const operationGeneration = normalizeResetGeneration(reportState.resetGeneration);
     const existing = reportState.manualFrames.find(
         (frame) => String(frame.marker_id) === id
     );
@@ -7520,6 +8220,10 @@ async function updateManualFrameMarker(markerId, transcript, notes) {
         if (DEBUG) console.debug('Manual frame update failed:', error);
     }
 
+    if (normalizeResetGeneration(reportState.resetGeneration) !== operationGeneration) {
+        return;
+    }
+
     if (serverRejected) {
         showNotification(t('review.manualFrameSaveFailed'));
         return;
@@ -7540,6 +8244,7 @@ async function updateManualFrameMarker(markerId, transcript, notes) {
 // restores the select to the last persisted value.
 async function changeManualFrameSeverity(markerId, severity) {
     const id = String(markerId);
+    const operationGeneration = normalizeResetGeneration(reportState.resetGeneration);
     const existing = reportState.manualFrames.find(
         (frame) => String(frame.marker_id) === id
     );
@@ -7555,6 +8260,10 @@ async function changeManualFrameSeverity(markerId, severity) {
         ok = response.ok;
     } catch (error) {
         if (DEBUG) console.debug('Manual frame priority change failed:', error);
+    }
+
+    if (normalizeResetGeneration(reportState.resetGeneration) !== operationGeneration) {
+        return;
     }
 
     if (!ok) {
@@ -7612,6 +8321,13 @@ async function saveManualNote(markerId) {
 // ANALYZE sidebar: marking is the durable act, analysis is optional and
 // separate. Returns the marker_id so analyze can reuse an already-marked frame.
 async function markManualFrame(current, transcript, notes) {
+    const operationGeneration = normalizeResetGeneration(reportState.resetGeneration);
+    if (!Number.isInteger(current._resetGeneration)) {
+        current._resetGeneration = operationGeneration;
+    }
+    if (current._resetGeneration !== operationGeneration) {
+        return null;
+    }
     if (current.marker_id) {
         // BH28: the frame is already marked, but the reviewer may have edited its
         // notes/transcript afterwards (e.g. typed more, then hit Analyze). Without
@@ -7619,7 +8335,9 @@ async function markManualFrame(current, transcript, notes) {
         // dropped on reload — and a later analyze ran against the stale server
         // copy. Persist the edit to the server marker so the change is durable.
         await updateManualFrameMarker(current.marker_id, transcript, notes);
-        return current.marker_id;
+        return normalizeResetGeneration(reportState.resetGeneration) === operationGeneration
+            ? current.marker_id
+            : null;
     }
     // BH10 in-flight idempotency: Add and Analyze can both call markManualFrame on
     // the same frame before the first POST resolves (the marker_id guard above
@@ -7636,9 +8354,17 @@ async function markManualFrame(current, transcript, notes) {
                     frame_base64: current.frameBase64,
                     transcript,
                     notes,
+                    reset_generation: operationGeneration,
                 }),
             });
             const markPayload = await fetchJsonOrThrow(markResponse, t('review.manualFrameSaveFailed'));
+            const responseGeneration = normalizeResetGeneration(
+                markPayload.resetGeneration ?? operationGeneration
+            );
+            if (normalizeResetGeneration(reportState.resetGeneration) !== operationGeneration
+                || responseGeneration !== operationGeneration) {
+                return null;
+            }
             current.marker_id = markPayload.marker_id;
             upsertManualFrame({
                 marker_id: markPayload.marker_id,
@@ -7671,7 +8397,8 @@ async function addManualFrame() {
     try {
         if (addBtn) addBtn.disabled = true;
         setManualFrameStatus(t('review.statusSavingFrame'), 'busy');
-        await markManualFrame(current, transcript, notes);
+        const markerId = await markManualFrame(current, transcript, notes);
+        if (!markerId) return;
         showNotification(t('review.manualFrameAdded'));
         closeManualFrameModal();
     } catch (error) {
@@ -7686,6 +8413,7 @@ async function addManualFrame() {
 async function analyzeManualFrame() {
     const current = manualFrameRuntime.currentFrame;
     if (!current) return;
+    const operationGeneration = normalizeResetGeneration(reportState.resetGeneration);
 
     const transcript = readManualFrameTranscript();
     const notes = document.getElementById('manualFrameNotes')?.value || '';
@@ -7698,12 +8426,20 @@ async function analyzeManualFrame() {
         // Reuse an already-marked frame; otherwise mark it first so analyze
         // never silently discards the capture.
         const markerId = await markManualFrame(current, transcript, notes);
+        if (!markerId || normalizeResetGeneration(reportState.resetGeneration) !== operationGeneration) {
+            return;
+        }
 
         setManualFrameStatus(t('review.statusRunningAnalysis'), 'busy');
-        const analyzeResponse = await fetch(`/api/manual-analyze/${markerId}`, {
-            method: 'POST',
-        });
+        const analyzeResponse = await fetch(
+            `/api/manual-analyze/${markerId}?reset_generation=${operationGeneration}`,
+            { method: 'POST' }
+        );
         const analyzePayload = await fetchJsonOrThrow(analyzeResponse, t('review.manualFrameAnalysisFailed'));
+
+        if (normalizeResetGeneration(reportState.resetGeneration) !== operationGeneration) {
+            return;
+        }
 
         if (analyzePayload.status !== 'completed' || !analyzePayload.result) {
             throw new Error(analyzePayload.error || t('review.manualFrameAnalysisFailed'));
@@ -7933,6 +8669,34 @@ function stopVoiceNoteCapture() {
     }
 }
 
+function discardVoiceNoteCapture() {
+    const recognition = voiceNoteRuntime.recognition;
+    const button = voiceNoteRuntime.activeButton;
+    const findingId = voiceNoteRuntime.activeFindingId;
+
+    // Invalidate shared state and handlers before aborting: some browser
+    // implementations deliver end/error synchronously, and an already queued
+    // result callback must no longer be able to append text after reset.
+    voiceNoteRuntime.recognition = null;
+    voiceNoteRuntime.activeButton = null;
+    voiceNoteRuntime.activeFindingId = null;
+    if (recognition) {
+        recognition.onresult = null;
+        recognition.onerror = null;
+        recognition.onend = null;
+        try {
+            if (typeof recognition.abort === 'function') {
+                recognition.abort();
+            } else {
+                recognition.stop();
+            }
+        } catch (e) {
+            // noop
+        }
+    }
+    setVoiceNoteUi(button, findingId, false, '');
+}
+
 function startVoiceNoteCapture(button, findingId) {
     const Recognition = getSpeechRecognitionCtor();
     if (!Recognition) {
@@ -7946,6 +8710,7 @@ function startVoiceNoteCapture(button, findingId) {
     }
 
     const recognition = new Recognition();
+    const operationGeneration = normalizeResetGeneration(reportState.resetGeneration);
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = currentLang === 'pl' ? 'pl-PL' : 'en-US';
@@ -7957,6 +8722,12 @@ function startVoiceNoteCapture(button, findingId) {
     setVoiceNoteUi(button, findingId, true, t('review.voiceRecording'));
 
     recognition.onresult = (event) => {
+        if (
+            voiceNoteRuntime.recognition !== recognition
+            || normalizeResetGeneration(reportState.resetGeneration) !== operationGeneration
+        ) {
+            return;
+        }
         const finalChunks = [];
         for (let i = event.resultIndex; i < event.results.length; i += 1) {
             const result = event.results[i];
@@ -7971,6 +8742,12 @@ function startVoiceNoteCapture(button, findingId) {
     };
 
     recognition.onerror = (event) => {
+        if (
+            voiceNoteRuntime.recognition !== recognition
+            || normalizeResetGeneration(reportState.resetGeneration) !== operationGeneration
+        ) {
+            return;
+        }
         const message = event.error === 'not-allowed'
             ? t('review.voiceDenied')
             : `${t('review.voiceError')}: ${event.error}`;
@@ -8019,6 +8796,11 @@ function initVoiceNotes() {
 function initExportActions() {
     const handlers = {
         'save-review': saveReviewToDisk,
+        'reset-review': resetReview,
+        'unmerge-finding': (event) => {
+            const button = event.target.closest('[data-finding-id]');
+            if (button) unmergeFindingGroup(button.dataset.findingId);
+        },
         'export-todo': exportTodoList,
         'export-json': exportReviewedJSON,
         'export-zip': exportReviewedZIP,
@@ -8051,6 +8833,7 @@ function initSidebarResize() {
     const resizer = document.getElementById('sidebarResizer');
     const sidebar = document.querySelector('.sidebar');
     if (!resizer || !sidebar) return;
+    const panel = document.querySelector('.review-column') || sidebar;
 
     const storageKey = 'screenscribe_sidebar_width';
     let dragState = null;
@@ -8073,6 +8856,8 @@ function initSidebarResize() {
         const { minPx, maxPx } = getResizeBounds();
         const nextWidth = Math.min(maxPx, Math.max(minPx, width));
         document.documentElement.style.setProperty('--sidebar-width', `${nextWidth}px`);
+        resizer.setAttribute('aria-valuemin', String(Math.round(minPx)));
+        resizer.setAttribute('aria-valuemax', String(Math.round(maxPx)));
         resizer.setAttribute('aria-valuenow', String(Math.round(nextWidth)));
         if (persist) {
             try {
@@ -8083,30 +8868,33 @@ function initSidebarResize() {
         }
     };
 
+    let restoredWidth = false;
     try {
         const savedWidth = Number(localStorage.getItem(storageKey));
         if (savedWidth) {
             applySidebarWidth(savedWidth, false);
+            restoredWidth = true;
         }
     } catch (error) {
         console.debug('Failed to restore sidebar width', error);
     }
+    if (!restoredWidth) {
+        applySidebarWidth(panel.getBoundingClientRect().width, false);
+    }
 
     // Keyboard resize: the separator is focusable and Arrow keys nudge the
-    // width; Home/End jump to the max/min bound (WCAG 2.1.1 keyboard access).
+    // width; Home/End jump to the min/max bound (WCAG 2.1.1 keyboard access).
     const KEY_STEP = 24;
     resizer.tabIndex = 0;
-    resizer.setAttribute('aria-valuemin', '0');
-    resizer.setAttribute('aria-valuemax', '100');
     resizer.addEventListener('keydown', (event) => {
         if (isMobileLayout()) return;
         const { minPx, maxPx } = getResizeBounds();
-        const current = sidebar.getBoundingClientRect().width;
+        const current = panel.getBoundingClientRect().width;
         let next = null;
         if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') next = current + KEY_STEP;
         else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') next = current - KEY_STEP;
-        else if (event.key === 'Home') next = maxPx;
-        else if (event.key === 'End') next = minPx;
+        else if (event.key === 'Home') next = minPx;
+        else if (event.key === 'End') next = maxPx;
         if (next === null) return;
         event.preventDefault();
         applySidebarWidth(next);
@@ -8116,7 +8904,7 @@ function initSidebarResize() {
         if (isMobileLayout()) return;
         dragState = {
             startX: event.clientX,
-            startWidth: sidebar.getBoundingClientRect().width
+            startWidth: panel.getBoundingClientRect().width
         };
         document.body.classList.add('is-resizing');
         if (resizer.setPointerCapture) {
@@ -8147,7 +8935,7 @@ function initSidebarResize() {
             document.body.classList.remove('is-resizing');
             return;
         }
-        applySidebarWidth(sidebar.getBoundingClientRect().width, false);
+        applySidebarWidth(panel.getBoundingClientRect().width, false);
     });
 }
 
@@ -8158,6 +8946,7 @@ let currentLang = getInitialReportLanguage();
 function setLanguage(lang, { persist = true } = {}) {
     if (!hasI18nLanguage(lang)) return;
     currentLang = lang;
+    document.documentElement.lang = lang;
 
     // Update toggle buttons
     document.querySelectorAll('.lang-toggle button').forEach(btn => {
@@ -8165,18 +8954,26 @@ function setLanguage(lang, { persist = true } = {}) {
         btn.classList.toggle('active', isActive);
         btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
+    document.querySelectorAll('.merge-select').forEach((checkbox) => {
+        const id = checkbox.closest('.finding')?.dataset.findingId || '';
+        checkbox.setAttribute('aria-label', t('review.mergeSelectLabel', { id }));
+    });
+    document.querySelectorAll('.unmerge-finding-btn').forEach((button) => {
+        button.textContent = t('review.unmergeFinding');
+    });
 
     applyTranslations(document);
+    refreshMergedCardDynamicTranslations(document);
+    updateMergeBar();
 
-    // Update tab buttons with count preservation
+    // Tab labels carry data-i18n spans, so applyTranslations above already
+    // localizes them. The summary/export buttons hold no count; only re-set
+    // their text (the findings button is left untouched so its
+    // #findings-count span survives — updateReviewMeta below refreshes it).
     document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
         const tab = btn.dataset.tab;
         if (tab === 'summary') btn.textContent = t('review.summary');
         if (tab === 'export') btn.textContent = t('review.export');
-        if (tab === 'findings') {
-            const count = btn.textContent.match(/\((\d+)\)/);
-            btn.textContent = t('review.findings') + (count ? ` (${count[1]})` : '');
-        }
     });
 
     if (persist) {
@@ -8290,6 +9087,289 @@ function getActualImageRect(img) {
         height: actualHeight,
         right: elemRect.left + offsetX + actualWidth,
         bottom: elemRect.top + offsetY + actualHeight
+    };
+}
+
+const ANNOTATION_HANDLE_SIZE = 0.018;
+const ANNOTATION_HIT_SLOP = 0.02;
+
+function newAnnotationId() {
+    try {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+    } catch (error) {
+        console.debug('newAnnotationId: crypto.randomUUID failed', error);
+    }
+    return `ann-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function ensureAnnotationId(ann) {
+    if (!ann || typeof ann !== 'object') return ann;
+    if (!ann.id) ann.id = newAnnotationId();
+    return ann;
+}
+
+function ensureAnnotationsHaveIds(annotations) {
+    if (!Array.isArray(annotations)) return [];
+    annotations.forEach(ensureAnnotationId);
+    return annotations;
+}
+
+function cloneAnnotation(ann) {
+    if (!ann || typeof ann !== 'object') return ann;
+    const copy = { ...ann };
+    if (Array.isArray(ann.points)) {
+        copy.points = ann.points.map((p) => ({ x: p.x, y: p.y }));
+    }
+    return copy;
+}
+
+function estimateTextWidth(ann) {
+    const fontSize = ann.fontSizeRel || 0.036;
+    const chars = (ann.text || '').length || 1;
+    return Math.max(fontSize, chars * fontSize * 0.55);
+}
+
+function annotationBounds(ann) {
+    if (!ann) return null;
+    if (ann.type === 'rect') return normalizeRect(ann);
+    if (ann.type === 'text') {
+        const fontSize = ann.fontSizeRel || 0.036;
+        return {
+            x: ann.x || 0,
+            y: ann.y || 0,
+            width: estimateTextWidth(ann),
+            height: fontSize * 1.25,
+        };
+    }
+    if (ann.type === 'arrow') {
+        const x = Math.min(ann.startX || 0, ann.endX || 0);
+        const y = Math.min(ann.startY || 0, ann.endY || 0);
+        return {
+            x,
+            y,
+            width: Math.abs((ann.endX || 0) - (ann.startX || 0)),
+            height: Math.abs((ann.endY || 0) - (ann.startY || 0)),
+        };
+    }
+    if (ann.type === 'pen' && Array.isArray(ann.points) && ann.points.length) {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        ann.points.forEach((p) => {
+            minX = Math.min(minX, p.x);
+            minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x);
+            maxY = Math.max(maxY, p.y);
+        });
+        return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+    }
+    return null;
+}
+
+function annotationHandles(ann) {
+    if (!ann) return [];
+    if (ann.type === 'rect') {
+        const r = normalizeRect(ann);
+        return [
+            { id: 'nw', x: r.x, y: r.y },
+            { id: 'ne', x: r.x + r.width, y: r.y },
+            { id: 'se', x: r.x + r.width, y: r.y + r.height },
+            { id: 'sw', x: r.x, y: r.y + r.height },
+        ];
+    }
+    if (ann.type === 'arrow') {
+        return [
+            { id: 'start', x: ann.startX, y: ann.startY },
+            { id: 'end', x: ann.endX, y: ann.endY },
+        ];
+    }
+    if (ann.type === 'text') {
+        const fontSize = ann.fontSizeRel || 0.036;
+        return [{ id: 'size', x: (ann.x || 0) + estimateTextWidth(ann), y: (ann.y || 0) + fontSize }];
+    }
+    return [];
+}
+
+function distToSegment(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    if (!len2) return Math.hypot(px - x1, py - y1);
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+function hitTestHandle(ann, x, y) {
+    const half = ANNOTATION_HANDLE_SIZE;
+    for (const handle of annotationHandles(ann)) {
+        if (Math.abs(x - handle.x) <= half && Math.abs(y - handle.y) <= half) {
+            return handle.id;
+        }
+    }
+    return null;
+}
+
+function hitTestAnnotation(ann, x, y) {
+    if (!ann) return false;
+    const slop = ANNOTATION_HIT_SLOP + (ann.strokeWidthRel || 0);
+    if (ann.type === 'rect') {
+        const r = normalizeRect(ann);
+        return x >= r.x - slop && x <= r.x + r.width + slop
+            && y >= r.y - slop && y <= r.y + r.height + slop;
+    }
+    if (ann.type === 'text') {
+        const bounds = annotationBounds(ann);
+        return bounds
+            && x >= bounds.x - slop && x <= bounds.x + bounds.width + slop
+            && y >= bounds.y - slop && y <= bounds.y + bounds.height + slop;
+    }
+    if (ann.type === 'arrow') {
+        return distToSegment(x, y, ann.startX, ann.startY, ann.endX, ann.endY) <= slop;
+    }
+    if (ann.type === 'pen' && Array.isArray(ann.points) && ann.points.length) {
+        if (ann.points.length === 1) {
+            return Math.hypot(x - ann.points[0].x, y - ann.points[0].y) <= slop;
+        }
+        for (let i = 1; i < ann.points.length; i += 1) {
+            const a = ann.points[i - 1];
+            const b = ann.points[i];
+            if (distToSegment(x, y, a.x, a.y, b.x, b.y) <= slop) return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+function hitTestTopAnnotation(annotations, x, y) {
+    const list = Array.isArray(annotations) ? annotations : [];
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+        if (hitTestAnnotation(list[i], x, y)) return list[i];
+    }
+    return null;
+}
+
+function moveAnnotationBy(ann, dx, dy) {
+    if (!ann) return ann;
+    if (ann.type === 'rect' || ann.type === 'text') {
+        ann.x = (ann.x || 0) + dx;
+        ann.y = (ann.y || 0) + dy;
+        return ann;
+    }
+    if (ann.type === 'arrow') {
+        ann.startX = (ann.startX || 0) + dx;
+        ann.startY = (ann.startY || 0) + dy;
+        ann.endX = (ann.endX || 0) + dx;
+        ann.endY = (ann.endY || 0) + dy;
+        return ann;
+    }
+    if (ann.type === 'pen' && Array.isArray(ann.points)) {
+        ann.points.forEach((p) => {
+            p.x += dx;
+            p.y += dy;
+        });
+    }
+    return ann;
+}
+
+function resizeAnnotationHandle(ann, handle, x, y) {
+    if (!ann || !handle) return ann;
+    if (ann.type === 'rect') {
+        const r = normalizeRect(ann);
+        let left = r.x;
+        let top = r.y;
+        let right = r.x + r.width;
+        let bottom = r.y + r.height;
+        if (handle === 'nw') { left = x; top = y; }
+        else if (handle === 'ne') { right = x; top = y; }
+        else if (handle === 'se') { right = x; bottom = y; }
+        else if (handle === 'sw') { left = x; bottom = y; }
+        const next = normalizeRect({ x: left, y: top, width: right - left, height: bottom - top });
+        ann.x = next.x;
+        ann.y = next.y;
+        ann.width = Math.max(0.008, next.width);
+        ann.height = Math.max(0.008, next.height);
+        return ann;
+    }
+    if (ann.type === 'arrow') {
+        if (handle === 'start') {
+            ann.startX = x;
+            ann.startY = y;
+        } else if (handle === 'end') {
+            ann.endX = x;
+            ann.endY = y;
+        }
+        return ann;
+    }
+    if (ann.type === 'text' && handle === 'size') {
+        const next = y - (ann.y || 0);
+        ann.fontSizeRel = Math.max(0.012, Math.min(0.2, next));
+    }
+    return ann;
+}
+
+function applyAnnotationProperties(ann, props) {
+    if (!ann || !props) return ann;
+    if (props.color != null) ann.color = props.color;
+    if (props.strokeWidthRel != null && ann.type !== 'text') {
+        ann.strokeWidthRel = props.strokeWidthRel;
+    }
+    if (props.fontSizeRel != null && ann.type === 'text') {
+        ann.fontSizeRel = props.fontSizeRel;
+    }
+    return ann;
+}
+
+function appendSelectionChrome(group, ann) {
+    if (!group || !ann) return;
+    const bounds = annotationBounds(ann);
+    if (bounds) {
+        const box = document.createElementNS(SVG_NS, 'rect');
+        box.setAttribute('x', String(bounds.x));
+        box.setAttribute('y', String(bounds.y));
+        box.setAttribute('width', String(Math.max(bounds.width, 0.004)));
+        box.setAttribute('height', String(Math.max(bounds.height, 0.004)));
+        box.setAttribute('fill', 'none');
+        box.setAttribute('stroke', ann.color || '#ffffff');
+        box.setAttribute('stroke-width', '0.004');
+        box.setAttribute('stroke-dasharray', '0.012 0.008');
+        box.setAttribute('pointer-events', 'none');
+        box.classList.add('annotation-selection-box');
+        group.appendChild(box);
+    }
+    annotationHandles(ann).forEach((handle) => {
+        const el = document.createElementNS(SVG_NS, 'rect');
+        const size = ANNOTATION_HANDLE_SIZE;
+        el.setAttribute('x', String(handle.x - size / 2));
+        el.setAttribute('y', String(handle.y - size / 2));
+        el.setAttribute('width', String(size));
+        el.setAttribute('height', String(size));
+        el.setAttribute('data-handle', handle.id);
+        el.classList.add('annotation-handle');
+        el.classList.add(`annotation-handle-${handle.id}`);
+        group.appendChild(el);
+    });
+}
+
+function overlayLayoutFromImage(img) {
+    if (!img || typeof img.getBoundingClientRect !== 'function') return null;
+    const imgRect = getActualImageRect(img);
+    const parent = img.parentElement;
+    const containerRect = parent && typeof parent.getBoundingClientRect === 'function'
+        ? parent.getBoundingClientRect()
+        : imgRect;
+    const baseWidth = img.naturalWidth || img.width || 1920;
+    const baseHeight = img.naturalHeight || img.height || 1080;
+    return {
+        imgRect,
+        offsetX: imgRect.left - containerRect.left,
+        offsetY: imgRect.top - containerRect.top,
+        scaleX: baseWidth ? imgRect.width / baseWidth : 1,
+        scaleY: baseHeight ? imgRect.height / baseHeight : 1,
+        baseWidth,
+        baseHeight,
     };
 }
 
@@ -8420,7 +9500,7 @@ function createAnnotationElement(ann) {
     return null;
 }
 
-function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight = 1) {
+function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight = 1, options = {}) {
     if (!svg || !renderWidth || !renderHeight) return;
     while (svg.firstChild) {
         svg.firstChild.remove();
@@ -8430,11 +9510,23 @@ function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight 
     // 'meet' would preserve aspect ratio causing position drift on resize
     svg.setAttribute('preserveAspectRatio', 'none');
 
+    const selectedId = options && options.selectedId;
+    const showHandles = Boolean(options && options.showHandles);
     const group = document.createElementNS(SVG_NS, 'g');
+    let selectedAnn = null;
     (annotations || []).forEach(ann => {
         const el = createAnnotationElement(ann);
-        if (el) group.appendChild(el);
+        if (!el) return;
+        if (ann && ann.id) el.setAttribute('data-ann-id', ann.id);
+        if (selectedId && ann && ann.id === selectedId) {
+            el.classList.add('annotation-selected');
+            selectedAnn = ann;
+        }
+        group.appendChild(el);
     });
+    if (showHandles && selectedAnn) {
+        appendSelectionChrome(group, selectedAnn);
+    }
     svg.appendChild(group);
 }
 
@@ -8592,8 +9684,13 @@ class LightboxAnnotationTool {
         this.currentPath = [];
         this.draftEl = null;
         this.textDraft = null;
-        this.baseWidth = img.naturalWidth || img.width || 1920;
-        this.baseHeight = img.naturalHeight || img.height || 1080;
+        this.selectedId = null;
+        this.dragMode = null;
+        this.dragHandle = null;
+        this.dragOrigin = null;
+        this.dragSnapshot = null;
+        this.baseWidth = (img && (img.naturalWidth || img.width)) || 1920;
+        this.baseHeight = (img && (img.naturalHeight || img.height)) || 1080;
         this.resizeObserver = null;
         this.boundHandlers = [];
 
@@ -8604,48 +9701,92 @@ class LightboxAnnotationTool {
         this.syncOverlaySize();
         this.bindEvents();
         this.loadAnnotations();
-        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
-        // Don't auto-select tool - user must click toolbar to start drawing
-        // This prevents accidental annotations when just viewing
+        this.render();
+        this.setTool('select');
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => this.syncOverlaySize());
+        }
     }
 
     bindEvents() {
-        // Tool selection
-        this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
-            const handler = (e) => {
-                e.stopPropagation();
-                this.selectTool(btn.dataset.tool);
+        if (this.toolbar && this.toolbar.querySelectorAll) {
+            this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
+                const handler = (e) => {
+                    e.stopPropagation();
+                    this.selectTool(btn.dataset.tool);
+                };
+                btn.addEventListener('click', handler);
+                this.boundHandlers.push({ target: btn, event: 'click', handler });
+            });
+        }
+
+        const colorPicker = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.color-picker')
+            : null;
+        if (colorPicker) {
+            colorPicker.value = this.color;
+            const colorClick = (e) => e.stopPropagation();
+            const colorInput = (e) => {
+                this.color = e.target.value;
+                this.applyColorToActiveDraft();
             };
-            btn.addEventListener('click', handler);
-            this.boundHandlers.push({ target: btn, event: 'click', handler });
-        });
+            colorPicker.addEventListener('click', colorClick);
+            colorPicker.addEventListener('input', colorInput);
+            this.boundHandlers.push({ target: colorPicker, event: 'click', handler: colorClick });
+            this.boundHandlers.push({ target: colorPicker, event: 'input', handler: colorInput });
+        }
 
-        // Color picker
-        const colorPicker = this.toolbar.querySelector('.color-picker');
-        // Keep the picker's swatch in sync with the token-derived default so the
-        // HTML literal mirror and the logical default never diverge.
-        if (colorPicker) colorPicker.value = this.color;
-        const colorClick = (e) => e.stopPropagation();
-        // One colour source of truth (this.color) for ALL annotation types.
-        // Recolour any in-progress draft live so the picker affects the
-        // annotation being placed identically for shapes and text.
-        const colorInput = (e) => { this.color = e.target.value; this.applyColorToActiveDraft(); };
-        colorPicker.addEventListener('click', colorClick);
-        colorPicker.addEventListener('input', colorInput);
-        this.boundHandlers.push({ target: colorPicker, event: 'click', handler: colorClick });
-        this.boundHandlers.push({ target: colorPicker, event: 'input', handler: colorInput });
+        const strokeInput = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.stroke-width-input')
+            : null;
+        if (strokeInput) {
+            strokeInput.value = String(this.strokeWidth);
+            const strokeHandler = (e) => {
+                e.stopPropagation();
+                this.strokeWidth = Number(e.target.value) || this.strokeWidth;
+                this.applyPropertiesToSelected({ strokeWidthRel: this.strokeWidth });
+            };
+            strokeInput.addEventListener('input', strokeHandler);
+            this.boundHandlers.push({ target: strokeInput, event: 'input', handler: strokeHandler });
+        }
 
-        // Undo/Clear
-        const undoBtn = this.toolbar.querySelector('.undo-btn');
-        const clearBtn = this.toolbar.querySelector('.clear-btn');
-        const undoHandler = (e) => { e.stopPropagation(); this.undo(); };
-        const clearHandler = (e) => { e.stopPropagation(); this.clear(); };
-        undoBtn.addEventListener('click', undoHandler);
-        clearBtn.addEventListener('click', clearHandler);
-        this.boundHandlers.push({ target: undoBtn, event: 'click', handler: undoHandler });
-        this.boundHandlers.push({ target: clearBtn, event: 'click', handler: clearHandler });
+        const fontInput = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.font-size-input')
+            : null;
+        if (fontInput) {
+            const fontHandler = (e) => {
+                e.stopPropagation();
+                this.applyPropertiesToSelected({ fontSizeRel: Number(e.target.value) });
+            };
+            fontInput.addEventListener('input', fontHandler);
+            this.boundHandlers.push({ target: fontInput, event: 'input', handler: fontHandler });
+        }
 
-        // Drawing events (pointer)
+        const undoBtn = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.undo-btn')
+            : null;
+        const clearBtn = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.clear-btn')
+            : null;
+        const deleteBtn = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.delete-btn')
+            : null;
+        if (undoBtn) {
+            const undoHandler = (e) => { e.stopPropagation(); this.undo(); };
+            undoBtn.addEventListener('click', undoHandler);
+            this.boundHandlers.push({ target: undoBtn, event: 'click', handler: undoHandler });
+        }
+        if (clearBtn) {
+            const clearHandler = (e) => { e.stopPropagation(); this.clear(); };
+            clearBtn.addEventListener('click', clearHandler);
+            this.boundHandlers.push({ target: clearBtn, event: 'click', handler: clearHandler });
+        }
+        if (deleteBtn) {
+            const deleteHandler = (e) => { e.stopPropagation(); this.deleteSelected(); };
+            deleteBtn.addEventListener('click', deleteHandler);
+            this.boundHandlers.push({ target: deleteBtn, event: 'click', handler: deleteHandler });
+        }
+
         const start = (e) => this.startDraw(e);
         const move = (e) => this.draw(e);
         const end = (e) => this.endDraw(e);
@@ -8656,52 +9797,94 @@ class LightboxAnnotationTool {
         this.boundHandlers.push({ target: this.svg, event: 'pointermove', handler: move });
         this.boundHandlers.push({ target: window, event: 'pointerup', handler: end });
 
-        // Resize observer to keep overlay in sync with image size
+        const keyHandler = (e) => this.onKeyDown(e);
+        document.addEventListener('keydown', keyHandler);
+        this.boundHandlers.push({ target: document, event: 'keydown', handler: keyHandler });
+
+        const onViewportChange = () => {
+            this.syncOverlaySize();
+            this.render();
+        };
+        window.addEventListener('scroll', onViewportChange, true);
+        window.addEventListener('resize', onViewportChange);
+        this.boundHandlers.push({ target: window, event: 'scroll', handler: onViewportChange, options: true });
+        this.boundHandlers.push({ target: window, event: 'resize', handler: onViewportChange });
+        const overlayHost = this.img && this.img.parentElement;
+        if (overlayHost && overlayHost.addEventListener) {
+            overlayHost.addEventListener('scroll', onViewportChange);
+            this.boundHandlers.push({ target: overlayHost, event: 'scroll', handler: onViewportChange });
+        }
+
         this.resizeObserver = new ResizeObserver(() => {
             this.syncOverlaySize();
-            // Always render with normalized coordinates (1, 1) - CSS transform handles scaling
-            renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
+            this.render();
         });
-        this.resizeObserver.observe(this.img);
+        if (this.img) this.resizeObserver.observe(this.img);
+    }
+
+    setTool(tool) {
+        this.tool = tool || null;
+        if (this.toolbar && this.toolbar.querySelectorAll) {
+            this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.tool === this.tool);
+            });
+        }
+        if (this.svg && this.svg.classList) {
+            const drawing = this.tool !== null && this.tool !== 'select';
+            this.svg.classList.toggle('drawing', drawing);
+            this.svg.classList.toggle('selecting', this.tool === 'select' || this.tool === null);
+        }
     }
 
     selectTool(tool) {
-        this.tool = this.tool === tool ? null : tool;
-        this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.tool === this.tool);
+        this.setTool(this.tool === tool ? null : tool);
+    }
+
+    render() {
+        if (!this.svg) return;
+        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1, {
+            selectedId: this.selectedId,
+            showHandles: Boolean(this.selectedId),
         });
-        this.svg.classList.toggle('drawing', this.tool !== null);
+    }
+
+    selectedAnnotation() {
+        if (!this.selectedId) return null;
+        return this.annotations.find((ann) => ann.id === this.selectedId) || null;
     }
 
     syncOverlaySize() {
-        // Use actual image rect to account for object-fit: contain
-        const imgRect = getActualImageRect(this.img);
-        const containerRect = this.img.parentElement.getBoundingClientRect();
-        const offsetX = imgRect.left - containerRect.left;
-        const offsetY = imgRect.top - containerRect.top;
-        // Position SVG over the actual visible image area
-        // viewBox is set by renderAnnotationsToSvg to 0 0 1 1 (normalized coordinates)
-        this.svg.style.width = `${this.baseWidth}px`;
-        this.svg.style.height = `${this.baseHeight}px`;
-        this.svg.style.left = `${offsetX}px`;
-        this.svg.style.top = `${offsetY}px`;
-        const scaleX = imgRect.width / this.baseWidth;
-        const scaleY = imgRect.height / this.baseHeight;
+        if (!this.img || !this.svg || typeof this.img.getBoundingClientRect !== 'function') return;
+        const layout = overlayLayoutFromImage(this.img);
+        if (!layout || !layout.imgRect || !layout.imgRect.width) return;
+        this.baseWidth = layout.baseWidth;
+        this.baseHeight = layout.baseHeight;
+        this.svg.style.width = `${layout.baseWidth}px`;
+        this.svg.style.height = `${layout.baseHeight}px`;
+        this.svg.style.left = `${layout.offsetX}px`;
+        this.svg.style.top = `${layout.offsetY}px`;
         this.svg.style.transformOrigin = 'top left';
-        this.svg.style.transform = `scale(${scaleX}, ${scaleY})`;
+        this.svg.style.transform = `scale(${layout.scaleX}, ${layout.scaleY})`;
     }
 
     getPosPct(e) {
-        // Use actual image rect to account for object-fit: contain
+        // Re-read the live image box on every pointer sample. Caching it at
+        // pointerdown (or only on ResizeObserver) is what drifted annotations
+        // after lightbox scroll / player layout change.
+        this.syncOverlaySize();
         const rect = getActualImageRect(this.img);
-        // Clamp to 0-1 range to prevent out-of-bounds annotations
         const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
         const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
         return { x, y, w: rect.width, h: rect.height };
     }
 
     startDraw(e) {
-        if (!this.tool) return;
+        const drawing = this.tool && this.tool !== 'select';
+        if (!drawing) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            this.beginSelectOrDrag(e);
+            return;
+        }
         e.stopPropagation();
         const pos = this.getPosPct(e);
         this.startX = pos.x;
@@ -8754,7 +9937,143 @@ class LightboxAnnotationTool {
         }
     }
 
+    beginSelectOrDrag(e) {
+        if (this.textDraft) return;
+        const pos = this.getPosPct(e);
+        const current = this.selectedAnnotation();
+        if (current) {
+            const handle = hitTestHandle(current, pos.x, pos.y);
+            if (handle) {
+                this.dragMode = 'resize';
+                this.dragHandle = handle;
+                this.dragOrigin = pos;
+                this.dragSnapshot = cloneAnnotation(current);
+                this.isDrawing = true;
+                if (this.svg && e && e.pointerId && this.svg.setPointerCapture) {
+                    this.svg.setPointerCapture(e.pointerId);
+                }
+                return;
+            }
+        }
+        const hit = this.selectAt(pos.x, pos.y);
+        if (hit) {
+            this.dragMode = 'move';
+            this.dragOrigin = pos;
+            this.dragSnapshot = cloneAnnotation(hit);
+            this.isDrawing = true;
+            if (this.svg && e && e.pointerId && this.svg.setPointerCapture) {
+                this.svg.setPointerCapture(e.pointerId);
+            }
+            return;
+        }
+        this.dragMode = null;
+        this.dragHandle = null;
+        this.dragSnapshot = null;
+        this.updatePropertyControls();
+        this.render();
+    }
+
+    selectAt(x, y) {
+        const hit = hitTestTopAnnotation(this.annotations, x, y);
+        this.selectedId = hit ? hit.id : null;
+        this.updatePropertyControls();
+        this.render();
+        return hit || null;
+    }
+
+    moveSelected(dx, dy) {
+        const ann = this.selectedAnnotation();
+        if (!ann) return null;
+        moveAnnotationBy(ann, dx, dy);
+        this.render();
+        return ann;
+    }
+
+    resizeSelected(handle, x, y) {
+        const ann = this.selectedAnnotation();
+        if (!ann) return null;
+        resizeAnnotationHandle(ann, handle, x, y);
+        this.render();
+        return ann;
+    }
+
+    deleteSelected() {
+        if (!this.selectedId) return false;
+        const before = this.annotations.length;
+        this.annotations = this.annotations.filter((ann) => ann.id !== this.selectedId);
+        const removed = this.annotations.length !== before;
+        this.selectedId = null;
+        this.dragMode = null;
+        this.updatePropertyControls();
+        this.render();
+        if (removed) this.saveAnnotations();
+        return removed;
+    }
+
+    applyPropertiesToSelected(props) {
+        const ann = this.selectedAnnotation();
+        if (!ann) return null;
+        applyAnnotationProperties(ann, props);
+        if (props && props.color != null) this.color = props.color;
+        if (props && props.strokeWidthRel != null) this.strokeWidth = props.strokeWidthRel;
+        this.render();
+        this.saveAnnotations();
+        return ann;
+    }
+
+    updatePropertyControls() {
+        if (!this.toolbar || !this.toolbar.querySelector) return;
+        const ann = this.selectedAnnotation();
+        const fontInput = this.toolbar.querySelector('.font-size-input');
+        const strokeInput = this.toolbar.querySelector('.stroke-width-input');
+        const picker = this.toolbar.querySelector('.color-picker');
+        if (fontInput) {
+            fontInput.hidden = !(ann && ann.type === 'text');
+            if (ann && ann.type === 'text') {
+                fontInput.value = String(ann.fontSizeRel || 0.036);
+            }
+        }
+        if (strokeInput) {
+            strokeInput.hidden = Boolean(ann && ann.type === 'text');
+            if (ann && ann.strokeWidthRel != null) {
+                strokeInput.value = String(ann.strokeWidthRel);
+            } else {
+                strokeInput.value = String(this.strokeWidth);
+            }
+        }
+        if (picker && ann && ann.color) picker.value = ann.color;
+    }
+
+    onKeyDown(e) {
+        if (!this.selectedId || this.textDraft) return;
+        const target = e.target;
+        const tag = target && target.tagName ? String(target.tagName).toUpperCase() : '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || (target && target.isContentEditable)) return;
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            e.preventDefault();
+            this.deleteSelected();
+        }
+    }
+
     draw(e) {
+        if (this.dragMode === 'move' || this.dragMode === 'resize') {
+            if (e && e.stopPropagation) e.stopPropagation();
+            const pos = this.getPosPct(e);
+            const ann = this.selectedAnnotation();
+            if (!ann || !this.dragSnapshot) return;
+            const restored = cloneAnnotation(this.dragSnapshot);
+            Object.keys(ann).forEach((key) => {
+                if (!(key in restored)) delete ann[key];
+            });
+            Object.assign(ann, restored);
+            if (this.dragMode === 'move') {
+                moveAnnotationBy(ann, pos.x - this.dragOrigin.x, pos.y - this.dragOrigin.y);
+            } else {
+                resizeAnnotationHandle(ann, this.dragHandle, pos.x, pos.y);
+            }
+            this.render();
+            return;
+        }
         if (!this.isDrawing || !this.tool || !this.draftEl) return;
         e.stopPropagation();
         const pos = this.getPosPct(e);
@@ -8815,7 +10134,23 @@ class LightboxAnnotationTool {
     }
 
     endDraw(e) {
-        if (!this.isDrawing || !this.tool) return;
+        if (this.dragMode) {
+            if (e) {
+                if (e.stopPropagation) e.stopPropagation();
+                if (e.pointerId && this.svg && this.svg.releasePointerCapture) {
+                    this.svg.releasePointerCapture(e.pointerId);
+                }
+            }
+            this.dragMode = null;
+            this.dragHandle = null;
+            this.dragSnapshot = null;
+            this.dragOrigin = null;
+            this.isDrawing = false;
+            this.saveAnnotations();
+            this.render();
+            return;
+        }
+        if (!this.isDrawing || !this.tool || this.tool === 'select') return;
         if (e) {
             e.stopPropagation();
             if (e.pointerId) {
@@ -8828,18 +10163,18 @@ class LightboxAnnotationTool {
 
         if (this.tool === 'pen' && this.currentPath.length > 1) {
             const normPoints = this.currentPath.map(p => ({ x: p.x, y: p.y }));
-            this.annotations.push({
+            this.annotations.push(ensureAnnotationId({
                 type: 'pen',
                 points: normPoints,
                 color: this.color,
                 strokeWidthRel
-            });
+            }));
         } else if (this.tool === 'rect') {
             const w = pos.x - this.startX;
             const h = pos.y - this.startY;
             // Minimum size: 1% of image dimension (coordinates are normalized 0-1)
             if (Math.abs(w) > 0.01 && Math.abs(h) > 0.01) {
-                this.annotations.push({
+                this.annotations.push(ensureAnnotationId({
                     type: 'rect',
                     x: this.startX,
                     y: this.startY,
@@ -8847,14 +10182,14 @@ class LightboxAnnotationTool {
                     height: h,
                     color: this.color,
                     strokeWidthRel
-                });
+                }));
             }
         } else if (this.tool === 'arrow') {
             const dx = pos.x - this.startX;
             const dy = pos.y - this.startY;
             // Minimum length: 2% of image diagonal (coordinates are normalized 0-1)
             if (Math.sqrt(dx*dx + dy*dy) > 0.02) {
-                this.annotations.push({
+                this.annotations.push(ensureAnnotationId({
                     type: 'arrow',
                     startX: this.startX,
                     startY: this.startY,
@@ -8862,7 +10197,7 @@ class LightboxAnnotationTool {
                     endY: pos.y,
                     color: this.color,
                     strokeWidthRel
-                });
+                }));
             }
         }
 
@@ -8872,17 +10207,22 @@ class LightboxAnnotationTool {
             this.draftEl.parentNode.removeChild(this.draftEl);
         }
         this.draftEl = null;
-        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
+        this.render();
     }
 
     undo() {
-        this.annotations.pop();
-        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
+        const removed = this.annotations.pop();
+        if (removed && removed.id === this.selectedId) this.selectedId = null;
+        this.updatePropertyControls();
+        this.render();
     }
 
     clear() {
         this.annotations = [];
-        renderAnnotationsToSvg(this.svg, [], 1, 1);
+        this.selectedId = null;
+        this.updatePropertyControls();
+        this.render();
+        this.saveAnnotations();
     }
 
     // Open a non-blocking inline text draft at the clicked position. The draft
@@ -8985,16 +10325,16 @@ class LightboxAnnotationTool {
         }
         const text = (value || '').trim();
         if (text) {
-            this.annotations.push({
+            this.annotations.push(ensureAnnotationId({
                 type: 'text',
                 x: draft.pos.x,
                 y: draft.pos.y,
                 text,
                 color: this.color,
                 fontSizeRel: 0.036,
-            });
+            }));
         }
-        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
+        this.render();
     }
 
     cancelTextDraft() {
@@ -9013,7 +10353,12 @@ class LightboxAnnotationTool {
     applyColorToActiveDraft() {
         if (this.textDraft && this.textDraft.el && typeof this.textDraft.el.setAttribute === 'function') {
             this.textDraft.el.setAttribute('fill', this.color);
+            if (this.textDraft.input && this.textDraft.input.style) {
+                this.textDraft.input.style.color = this.color;
+            }
+            return;
         }
+        this.applyPropertiesToSelected({ color: this.color });
     }
 
     saveAnnotations() {
@@ -9021,7 +10366,7 @@ class LightboxAnnotationTool {
         if (!reportState.findings[this.findingId]) {
             reportState.findings[this.findingId] = createDefaultFindingState();
         }
-        reportState.findings[this.findingId].annotations = [...this.annotations];
+        reportState.findings[this.findingId].annotations = this.annotations.map((ann) => cloneAnnotation(ann));
         reportState.modified = true;
         scheduleSharedStateSync();
     }
@@ -9030,7 +10375,7 @@ class LightboxAnnotationTool {
         if (!this.findingId) return;
         const state = reportState.findings[this.findingId];
         if (state && state.annotations) {
-            this.annotations = [...state.annotations];
+            this.annotations = ensureAnnotationsHaveIds(state.annotations.map((ann) => cloneAnnotation(ann)));
         }
     }
 
@@ -9039,8 +10384,10 @@ class LightboxAnnotationTool {
         if (this.resizeObserver) {
             this.resizeObserver.disconnect();
         }
-        this.boundHandlers.forEach(({ target, event, handler }) => {
-            target.removeEventListener(event, handler);
+        this.boundHandlers.forEach(({ target, event, handler, options }) => {
+            if (target && target.removeEventListener) {
+                target.removeEventListener(event, handler, options);
+            }
         });
         this.boundHandlers = [];
         if (this.svg) {
@@ -9048,6 +10395,7 @@ class LightboxAnnotationTool {
                 this.svg.firstChild.remove();
             }
             this.svg.classList.remove('drawing');
+            this.svg.classList.remove('selecting');
         }
     }
 }
@@ -9096,27 +10444,23 @@ class AnnotationPreview {
     }
 
     syncSvgSize() {
-        // Use actual image rect to account for object-fit: contain
-        const imgRect = getActualImageRect(this.img);
-        const containerRect = this.img.parentElement.getBoundingClientRect();
-        const offsetX = imgRect.left - containerRect.left;
-        const offsetY = imgRect.top - containerRect.top;
-        // Position SVG over the actual visible image area
-        // viewBox is set by render() to 0 0 1 1 (normalized coordinates)
-        this.svg.style.width = `${this.baseWidth}px`;
-        this.svg.style.height = `${this.baseHeight}px`;
-        this.svg.style.left = `${offsetX}px`;
-        this.svg.style.top = `${offsetY}px`;
-        const scaleX = imgRect.width / this.baseWidth;
-        const scaleY = imgRect.height / this.baseHeight;
+        if (!this.img || !this.svg) return;
+        const layout = overlayLayoutFromImage(this.img);
+        if (!layout || !layout.imgRect || !layout.imgRect.width) return;
+        this.baseWidth = layout.baseWidth;
+        this.baseHeight = layout.baseHeight;
+        this.svg.style.width = `${layout.baseWidth}px`;
+        this.svg.style.height = `${layout.baseHeight}px`;
+        this.svg.style.left = `${layout.offsetX}px`;
+        this.svg.style.top = `${layout.offsetY}px`;
         this.svg.style.transformOrigin = 'top left';
-        this.svg.style.transform = `scale(${scaleX}, ${scaleY})`;
+        this.svg.style.transform = `scale(${layout.scaleX}, ${layout.scaleY})`;
     }
 
     loadAnnotations() {
         const review = reportState.findings[this.findingId];
         if (review && review.annotations && review.annotations.length > 0) {
-            this.annotations = [...review.annotations];
+            this.annotations = ensureAnnotationsHaveIds(review.annotations.map((ann) => cloneAnnotation(ann)));
             this.container.classList.add('has-annotations');
         } else {
             this.annotations = [];

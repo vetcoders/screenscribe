@@ -2,6 +2,14 @@
 
 ## [0.1.20.dev0] - Unreleased
 
+- **Added: annotation objects in the HTML report editor can be selected, moved,
+  resized, recoloured, and deleted.** Each annotation now has a stable `id`
+  (legacy saves without one are migrated on load). The lightbox toolbar gains
+  Select / Delete plus stroke and font-size controls; Delete/Backspace removes
+  the active object. Overlay position re-reads `getActualImageRect` on every
+  pointer sample and on scroll/resize so a rectangle drawn next to on-screen
+  text no longer lands in a different place after the player layout shifts.
+
 - **Internal: refresh runtime and development dependencies.** Updated the lockfile
   to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.
   Normalized the development version to PEP 440's `0.1.20.dev0` spelling so
