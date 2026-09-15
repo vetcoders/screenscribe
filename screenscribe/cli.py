@@ -414,7 +414,11 @@ def review(
         typer.Option(
             "--output",
             "-o",
-            help="Output directory for screenshots and reports",
+            help=(
+                "Review directory for screenshots and reports. A new path becomes the "
+                "review directory; an existing folder that is not a previous review is "
+                "used as a parent (<folder>/<video>_review)"
+            ),
         ),
     ] = None,
     prompt: Annotated[
@@ -505,7 +509,10 @@ def review(
         bool,
         typer.Option(
             "--force",
-            help="Force reprocessing, ignore existing checkpoint",
+            help=(
+                "Force reprocessing: overwrite a previous screenscribe review and ignore its "
+                "checkpoint (never a folder screenscribe does not own)"
+            ),
         ),
     ] = False,
     estimate: Annotated[
@@ -578,7 +585,8 @@ def review(
 
     Output options:
     • --serve/--no-serve: Start HTTP server and open report in browser
-    • --force: Overwrite existing review instead of versioning
+    • --force: Overwrite a previous screenscribe review instead of versioning
+      (never a folder screenscribe does not own)
     • --resume: Continue from checkpoint if interrupted
 
     Examples:
@@ -1255,6 +1263,7 @@ def config(
         console.print(f"  STT:    {cfg.stt_model}")
         console.print(f"  LLM:    {cfg.llm_model}")
         console.print(f"  Vision: {cfg.vision_model}")
+        console.print(f"  [dim](LLM reasoning effort: {cfg.get_llm_reasoning_effort()})[/]")
 
         # Processing
         console.print("\n[cyan]Processing:[/]")

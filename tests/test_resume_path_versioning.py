@@ -470,3 +470,569 @@ def test_non_tty_does_not_prompt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
     assert _run(runner, video_path, output_dir, resume=False).exit_code == 0
     assert (tmp_path / "demo_review_2").exists(), "non-TTY must auto-bump to _2 without prompting"
+
+
+# --------------------------------------------------------------------------- #
+# -o PATH resolution: an existing ORDINARY folder is a parent, not a review.   #
+# --------------------------------------------------------------------------- #
+
+
+def _success_harness(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[CliRunner, Path, Path]:
+    """Full-success stubs (real report writers) + a ``demo.mov`` input."""
+    runner = CliRunner()
+    video_path = tmp_path / "demo.mov"
+    video_path.write_bytes(b"video")
+    extracted_audio = tmp_path / "audio.mp3"
+    extracted_audio.write_bytes(b"audio")
+    config = ScreenScribeConfig(
+        llm_api_key="test-key",  # pragma: allowlist secret
+        vision_api_key="test-vision-key",  # pragma: allowlist secret
+    )
+    _install_real_report_stubs(monkeypatch, config, extracted_audio)
+    monkeypatch.setattr(
+        "screenscribe.review_pipeline.analyze_all_findings_unified",
+        lambda screenshots, *a, **kw: [_finding_for(d) for (d, _p) in screenshots],
+    )
+    monkeypatch.setattr("screenscribe.review_pipeline._stdin_is_tty", lambda: False)
+    return runner, video_path, extracted_audio
+
+
+def test_output_ordinary_folder_with_foreign_report_is_a_parent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``-o ~/Downloads`` holding an unrelated ``*_report.md`` must write
+    ``Downloads/demo_review`` -- not announce an existing review and create a
+    ``Downloads_2`` sibling (the v0.1.19 operator report)."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    foreign = downloads / "2026-08-17_vc-notes_report.md"
+    foreign.write_text("# unrelated")
+
+    result = _run(runner, video_path, downloads, resume=False)
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 0, result.output
+    assert (downloads / "demo_review" / "demo_report.json").exists()
+    assert not (tmp_path / "Downloads_2").exists()
+    assert "Existing Review Found" not in normalized
+    assert "Found Previous Review" not in normalized
+    assert foreign.read_text() == "# unrelated"
+
+    # Re-run: versions INSIDE the folder, never next to it.
+    result2 = _run(runner, video_path, downloads, resume=False)
+    assert result2.exit_code == 0, result2.output
+    assert (downloads / "demo_review_2" / "demo_report.json").exists()
+    assert not (tmp_path / "Downloads_2").exists()
+
+
+def test_output_existing_review_dir_still_versions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``-o`` naming a real previous review keeps the historical behaviour:
+    the path is the review dir itself and a re-run versions it (``_2``)."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    run_dir = tmp_path / "my-run"
+
+    assert _run(runner, video_path, run_dir, resume=False).exit_code == 0
+    assert (run_dir / "demo_report.json").exists()  # non-existent -> used as-is
+
+    result = _run(runner, video_path, run_dir, resume=False)
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "my-run_2" / "demo_report.json").exists()
+    assert not (run_dir / "demo_review").exists()
+
+
+def test_output_existing_review_dir_still_prompts_on_tty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A real review dir passed via ``-o`` still gets the rerun prompt on a TTY."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    run_dir = tmp_path / "my-run"
+    assert _run(runner, video_path, run_dir, resume=False).exit_code == 0
+
+    prompted: list[bool] = []
+
+    def _answer(*a: object, **kw: object) -> str:
+        prompted.append(True)
+        return "o"
+
+    monkeypatch.setattr("screenscribe.review_pipeline._stdin_is_tty", lambda: True)
+    monkeypatch.setattr("screenscribe.review_pipeline.Prompt.ask", _answer)
+
+    assert _run(runner, video_path, run_dir, resume=False).exit_code == 0
+    assert prompted == [True]
+    assert not (tmp_path / "my-run_2").exists()
+    assert not (run_dir / "demo_review").exists()
+
+
+def test_output_folder_with_checkpoint_is_a_review_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A folder holding ``.screenscribe_cache`` is a screenscribe review dir, so
+    ``-o`` uses it directly instead of nesting a new review inside it."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    run_dir = tmp_path / "partial"
+    (run_dir / ".screenscribe_cache").mkdir(parents=True)
+
+    assert _run(runner, video_path, run_dir, resume=False).exit_code == 0
+    assert (run_dir / "demo_report.json").exists()
+    assert not (run_dir / "demo_review").exists()
+
+
+def test_batch_output_layout_unchanged(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Batch mode keeps writing ``<output>/<stem>_review`` per video."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    second = tmp_path / "second.mov"
+    second.write_bytes(b"video2")
+    out = tmp_path / "batch"
+    out.mkdir()
+    (out / "unrelated_report.md").write_text("# foreign")
+
+    result = runner.invoke(
+        cli_module.app,
+        [
+            "review",
+            str(video_path),
+            str(second),
+            "-o",
+            str(out),
+            "--no-serve",
+            "--skip-validation",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert (out / "demo_review" / "demo_report.json").exists()
+    assert (out / "second_review" / "second_report.json").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Output directory cannot be created: friendly error, non-zero exit.          #
+# --------------------------------------------------------------------------- #
+
+
+def _assert_friendly_output_error(result: object, reason: str) -> None:
+    output = result.output  # type: ignore[attr-defined]
+    normalized = " ".join(output.split())
+    assert result.exit_code == 1, output  # type: ignore[attr-defined]
+    assert result.exception is None or isinstance(  # type: ignore[attr-defined]
+        result.exception,  # type: ignore[attr-defined]
+        SystemExit,
+    ), result.exception  # type: ignore[attr-defined]
+    assert "Traceback" not in output
+    assert "Output Directory Error" in normalized
+    assert reason in normalized
+    assert "-o" in normalized
+
+
+def test_output_under_a_file_exits_with_friendly_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``-o some_file/sub`` -> NotADirectoryError becomes a clear message + exit 1."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("i am a file")
+
+    result = _run(runner, video_path, blocker / "sub", resume=False)
+    _assert_friendly_output_error(result, "a file (not a folder) already exists")
+
+
+def test_output_is_an_existing_file_exits_with_friendly_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``-o existing_file`` -> FileExistsError becomes a clear message + exit 1."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    target = tmp_path / "taken"
+    target.write_text("i am a file")
+
+    result = _run(runner, video_path, target, resume=False)
+    _assert_friendly_output_error(result, "a file (not a folder) already exists")
+
+
+def test_output_permission_denied_exits_with_friendly_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``-o`` under an unwritable folder -> PermissionError, no traceback."""
+    import os
+
+    if os.name != "posix" or os.geteuid() == 0:
+        pytest.skip("needs a non-root POSIX user for permission checks")
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    try:
+        result = _run(runner, video_path, locked / "review", resume=False)
+    finally:
+        locked.chmod(0o700)
+    _assert_friendly_output_error(result, "permission denied")
+
+
+def test_output_read_only_filesystem_reason() -> None:
+    """EROFS (read-only volume) is named as such in the message."""
+    import errno
+
+    from screenscribe.cli_messages import _build_output_dir_error_message
+
+    exc = OSError(errno.EROFS, "Read-only file system", "/Volumes/ro/out")
+    message = _build_output_dir_error_message(Path("/Volumes/ro/out"), exc)
+    assert "read-only" in message
+    assert "/Volumes/ro/out" in message
+
+
+# --------------------------------------------------------------------------- #
+# Version slots: an existing non-empty <base>_N is never reused.              #
+# --------------------------------------------------------------------------- #
+
+
+def _completed_base(tmp_path: Path) -> Path:
+    base = tmp_path / "demo_review"
+    base.mkdir()
+    (base / "demo_report.json").write_text("{}")
+    return base
+
+
+def test_version_slot_skips_ordinary_non_empty_folder(tmp_path: Path) -> None:
+    """``demo_review_2`` holds foreign files (not a bundle): it is occupied, so the
+    rerun goes to ``_3`` instead of mixing its output into that folder."""
+    base = _completed_base(tmp_path)
+    occupied = tmp_path / "demo_review_2"
+    occupied.mkdir()
+    (occupied / "notes.md").write_text("# someone else's notes")
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (
+        tmp_path / "demo_review_3",
+        3,
+    )
+
+
+def test_version_slot_reuses_empty_folder(tmp_path: Path) -> None:
+    base = _completed_base(tmp_path)
+    (tmp_path / "demo_review_2").mkdir()
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (
+        tmp_path / "demo_review_2",
+        2,
+    )
+
+
+def test_version_slot_skips_existing_file(tmp_path: Path) -> None:
+    base = _completed_base(tmp_path)
+    (tmp_path / "demo_review_2").write_text("a file, not a folder")
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (
+        tmp_path / "demo_review_3",
+        3,
+    )
+
+
+def test_checkpoint_only_base_is_still_reused_in_place(tmp_path: Path) -> None:
+    """The narrow bundle rule still applies to the base itself: a partial run with
+    only a checkpoint (no report) is reused, not version-bumped."""
+    base = tmp_path / "demo_review"
+    (base / ".screenscribe_cache").mkdir(parents=True)
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (base, None)
+
+
+# --------------------------------------------------------------------------- #
+# Foreign base slots: never written into, reused, or cleaned.                 #
+# --------------------------------------------------------------------------- #
+
+
+def _run_default(runner: CliRunner, video_path: Path, *extra: str) -> object:
+    return runner.invoke(
+        cli_module.app, ["review", str(video_path), "--no-serve", "--skip-validation", *extra]
+    )
+
+
+def test_foreign_base_folder_allocates_next_slot_and_is_untouched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A user-created non-empty ``demo_review`` next to the video is not ours: the
+    review goes to ``demo_review_2``; the foreign folder stays byte-identical and
+    gets no checkpoint cache. No Overwrite/Resume prompt is offered for it."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    foreign = tmp_path / "demo_review"
+    foreign.mkdir()
+    notes = foreign / "notes.txt"
+    notes.write_bytes(b"my own notes")
+    monkeypatch.setattr("screenscribe.review_pipeline._stdin_is_tty", lambda: True)
+
+    def _no_prompt(*a: object, **kw: object) -> str:
+        raise AssertionError("a foreign base must not trigger the rerun prompt")
+
+    monkeypatch.setattr("screenscribe.review_pipeline.Prompt.ask", _no_prompt)
+
+    result = _run_default(runner, video_path)
+
+    assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
+    assert (tmp_path / "demo_review_2" / "demo_report.json").exists()
+    assert sorted(p.name for p in foreign.iterdir()) == ["notes.txt"]
+    assert notes.read_bytes() == b"my own notes"
+
+
+def test_foreign_base_and_foreign_second_slot_allocates_third(tmp_path: Path) -> None:
+    base = tmp_path / "demo_review"
+    base.mkdir()
+    (base / "notes.txt").write_text("foreign")
+    second = tmp_path / "demo_review_2"
+    second.mkdir()
+    (second / "other.txt").write_text("foreign too")
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (
+        tmp_path / "demo_review_3",
+        3,
+    )
+
+
+def test_empty_base_folder_is_used(tmp_path: Path) -> None:
+    base = tmp_path / "demo_review"
+    base.mkdir()
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (base, None)
+
+
+def test_foreign_base_file_is_skipped_by_allocator(tmp_path: Path) -> None:
+    base = tmp_path / "demo_review"
+    base.write_text("a file where the review folder would go")
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (
+        tmp_path / "demo_review_2",
+        2,
+    )
+
+
+def test_version_cap_exhausted_is_a_friendly_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No free slot below the cap -> Output Directory Error panel, exit 1, no traceback."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_module, "MAX_REVIEW_VERSIONS", 3)
+    for name in ("demo_review", "demo_review_2", "demo_review_3"):
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / "demo_report.json").write_text("{}")
+
+    result = _run_default(runner, video_path)
+    output = result.output  # type: ignore[attr-defined]
+    normalized = " ".join(output.split())
+
+    assert result.exit_code == 1, output  # type: ignore[attr-defined]
+    assert result.exception is None or isinstance(result.exception, SystemExit)  # type: ignore[attr-defined]
+    assert "Traceback" not in output
+    assert "Output Directory Error" in normalized
+    assert "Too many existing versions of demo_review (limit 3)" in normalized
+    assert not (tmp_path / "demo_review_4").exists()
+
+
+# --------------------------------------------------------------------------- #
+# --force: only screenscribe's own review folder (or a free slot).            #
+# --------------------------------------------------------------------------- #
+
+
+def _snapshot(folder: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(folder)): path.read_bytes()
+        for path in sorted(folder.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _panel_text(output: str) -> str:
+    """Collapse a Rich panel to plain words (drop borders, join wrapped lines)."""
+    borderless = "".join(" " if ch in "│╭╮╰╯─" else ch for ch in output)
+    return " ".join(borderless.split())
+
+
+def _assert_force_refused(result: object) -> None:
+    output = result.output  # type: ignore[attr-defined]
+    normalized = _panel_text(output)
+    assert result.exit_code == 1, output  # type: ignore[attr-defined]
+    assert "Traceback" not in output
+    assert "Output Directory Error" in normalized
+    assert "is not a screenscribe review folder" in normalized
+    assert "--force only overwrites a previous screenscribe review" in normalized
+
+
+def test_force_refuses_foreign_folder_and_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    foreign = tmp_path / "demo_review"
+    (foreign / "sub").mkdir(parents=True)
+    (foreign / "notes.txt").write_bytes(b"my notes")
+    (foreign / "sub" / "data.bin").write_bytes(b"\x00\x01")
+    before = _snapshot(foreign)
+
+    def _no_rmtree(*a: object, **kw: object) -> None:
+        raise AssertionError("--force must not delete anything in a foreign folder")
+
+    monkeypatch.setattr("screenscribe.review_pipeline.shutil.rmtree", _no_rmtree)
+
+    result = _run_default(runner, video_path, "--force")
+
+    _assert_force_refused(result)
+    assert _snapshot(foreign) == before
+    assert not (foreign / ".screenscribe_cache").exists()
+    assert not (tmp_path / "demo_review_2").exists()
+
+
+def test_force_refuses_foreign_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    blocker = tmp_path / "demo_review"
+    blocker.write_bytes(b"a file")
+
+    result = _run_default(runner, video_path, "--force")
+
+    _assert_force_refused(result)
+    assert blocker.read_bytes() == b"a file"
+
+
+def test_force_overwrites_own_complete_review(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A previous screenscribe review is still overwritten in place with --force."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    assert _run_default(runner, video_path).exit_code == 0  # type: ignore[attr-defined]
+    assert (tmp_path / "demo_review" / "demo_report.json").exists()
+
+    result = _run_default(runner, video_path, "--force")
+
+    assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
+    assert not (tmp_path / "demo_review_2").exists()
+    assert (tmp_path / "demo_review" / "demo_report.json").exists()
+
+
+def test_force_cache_clear_failure_is_a_friendly_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    own = tmp_path / "demo_review"
+    (own / ".screenscribe_cache").mkdir(parents=True)
+
+    def _locked(path: object, *a: object, **kw: object) -> None:
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr("screenscribe.review_pipeline.shutil.rmtree", _locked)
+
+    result = _run_default(runner, video_path, "--force")
+    output = result.output  # type: ignore[attr-defined]
+    normalized = _panel_text(output)
+
+    assert result.exit_code == 1, output  # type: ignore[attr-defined]
+    assert "Traceback" not in output
+    assert "Output Directory Error" in normalized
+    assert "Cannot clear the previous checkpoint cache" in normalized
+    assert "Reason: permission denied" in normalized
+    assert (own / ".screenscribe_cache").is_dir()
+
+
+# --------------------------------------------------------------------------- #
+# Reserving the output slot right before use (race + writability).            #
+# --------------------------------------------------------------------------- #
+
+
+def test_reserve_moves_on_when_slot_is_taken_after_classification(tmp_path: Path) -> None:
+    """A foreign file appears at the chosen slot between classification and mkdir:
+    the reserve step never writes into it and takes the reselected slot."""
+    from screenscribe.cli_paths import reserve_review_output_slot
+
+    chosen = tmp_path / "demo_review_2"
+    real_mkdir = Path.mkdir
+
+    def racing_mkdir(self: Path, *args: object, **kwargs: object) -> None:
+        if self == chosen and not chosen.exists():
+            chosen.write_bytes(b"someone else")  # the race: appears just before us
+        real_mkdir(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    base = tmp_path / "demo_review"
+    base.mkdir()
+    (base / "demo_report.json").write_text("{}")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "mkdir", racing_mkdir)
+        reserved = reserve_review_output_slot(
+            chosen,
+            "demo",
+            reselect=lambda: cli_module._find_next_review_path(base, video_stem="demo")[0],
+        )
+
+    assert reserved == tmp_path / "demo_review_3"
+    assert chosen.read_bytes() == b"someone else"
+    assert reserved.is_dir()
+
+
+def test_reserve_without_reselect_fails_closed_on_race(tmp_path: Path) -> None:
+    from screenscribe.cli_paths import OutputSlotError, reserve_review_output_slot
+
+    chosen = tmp_path / "demo_review"
+    real_mkdir = Path.mkdir
+
+    def racing_mkdir(self: Path, *args: object, **kwargs: object) -> None:
+        if self == chosen and not chosen.exists():
+            chosen.write_bytes(b"someone else")
+        real_mkdir(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "mkdir", racing_mkdir)
+        with pytest.raises(OutputSlotError) as caught:
+            reserve_review_output_slot(chosen, "demo")
+
+    assert caught.value.kind == "foreign"
+    assert chosen.read_bytes() == b"someone else"
+
+
+def test_review_race_on_allocated_slot_never_writes_into_foreign_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """End to end: the allocated ``_2`` is taken by a foreign file after allocation;
+    the review lands in ``_3`` and the foreign bytes are untouched."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    assert _run_default(runner, video_path).exit_code == 0  # type: ignore[attr-defined]
+    slot_2 = tmp_path / "demo_review_2"
+    real_find = cli_module._find_next_review_path
+    calls = {"n": 0}
+
+    def find_then_race(base: Path, video_stem: str | None = None) -> tuple[Path, int | None]:
+        result = real_find(base, video_stem=video_stem)
+        calls["n"] += 1
+        if calls["n"] == 1 and result[0] == slot_2:
+            slot_2.write_bytes(b"raced in")
+        return result
+
+    monkeypatch.setattr(cli_module, "_find_next_review_path", find_then_race)
+
+    result = _run_default(runner, video_path)
+
+    assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
+    assert slot_2.read_bytes() == b"raced in"
+    assert (tmp_path / "demo_review_3" / "demo_report.json").exists()
+
+
+@pytest.mark.parametrize("flag", ["--force", "--resume"])
+def test_unwritable_existing_review_dir_is_a_friendly_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, flag: str
+) -> None:
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    own = tmp_path / "demo_review"
+    (own / ".screenscribe_cache").mkdir(parents=True)
+    (own / "demo_report.json").write_text("{}")
+    before = sorted(str(p.relative_to(own)) for p in own.rglob("*"))
+
+    def _denied(*args: object, **kwargs: object) -> object:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("screenscribe.cli_paths.tempfile.NamedTemporaryFile", _denied)
+
+    result = _run_default(runner, video_path, flag)
+    output = result.output  # type: ignore[attr-defined]
+    normalized = _panel_text(output)
+
+    assert result.exit_code == 1, output  # type: ignore[attr-defined]
+    assert "Traceback" not in output
+    assert "Output Directory Error" in normalized
+    assert "The output folder exists but cannot be written" in normalized
+    assert "Reason: permission denied" in normalized
+    assert sorted(str(p.relative_to(own)) for p in own.rglob("*")) == before

@@ -508,3 +508,36 @@ def test_config_show_fully_redacts_api_key(monkeypatch: Any) -> None:
     # The masked placeholder is present (keys are shown, just redacted).
     assert "Main:" in result.output
     assert "*" in result.output
+
+
+_STT_USERINFO_URL = (
+    "https://user:secret@stt.example.com/v1/audio?key=abc"  # pragma: allowlist secret
+)
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "text"),
+    [
+        (401, {"message": f"Invalid key for {_STT_USERINFO_URL}"}, None),
+        (503, None, "x" * 170 + f" upstream {_STT_USERINFO_URL} unavailable"),
+    ],
+)
+def test_transcription_failure_message_redacts_provider_urls(
+    status: int, body: dict[str, str] | None, text: str | None
+) -> None:
+    """Provider detail in the STT failure message never carries URL credentials,
+    including a URL cut by the 200-character cap on a plain-text body."""
+    from screenscribe.cli_messages import _build_transcription_failure_message
+
+    request = httpx.Request("POST", "https://stt.example.com/v1/audio/transcriptions")
+    if body is not None:
+        response = httpx.Response(status, json=body, request=request)
+    else:
+        response = httpx.Response(status, text=text, request=request)
+    error = httpx.HTTPStatusError("stt failed", request=request, response=response)
+
+    message = _build_transcription_failure_message(error)
+
+    assert "secret" not in message
+    assert "key=abc" not in message
+    assert "user:" not in message

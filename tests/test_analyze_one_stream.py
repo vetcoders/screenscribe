@@ -430,3 +430,135 @@ def test_delta_without_consumer_does_not_suppress_a_later_callback(
         f"a consumer-less reasoning delta wrongly suppressed on_content on retry: {captured}"
     )
     assert result is not None
+
+
+def test_transient_stream_error_event_is_retried_before_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An in-stream ``response.failed`` with a transient code (server_error) is
+    retried on the image-backed call instead of degrading to text-only."""
+    screenshot = tmp_path / "shot.jpg"
+    screenshot.write_bytes(b"fake-image")
+
+    failed_line = "data: " + json.dumps(
+        {
+            "type": "response.failed",
+            "response": {"error": {"code": "server_error", "message": "Upstream overloaded"}},
+        }
+    )
+    attempts = {"n": 0}
+    payloads: list[str] = []
+
+    class _RecordingClient(_DropThenDoneClient):
+        def stream(self, *args: Any, **kwargs: Any) -> _DropThenDoneResponse:
+            payloads.append(json.dumps(kwargs.get("json")))
+            return super().stream(*args, **kwargs)
+
+    def _client_factory(*args: Any, **kwargs: Any) -> _DropThenDoneClient:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return _RecordingClient(_DropThenDoneResponse([failed_line]))
+        return _RecordingClient(_DropThenDoneResponse([_delta_line("A"), "data: [DONE]"]))
+
+    monkeypatch.setattr("screenscribe.unified_analysis.httpx.Client", _client_factory)
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda *_a, **_k: None)
+
+    result = analyze_finding_unified_streaming(_detection(), screenshot, _config())
+
+    assert attempts["n"] == 2, "a transient provider error event should be retried"
+    # The retry is still the image-backed request, not the text-only fallback.
+    assert "image" in payloads[1], "retry must keep the screenshot instead of degrading"
+    assert result is not None
+
+
+def test_server_error_after_reasoning_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A transient-looking response.failed AFTER reasoning deltas fails fast: the
+    image-backed stream is attempted once, then degrades (no retry storm)."""
+    screenshot = tmp_path / "shot.jpg"
+    screenshot.write_bytes(b"fake-image")
+
+    lines = [
+        "data: "
+        + json.dumps({"type": "response.reasoning_summary_text.delta", "delta": "looping"}),
+        "data: "
+        + json.dumps(
+            {
+                "type": "response.failed",
+                "response": {"error": {"code": "server_error", "message": "rejected"}},
+            }
+        ),
+    ]
+    payloads: list[dict[str, Any]] = []
+
+    class _RecordingClient(_DropThenDoneClient):
+        def stream(self, *args: Any, **kwargs: Any) -> _DropThenDoneResponse:
+            payloads.append(kwargs.get("json") or {})
+            if len(payloads) == 1:
+                return _DropThenDoneResponse(lines)
+            return _DropThenDoneResponse([_delta_line("A"), "data: [DONE]"])
+
+    monkeypatch.setattr(
+        "screenscribe.unified_analysis.httpx.Client",
+        lambda *a, **k: _RecordingClient(_DropThenDoneResponse([])),
+    )
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda *_a, **_k: None)
+
+    result = analyze_finding_unified_streaming(_detection(), screenshot, _config())
+
+    image_attempts = [p for p in payloads if "input_image" in json.dumps(p)]
+    assert len(image_attempts) == 1, "error after model output must not be retried"
+    assert result is not None
+    # Vision request keeps the provider default; the text-only fallback bounds effort.
+    assert "effort" not in image_attempts[0]["reasoning"]
+    text_only = [p for p in payloads if "input_image" not in json.dumps(p)]
+    assert text_only and text_only[0]["reasoning"]["effort"] == "medium"
+
+
+def test_incomplete_after_partial_text_fails_image_attempt_and_falls_back(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``response.incomplete`` after partial text is a terminal error, not a normal
+    result: the image-backed attempt fails once (with the reason logged) and the
+    text-only fallback runs, exactly as for ``response.failed``."""
+    screenshot = tmp_path / "shot.jpg"
+    screenshot.write_bytes(b"fake-image")
+
+    lines = [
+        _delta_line('{"summary": "trunc'),
+        "data: "
+        + json.dumps(
+            {
+                "type": "response.incomplete",
+                "response": {"incomplete_details": {"reason": "max_output_tokens"}},
+            }
+        ),
+    ]
+    payloads: list[dict[str, Any]] = []
+
+    class _RecordingClient(_DropThenDoneClient):
+        def stream(self, *args: Any, **kwargs: Any) -> _DropThenDoneResponse:
+            payloads.append(kwargs.get("json") or {})
+            if len(payloads) == 1:
+                return _DropThenDoneResponse(lines)
+            return _DropThenDoneResponse([_delta_line("A"), "data: [DONE]"])
+
+    monkeypatch.setattr(
+        "screenscribe.unified_analysis.httpx.Client",
+        lambda *a, **k: _RecordingClient(_DropThenDoneResponse([])),
+    )
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda *_a, **_k: None)
+    config = _config()
+    config.verbose = True
+
+    result = analyze_finding_unified_streaming(_detection(), screenshot, config)
+
+    image_attempts = [p for p in payloads if "input_image" in json.dumps(p)]
+    text_only = [p for p in payloads if "input_image" not in json.dumps(p)]
+    assert len(image_attempts) == 1
+    assert len(text_only) == 1
+    assert result is not None
+    assert result.summary != '{"summary": "trunc'
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Response incomplete: max_output_tokens" in out

@@ -207,6 +207,22 @@ def test_review_failed_prefilter_does_not_write_a_false_no_issues_report(
     assert "Traceback" not in result.output
 
 
+def test_review_failed_prefilter_panel_names_reason_and_endpoint_host(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The failure panel shows the reason next to the LLM endpoint host (no key),
+    so a provider outage can be told apart from a credentials problem."""
+    from screenscribe.api_utils import endpoint_host
+
+    result, _output_dir = _run_review_with_failed_prefilter(monkeypatch, tmp_path)
+    normalized_output = " ".join(result.output.split())
+    host = endpoint_host(ScreenScribeConfig(api_key="test-key").llm_endpoint)
+
+    assert "HTTP 401 Unauthorized" in normalized_output
+    assert f"Endpoint: {host}" in normalized_output
+    assert "test-key" not in result.output
+
+
 def test_review_failed_prefilter_is_not_checkpointed_as_complete(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -727,6 +743,34 @@ def test_review_warns_when_vision_requested_but_no_vision_key(
     report = json.loads((output_dir / "demo_report.json").read_text(encoding="utf-8"))
     error_messages = " ".join(e["message"] for e in report["errors"]).lower()
     assert "vision" in error_messages
+
+
+def test_review_transcript_only_summary_failure_redacts_url_in_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A raw httpx.HTTPStatusError from the transcript-only summary fallback must
+    not leak credentials/query secrets into the persisted report JSON."""
+    config = ScreenScribeConfig(llm_api_key="test-key")  # pragma: allowlist secret
+    assert config.get_vision_api_key() == ""  # no vision key -> reaches the fallback
+
+    leaking_url = (
+        "https://user:secret@api.example.com/v1/responses?key=abc"  # pragma: allowlist secret
+    )
+
+    def boom(*_: object, **__: object) -> object:
+        request = httpx.Request("POST", leaking_url)
+        response = httpx.Response(500, request=request)
+        response.raise_for_status()
+
+    monkeypatch.setattr("screenscribe.review_pipeline.generate_detection_executive_summary", boom)
+
+    result, output_dir = _run_review_with_one_poi(monkeypatch, tmp_path, config=config)
+
+    assert result.exit_code == 0, result.output
+    report = json.loads((output_dir / "demo_report.json").read_text(encoding="utf-8"))
+    messages = " ".join(e["message"] for e in report["errors"])
+    assert "secret" not in messages
+    assert "key=abc" not in messages
 
 
 def test_review_silent_when_vision_opted_out(

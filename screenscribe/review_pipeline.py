@@ -14,17 +14,20 @@ bind. The cli<->review_pipeline import cycle is broken with a function-local
 ``analyze()`` / ``_serve_report`` already use).
 """
 
+import errno
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
+import typer
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Prompt
 
 from . import __version__
-from .api_utils import APIError
+from .api_utils import APIError, endpoint_host, redact_error_message
 from .checkpoint import (
     PipelineCheckpoint,
     checkpoint_valid_for_video,
@@ -41,6 +44,21 @@ from .checkpoint import (
     serialize_screenshot,
     serialize_transcription,
     serialize_unified_finding,
+)
+from .cli_messages import (
+    _build_cache_clear_error_message,
+    _build_force_foreign_message,
+    _build_output_dir_error_message,
+    _build_output_slot_error_message,
+    _build_versions_exhausted_message,
+)
+from .cli_paths import (
+    OutputSlotError,
+    OutputVersionsExhaustedError,
+    _is_dir,
+    classify_review_slot,
+    is_review_directory,
+    reserve_review_output_slot,
 )
 from .config import ScreenScribeConfig
 from .detect import format_timestamp
@@ -147,6 +165,13 @@ def _has_valid_checkpoint(base_output: Path, video: Path, language: str) -> bool
     return bool(checkpoint and checkpoint_valid_for_video(checkpoint, video, base_output, language))
 
 
+def _exit_output_dir_error(console: Any, message: str) -> NoReturn:
+    """Print an "Output Directory Error" panel and stop with exit code 1."""
+    console.print()
+    console.print(Panel(message, title="[bold red]Output Directory Error[/]", border_style="red"))
+    raise typer.Exit(1)
+
+
 def _announce_new_version(console: Any, base_name: str, new_name: str) -> None:
     """Print the historical 'creating a new versioned copy' panel."""
     console.print(
@@ -224,7 +249,27 @@ def run_review(
         elif len(videos) > 1:
             # Batch mode with -o: use subdirectories
             base_output = output / f"{video_stem}_review"
+        elif _is_dir(output) and not is_review_directory(output, video_stem):
+            # Single video, -o names an existing ordinary folder (not a previous
+            # review): treat it as the PARENT, exactly like batch mode. Re-runs
+            # then version inside it (<stem>_review_2), never next to it.
+            base_output = output / f"{video_stem}_review"
+            console.print(
+                f"[dim]{escape(str(output))} is an existing folder, not a previous "
+                f"review; writing the review into {escape(base_output.name)}[/]"
+            )
         else:
+            # -o does not exist yet, or IS a previous screenscribe review:
+            # use it as the review directory itself. An existing FILE named by
+            # -o is an explicit, unusable target: stop instead of silently
+            # writing to a versioned sibling.
+            if output.exists() and not _is_dir(output):
+                _exit_output_dir_error(
+                    console,
+                    _build_output_dir_error_message(
+                        output, FileExistsError(errno.EEXIST, "File exists", str(output))
+                    ),
+                )
             base_output = output
 
         # Handle existing reviews: append _2, _3, etc. unless --force.
@@ -234,6 +279,11 @@ def run_review(
         effective_resume = resume
 
         if force:
+            # --force may overwrite only a free slot or screenscribe's own review
+            # folder. A foreign file/folder fails closed BEFORE anything is
+            # created, cleaned or written (per video, so batch mode too).
+            if classify_review_slot(base_output, video_stem) == "foreign":
+                _exit_output_dir_error(console, _build_force_foreign_message(base_output))
             video_output = base_output
         elif effective_resume and _has_valid_checkpoint(base_output, video, language):
             # C6.2b: --resume must continue in the directory that actually holds
@@ -255,7 +305,16 @@ def run_review(
                 f"({base_output.name})[/]"
             )
         else:
-            video_output, version = cli._find_next_review_path(base_output)
+            base_state = classify_review_slot(base_output, video_stem)
+            try:
+                video_output, version = cli._find_next_review_path(
+                    base_output, video_stem=video_stem
+                )
+            except OutputVersionsExhaustedError as exhausted:
+                _exit_output_dir_error(
+                    console,
+                    _build_versions_exhausted_message(exhausted.base_path, exhausted.limit),
+                )
             # A checkpoint only survives in base_output after a *partial*/failed
             # run; a completed run deletes it on success. Resume is only sound
             # when a *valid* one exists -- otherwise "resume" would start fresh in
@@ -263,7 +322,14 @@ def run_review(
             # validate, don't just check presence, so the [R]esume option is never
             # offered for a checkpoint that would be rejected downstream.
             checkpoint_present = _has_valid_checkpoint(base_output, video, language)
-            if version and _stdin_is_tty():
+            if version and base_state == "foreign":
+                # The base slot is someone else's file/folder, not a previous
+                # review: never offer Overwrite/Resume there, just use the new slot.
+                console.print(
+                    f"[yellow]{escape(base_output.name)} exists and is not a screenscribe "
+                    f"review; writing to {escape(video_output.name)} instead.[/]"
+                )
+            elif version and _stdin_is_tty():
                 # RERUN-UX: a prior bundle exists and we are on a real terminal,
                 # so let the operator choose instead of silently auto-bumping.
                 action = _prompt_rerun_action(base_output, console, allow_resume=checkpoint_present)
@@ -290,7 +356,27 @@ def run_review(
                 # non-TTY / CI: deterministic auto-bump, no prompt.
                 _announce_new_version(console, base_output.name, video_output.name)
 
-        video_output.mkdir(parents=True, exist_ok=True)
+        # Reserve the folder right before use: create a new slot exclusively,
+        # re-check an existing one is still ours, and probe that it is writable.
+        # Only a freshly allocated version slot may be reselected on a race;
+        # --force / --resume / Overwrite / the base itself fail closed instead.
+        reselect_slot = None
+        if not (force or effective_resume or video_output == base_output):
+
+            def reselect_slot(base: Path = base_output, stem: str = video_stem) -> Path:
+                return cli._find_next_review_path(base, video_stem=stem)[0]
+
+        try:
+            video_output = reserve_review_output_slot(
+                video_output, video_stem, reselect=reselect_slot
+            )
+        except OutputSlotError as slot_error:
+            _exit_output_dir_error(console, _build_output_slot_error_message(slot_error))
+        except OutputVersionsExhaustedError as exhausted:
+            _exit_output_dir_error(
+                console,
+                _build_versions_exhausted_message(exhausted.base_path, exhausted.limit),
+            )
 
         console.print(f"\n[blue]Video:[/] [link=file://{video}]{video}[/link]")
         console.print(f"[blue]Output:[/] [link=file://{video_output}]{video_output}[/link]")
@@ -316,7 +402,12 @@ def run_review(
         if force:
             cache_dir = video_output / ".screenscribe_cache"
             if cache_dir.exists():
-                shutil.rmtree(cache_dir)
+                try:
+                    shutil.rmtree(cache_dir)
+                except OSError as rmtree_error:
+                    _exit_output_dir_error(
+                        console, _build_cache_clear_error_message(cache_dir, rmtree_error)
+                    )
                 console.print(
                     "[yellow]Force mode:[/] Deleted existing checkpoint, starting fresh\n"
                 )
@@ -566,9 +657,11 @@ def run_review(
                     Panel(
                         "The semantic pre-filter (the LLM detection stage) failed, so no "
                         "findings could be produced.\n\n"
-                        f"[dim]Reason:[/] {detail}\n\n"
-                        "This is usually transient -- a rate limit, a network drop, or an "
-                        "invalid/expired API key. Your transcript was saved.",
+                        f"[dim]Reason:[/] {escape(detail)}\n"
+                        f"[dim]Endpoint:[/] {escape(endpoint_host(config.llm_endpoint))}\n\n"
+                        "Rate limits, provider outages and network drops are usually "
+                        "transient; an invalid or expired API key is not. Your transcript "
+                        "was saved.",
                         title="[bold red]Issue Detection Failed[/]",
                         border_style="red",
                     )
@@ -926,11 +1019,13 @@ def run_review(
                             )
                             checkpoint.visual_summary = visual_summary
                         except Exception as e:
-                            console.print(f"[yellow]Summary generation failed: {e}[/]")
+                            console.print(
+                                f"[yellow]Summary generation failed: {escape(redact_error_message(e))}[/]"
+                            )
                             pipeline_errors.append(
                                 {
                                     "stage": "summary_generation",
-                                    "message": str(e),
+                                    "message": redact_error_message(e),
                                 }
                             )
                     elif detections:
@@ -946,17 +1041,23 @@ def run_review(
                                 )
                         except Exception as e:
                             console.print(
-                                f"[yellow]Transcript-only summary generation failed: {e}[/]"
+                                "[yellow]Transcript-only summary generation failed: "
+                                f"{escape(redact_error_message(e))}[/]"
                             )
                             pipeline_errors.append(
                                 {
                                     "stage": "summary_generation",
-                                    "message": f"Transcript-only summary fallback failed: {e}",
+                                    "message": (
+                                        "Transcript-only summary fallback failed: "
+                                        f"{redact_error_message(e)}"
+                                    ),
                                 }
                             )
                 except Exception as e:
                     unified_failed = True
-                    console.print(f"[yellow]Unified analysis failed: {e}[/]")
+                    console.print(
+                        f"[yellow]Unified analysis failed: {escape(redact_error_message(e))}[/]"
+                    )
                     console.print(
                         "[dim]Continuing without AI analysis; checkpoint kept so "
                         "--resume can retry visual analysis.[/]"
@@ -964,7 +1065,7 @@ def run_review(
                     pipeline_errors.append(
                         {
                             "stage": "unified_analysis",
-                            "message": str(e),
+                            "message": redact_error_message(e),
                         }
                     )
                 if not unified_failed and not unified_partial:

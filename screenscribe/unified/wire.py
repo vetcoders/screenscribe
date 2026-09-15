@@ -27,6 +27,7 @@ def _build_unified_payload(
     previous_response_id: str | None,
     stream: bool,
     same_provider: bool = True,
+    reasoning_effort: str | None = None,
 ) -> dict[str, object]:
     """Build a unified analysis payload for either chat or responses endpoints.
 
@@ -34,6 +35,9 @@ def _build_unified_payload(
     only attached when the vision and LLM endpoints belong to the same provider.
     Screenscribe allows independent vision/LLM endpoints, and a response id minted
     by one provider is meaningless (or an error) when replayed against another.
+
+    ``reasoning_effort`` adds ``reasoning.effort`` on the Responses branch. Callers
+    pass it for the text-only LLM backend only; the vision request is unchanged.
     """
     use_chat_completions = is_chat_completions_endpoint(endpoint)
     has_screenshot = screenshot_path is not None and screenshot_path.exists()
@@ -68,10 +72,13 @@ def _build_unified_payload(
             }
         )
 
+    reasoning: dict[str, str] = {"summary": "auto"}
+    if reasoning_effort:
+        reasoning["effort"] = reasoning_effort
     payload = {
         "model": model,
         "input": [{"role": "user", "content": content_responses}],
-        "reasoning": {"summary": "auto"},
+        "reasoning": reasoning,
     }
     # Only chain when vision and LLM endpoints are the same provider.
     if previous_response_id and same_provider:
@@ -128,31 +135,6 @@ def _extract_stream_delta(chunk: dict[str, Any], verbose: bool = False) -> tuple
         return str(delta.get("content", "")), False
 
     return "", False
-
-
-def _extract_stream_error(chunk: dict[str, Any]) -> str:
-    """Extract provider-side stream error message from SSE chunk."""
-    chunk_type = str(chunk.get("type", ""))
-    if chunk_type == "error":
-        error_payload = chunk.get("error", {})
-        if isinstance(error_payload, dict):
-            message = error_payload.get("message")
-            if isinstance(message, str) and message.strip():
-                return message.strip()
-        return "Streaming provider returned an error event."
-
-    if chunk_type in ("response.completed", "response.done"):
-        response_payload = chunk.get("response", {})
-        if isinstance(response_payload, dict):
-            if response_payload.get("status") == "failed":
-                error_payload = response_payload.get("error", {})
-                if isinstance(error_payload, dict):
-                    message = error_payload.get("message")
-                    if isinstance(message, str) and message.strip():
-                        return message.strip()
-                return "Streaming response completed with failed status."
-
-    return ""
 
 
 def _extract_reasoning_delta(chunk: dict[str, Any]) -> str:

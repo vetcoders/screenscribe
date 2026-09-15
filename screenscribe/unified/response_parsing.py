@@ -296,18 +296,3 @@ def extract_response_content(
         content = _clean_summary_response(content, language)
 
     return content
-
-
-def _extract_response_error(result: dict[str, Any]) -> str:
-    """Extract provider-side error from a non-streaming response payload."""
-    error_payload = result.get("error", {})
-    if isinstance(error_payload, dict):
-        message = error_payload.get("message")
-        if isinstance(message, str) and message.strip():
-            return message.strip()
-
-    status = str(result.get("status", "")).strip().lower()
-    if status == "failed":
-        return "Unified analysis response completed with failed status."
-
-    return ""

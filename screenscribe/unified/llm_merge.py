@@ -23,10 +23,13 @@ import json
 from collections.abc import Callable
 
 import httpx
+from rich.markup import escape
 
 from ..api_utils import (
     build_llm_request_body,
     extract_llm_response_text,
+    extract_response_payload_error,
+    redact_error_message,
     retry_request,
 )
 from ..config import ScreenScribeConfig
@@ -162,9 +165,10 @@ def _default_llm_caller(config: ScreenScribeConfig) -> LlmCaller:
     api_key = config.get_llm_api_key()
     endpoint = config.llm_endpoint
     model = config.llm_model
+    reasoning_effort = config.get_llm_reasoning_effort()
 
     def call(prompt: str) -> str:
-        body = build_llm_request_body(model, prompt, endpoint)
+        body = build_llm_request_body(model, prompt, endpoint, reasoning_effort=reasoning_effort)
 
         def do_request() -> httpx.Response:
             with httpx.Client(timeout=120.0) as client:
@@ -180,7 +184,13 @@ def _default_llm_caller(config: ScreenScribeConfig) -> LlmCaller:
                 return response
 
         response = retry_request(do_request, operation_name="LLM-merge pass")
-        return extract_llm_response_text(response.json(), endpoint)
+        result = response.json()
+        # status failed/incomplete in a 200 body: raise so the pass is skipped
+        # (safe no-op) instead of parsing a truncated answer.
+        response_error = extract_response_payload_error(result)
+        if response_error is not None:
+            raise response_error
+        return extract_llm_response_text(result, endpoint)
 
     return call
 
@@ -214,7 +224,9 @@ def llm_merge_findings(
     try:
         raw = llm_caller(prompt)
     except Exception as exc:  # transport / provider failure -> safe no-op
-        console.print(f"[yellow]LLM-merge pass skipped (call failed): {exc}[/]")
+        console.print(
+            f"[yellow]LLM-merge pass skipped (call failed): {escape(redact_error_message(exc))}[/]"
+        )
         return findings
 
     groups = _parse_merge_groups(raw, len(findings))
