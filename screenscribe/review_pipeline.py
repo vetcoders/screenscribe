@@ -214,11 +214,18 @@ def run_review(
     dry_run: bool,
     serve: bool,
     port: int,
+    transcript_source: str = "auto",
+    frame_interval: float = 5.0,
 ) -> None:
     """Run the per-video review pipeline for one or more videos.
 
     ``cli.review`` performs input/config/model validation and builds ``config``
     first, then delegates the entire stage orchestration here.
+
+    ``transcript_source`` (``auto``|``audio``|``ocr``) is resolved per video:
+    the audio source keeps the historical two-stage extract+STT path, while
+    ``ocr`` skips audio extraction and builds the transcript from VLM-OCR'd
+    frames taken every ``frame_interval`` seconds.
     """
     # Break the cli<->review_pipeline cycle and keep the monkeypatch surface:
     # every patchable step below is called as cli.<name>.
@@ -470,8 +477,20 @@ def run_review(
         executive_summary = checkpoint.executive_summary
         visual_summary = checkpoint.visual_summary
 
-        # Step 1: Extract audio
-        if not checkpoint.is_stage_complete("audio"):
+        # Resolve the transcript source for THIS video (auto probes each file,
+        # so a batch can mix STT and OCR videos). Read through the cli module
+        # to keep the monkeypatch surface.
+        source = cli.resolve_transcript_source(
+            transcript_source, video, has_audio=cli.has_audio_stream
+        )
+
+        # Step 1: Extract audio (audio transcript source only; OCR skips it)
+        audio_path: Path | None = None
+        if source == "ocr":
+            console.rule("[bold]Step 1: Audio Extraction[/]")
+            console.print("[dim]Skipped - transcript source is OCR; no audio track is used[/]")
+            console.print()
+        elif not checkpoint.is_stage_complete("audio"):
             console.rule("[bold]Step 1: Audio Extraction[/]")
             audio_path = cli._extract_audio_or_exit(video)
             checkpoint.mark_stage_complete("audio")
@@ -485,87 +504,127 @@ def run_review(
 
         # Step 2: Transcribe
         if not checkpoint.is_stage_complete("transcription"):
-            console.rule("[bold]Step 2: Transcription[/]")
-            try:
-                # Chunked entry point: single-shot for short audio, silence-aware
-                # chunking for long recordings (keeps STT timestamps accurate).
-                transcription = cli.transcribe_audio_chunked(
-                    audio_path,
-                    language=language,
-                    use_local=local,
-                    api_key=config.get_stt_api_key(),
-                    stt_endpoint=config.stt_endpoint,
-                    stt_model=config.stt_model,
-                )
-            except (
-                httpx.HTTPStatusError,
-                httpx.RequestError,
-                APIError,
-                ValueError,
-                RuntimeError,
-            ) as exc:
-                # Primary STT failed (e.g. 429 capacity limit, or an unexpected
-                # payload shape raised as RuntimeError in transcribe.py). If the
-                # user opted into a fallback STT provider, try it before giving up.
-                transcription = None
-                if config.has_stt_fallback():
-                    status = (
-                        exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            if source == "ocr":
+                console.rule("[bold]Step 2: Transcription (frame OCR)[/]")
+                try:
+                    transcription = cli.transcribe_video_ocr(
+                        video,
+                        config,
+                        frame_interval=frame_interval,
                     )
-                    short = f"HTTP {status}" if status else type(exc).__name__
-                    console.print()
-                    console.print(
-                        f"[yellow]Primary STT failed ({short}); "
-                        "trying configured fallback endpoint...[/]"
-                    )
-                    try:
-                        transcription = cli.transcribe_audio_chunked(
-                            audio_path,
-                            language=language,
-                            use_local=False,
-                            api_key=config.get_stt_fallback_api_key(),
-                            stt_endpoint=config.stt_fallback_endpoint,
-                            stt_model=config.get_stt_fallback_model(),
-                        )
-                    except (
-                        httpx.HTTPStatusError,
-                        httpx.RequestError,
-                        APIError,
-                        ValueError,
-                        RuntimeError,
-                    ) as fallback_exc:
-                        exc = fallback_exc  # report the fallback's failure
-                        transcription = None
-
-                if transcription is None:
-                    # Surface actionable guidance instead of a raw traceback, and
-                    # keep the checkpoint so --resume can retry without re-extracting.
+                except (
+                    httpx.HTTPStatusError,
+                    httpx.RequestError,
+                    APIError,
+                    ValueError,
+                    RuntimeError,
+                ) as exc:
+                    # Mirror the STT failure path: actionable panel, keep the
+                    # checkpoint, skip the video -- never crash the batch.
                     console.print()
                     console.print(
                         Panel(
-                            cli._build_transcription_failure_message(exc),
+                            "Frame OCR transcription failed: "
+                            f"{escape(redact_error_message(exc))}\n\n"
+                            "The OCR transcript source reads frames with the vision "
+                            "model. Check the vision credentials/endpoint "
+                            "(SCREENSCRIBE_VISION_API_KEY / SCREENSCRIBE_VISION_ENDPOINT), "
+                            "then re-run with --resume to retry.",
                             title="[bold red]Transcription Failed[/]",
                             border_style="red",
                         )
                     )
                     console.print(
-                        "[yellow]Skipping this video.[/] Extracted audio is kept; "
-                        "re-run with [bold]--resume[/] to retry."
+                        "[yellow]Skipping this video.[/] Re-run with [bold]--resume[/] to retry."
                     )
                     continue  # Skip to next video in batch
-            # Drop no-speech hallucinations (outros Whisper invents on music /
-            # silence) before they reach the transcript, checkpoint and report.
-            # Runs once here so the checkpoint stores the cleaned transcript and
-            # --resume stays consistent (FW-09).
-            transcription = filter_hallucinated_segments(
-                transcription,
-                duration if duration > 0 else None,
-                verbose=config.verbose,
-            )
-            checkpoint.transcription = serialize_transcription(transcription)
-            checkpoint.mark_stage_complete("transcription")
-            save_checkpoint(checkpoint, video_output)
-            # Transcript is now embedded in the MD report (no separate file)
+                checkpoint.transcription = serialize_transcription(transcription)
+                checkpoint.mark_stage_complete("transcription")
+                save_checkpoint(checkpoint, video_output)
+            else:
+                console.rule("[bold]Step 2: Transcription[/]")
+                try:
+                    # Chunked entry point: single-shot for short audio, silence-aware
+                    # chunking for long recordings (keeps STT timestamps accurate).
+                    transcription = cli.transcribe_audio_chunked(
+                        audio_path,
+                        language=language,
+                        use_local=local,
+                        api_key=config.get_stt_api_key(),
+                        stt_endpoint=config.stt_endpoint,
+                        stt_model=config.stt_model,
+                    )
+                except (
+                    httpx.HTTPStatusError,
+                    httpx.RequestError,
+                    APIError,
+                    ValueError,
+                    RuntimeError,
+                ) as exc:
+                    # Primary STT failed (e.g. 429 capacity limit, or an unexpected
+                    # payload shape raised as RuntimeError in transcribe.py). If the
+                    # user opted into a fallback STT provider, try it before giving up.
+                    transcription = None
+                    if config.has_stt_fallback():
+                        status = (
+                            exc.response.status_code
+                            if isinstance(exc, httpx.HTTPStatusError)
+                            else None
+                        )
+                        short = f"HTTP {status}" if status else type(exc).__name__
+                        console.print()
+                        console.print(
+                            f"[yellow]Primary STT failed ({short}); "
+                            "trying configured fallback endpoint...[/]"
+                        )
+                        try:
+                            transcription = cli.transcribe_audio_chunked(
+                                audio_path,
+                                language=language,
+                                use_local=False,
+                                api_key=config.get_stt_fallback_api_key(),
+                                stt_endpoint=config.stt_fallback_endpoint,
+                                stt_model=config.get_stt_fallback_model(),
+                            )
+                        except (
+                            httpx.HTTPStatusError,
+                            httpx.RequestError,
+                            APIError,
+                            ValueError,
+                            RuntimeError,
+                        ) as fallback_exc:
+                            exc = fallback_exc  # report the fallback's failure
+                            transcription = None
+
+                    if transcription is None:
+                        # Surface actionable guidance instead of a raw traceback, and
+                        # keep the checkpoint so --resume can retry without re-extracting.
+                        console.print()
+                        console.print(
+                            Panel(
+                                cli._build_transcription_failure_message(exc),
+                                title="[bold red]Transcription Failed[/]",
+                                border_style="red",
+                            )
+                        )
+                        console.print(
+                            "[yellow]Skipping this video.[/] Extracted audio is kept; "
+                            "re-run with [bold]--resume[/] to retry."
+                        )
+                        continue  # Skip to next video in batch
+                # Drop no-speech hallucinations (outros Whisper invents on music /
+                # silence) before they reach the transcript, checkpoint and report.
+                # Runs once here so the checkpoint stores the cleaned transcript and
+                # --resume stays consistent (FW-09).
+                transcription = filter_hallucinated_segments(
+                    transcription,
+                    duration if duration > 0 else None,
+                    verbose=config.verbose,
+                )
+                checkpoint.transcription = serialize_transcription(transcription)
+                checkpoint.mark_stage_complete("transcription")
+                save_checkpoint(checkpoint, video_output)
+                # Transcript is now embedded in the MD report (no separate file)
         else:
             console.print("[dim]Step 2: Transcription - skipped (cached)[/]")
             if transcription is None and checkpoint.transcription:
@@ -575,66 +634,76 @@ def run_review(
             console.print("[red]Error: No transcription available[/]")
             continue  # Skip to next video in batch
 
-        # Validate audio quality before proceeding
-        is_valid, validation_message, is_warning = validate_audio_quality(transcription)
-        if validation_message:
-            console.print()
-            if is_valid and is_warning:
-                console.print(
-                    Panel(
-                        validation_message,
-                        title="[bold yellow]Audio Quality Warning[/]",
-                        border_style="yellow",
-                    )
-                )
+        # Audio-quality validation and the STT timeline-coverage guard are
+        # audio-source concepts: they inspect Whisper no_speech metadata and
+        # probe the extracted audio tail. OCR transcripts carry exact frame
+        # timestamps and no audio, so both checks are skipped for that source
+        # (an empty OCR transcript flows to the normal empty-state report).
+        if source == "audio":
+            # Validate audio quality before proceeding
+            is_valid, validation_message, is_warning = validate_audio_quality(transcription)
+            if validation_message:
                 console.print()
-            elif not is_valid:
-                console.print(
-                    Panel(
-                        validation_message,
-                        title="[bold red]Audio Quality Issue[/]",
-                        border_style="red",
+                if is_valid and is_warning:
+                    console.print(
+                        Panel(
+                            validation_message,
+                            title="[bold yellow]Audio Quality Warning[/]",
+                            border_style="yellow",
+                        )
                     )
-                )
-                console.print()
-                console.print(
-                    "[yellow]Processing stopped.[/] Please fix the audio issue and try again."
-                )
-                console.print("[dim]If you believe this is a false positive, please report it.[/]")
-                delete_checkpoint(video_output)
-                continue  # Skip to next video in batch
+                    console.print()
+                elif not is_valid:
+                    console.print(
+                        Panel(
+                            validation_message,
+                            title="[bold red]Audio Quality Issue[/]",
+                            border_style="red",
+                        )
+                    )
+                    console.print()
+                    console.print(
+                        "[yellow]Processing stopped.[/] Please fix the audio issue and try again."
+                    )
+                    console.print(
+                        "[dim]If you believe this is a false positive, please report it.[/]"
+                    )
+                    delete_checkpoint(video_output)
+                    continue  # Skip to next video in batch
 
-        coverage = calculate_transcript_timeline_coverage(transcription, duration)
-        if (
-            duration > MIN_TIMELINE_GUARD_VIDEO_SECONDS
-            and coverage is not None
-            and coverage < MIN_TRANSCRIPT_TIMELINE_COVERAGE
-        ):
-            # Low coverage on a long video has two very different causes:
-            #   (a) the narrator simply stopped talking before the video ended
-            #       -> transcript is complete for the spoken part, screenshots align;
-            #   (b) STT dropped/compressed the tail -> end-of-video screenshots drift.
-            # The audio tail tells them apart. Either way we keep going (and keep the
-            # checkpoint) rather than discarding a completed transcription.
-            last_end = transcript_last_segment_end(transcription) or 0.0
-            console.print()
-            if cli.tail_is_silent(audio_path, last_end, duration) is True:
-                silent_tail = format_timestamp(duration - last_end)
-                narration_end = format_timestamp(last_end)
-                console.print(
-                    f"[dim]Note: last {silent_tail} of audio is silent "
-                    f"(narration ended at {narration_end}). "
-                    "Screenshots cover the narrated portion.[/]"
-                )
-            else:
-                console.print(
-                    Panel(
-                        cli._build_transcript_timeline_coverage_message(transcription, duration),
-                        title="[bold yellow]Transcript Timeline Warning[/]",
-                        border_style="yellow",
+            coverage = calculate_transcript_timeline_coverage(transcription, duration)
+            if (
+                duration > MIN_TIMELINE_GUARD_VIDEO_SECONDS
+                and coverage is not None
+                and coverage < MIN_TRANSCRIPT_TIMELINE_COVERAGE
+            ):
+                # Low coverage on a long video has two very different causes:
+                #   (a) the narrator simply stopped talking before the video ended
+                #       -> transcript is complete for the spoken part, screenshots align;
+                #   (b) STT dropped/compressed the tail -> end-of-video screenshots drift.
+                # The audio tail tells them apart. Either way we keep going (and keep the
+                # checkpoint) rather than discarding a completed transcription.
+                last_end = transcript_last_segment_end(transcription) or 0.0
+                console.print()
+                if cli.tail_is_silent(audio_path, last_end, duration) is True:
+                    silent_tail = format_timestamp(duration - last_end)
+                    narration_end = format_timestamp(last_end)
+                    console.print(
+                        f"[dim]Note: last {silent_tail} of audio is silent "
+                        f"(narration ended at {narration_end}). "
+                        "Screenshots cover the narrated portion.[/]"
                     )
-                )
-            console.print()
+                else:
+                    console.print(
+                        Panel(
+                            cli._build_transcript_timeline_coverage_message(
+                                transcription, duration
+                            ),
+                            title="[bold yellow]Transcript Timeline Warning[/]",
+                            border_style="yellow",
+                        )
+                    )
+                console.print()
 
         # Step 3: Issue Detection -- ALWAYS the LLM semantic prefilter.
         # Active keywords are injected into the prefilter prompt as vocabulary

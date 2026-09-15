@@ -10,6 +10,13 @@ Routing contract: the guards call the patchable pipeline steps
 through the console **via the cli module object** so the historical
 ``monkeypatch.setattr("screenscribe.cli.<name>", ...)`` surface keeps binding.
 ``cli.py`` re-exports every public name here back into its namespace.
+
+Transcript-source routing: ``_require_audio_or_exit`` is no longer an
+unconditional pre-flight gate in ``review``. ``cli.review`` first resolves the
+transcript source per video (``transcript_sources.resolve_transcript_source``)
+and only calls this guard for videos routed to the ``audio`` source, so an
+explicit ``--transcript-source audio`` keeps the historical readable error
+while ``auto``/``ocr`` route silent recordings to frame OCR instead.
 """
 
 import errno
