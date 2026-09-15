@@ -215,10 +215,8 @@ def classify_review_slot(path: Path, video_stem: str | None = None) -> OutputSlo
 def _find_next_versioned_path(
     base_path: Path,
     *,
-    owns_dir: Callable[[Path], bool] | None = None,
-    has_completed_bundle: Callable[[Path], bool] | None = None,
-    artifact_markers: tuple[str, ...] = (),
-    artifact_globs: tuple[str, ...] = (),
+    owns_dir: Callable[[Path], bool],
+    has_completed_bundle: Callable[[Path], bool],
 ) -> tuple[Path, int | None]:
     """Find the output path to use, appending _2, _3, etc. if needed.
 
@@ -236,12 +234,8 @@ def _find_next_versioned_path(
         base_path: The initial desired output path (e.g., video_review).
         owns_dir: Predicate: does the command own this directory?
         has_completed_bundle: Predicate: does the directory hold a completed
-            bundle? Pass both predicates for the ownership-aware contract.
-        artifact_markers: Legacy (used when the predicates are omitted): exact
-            filenames that prove a completed bundle.
-        artifact_globs: Legacy: glob patterns that prove a completed bundle.
-            In legacy mode every existing directory counts as owned, so only a
-            file at ``base_path`` is treated as foreign.
+            bundle? A command whose ownership marker is its completed bundle
+            passes the same predicate for both.
 
     Returns:
         Tuple of (available_path, version_number or None if the base is used).
@@ -249,16 +243,6 @@ def _find_next_versioned_path(
     Raises:
         OutputVersionsExhaustedError: no free slot up to ``MAX_REVIEW_VERSIONS``.
     """
-    if owns_dir is None or has_completed_bundle is None:
-
-        def legacy_bundle(path: Path) -> bool:
-            if any((path / marker).exists() for marker in artifact_markers):
-                return True
-            return any(next(path.glob(pattern), None) is not None for pattern in artifact_globs)
-
-        owns_dir = owns_dir or (lambda _path: True)
-        has_completed_bundle = has_completed_bundle or legacy_bundle
-
     base_state = classify_output_slot(
         base_path, owns_dir=owns_dir, has_completed_bundle=has_completed_bundle
     )

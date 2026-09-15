@@ -169,6 +169,10 @@ def test_is_review_directory_rule(tmp_path: Path) -> None:
     assert not is_review_directory(a_file, "demo")
 
 
+def _has_report(path: Path) -> bool:
+    return (path / "report.json").is_file()
+
+
 def test_find_next_versioned_path_skips_consecutive_bundles(tmp_path: Path) -> None:
     """When _2 also holds a bundle, the next free slot is _3."""
     base = tmp_path / "out"
@@ -176,7 +180,9 @@ def test_find_next_versioned_path_skips_consecutive_bundles(tmp_path: Path) -> N
     (base / "report.json").write_text("{}")
     (tmp_path / "out_2").mkdir()
     (tmp_path / "out_2" / "report.json").write_text("{}")
-    path, version = _find_next_versioned_path(base, artifact_markers=("report.json",))
+    path, version = _find_next_versioned_path(
+        base, owns_dir=_has_report, has_completed_bundle=_has_report
+    )
     assert path == tmp_path / "out_3"
     assert version == 3
 
@@ -192,7 +198,7 @@ def test_find_next_versioned_path_raises_past_cap(tmp_path: Path, monkeypatch: A
         d.mkdir()
         (d / "report.json").write_text("{}")
     with pytest.raises(OutputVersionsExhaustedError) as caught:
-        _find_next_versioned_path(base, artifact_markers=("report.json",))
+        _find_next_versioned_path(base, owns_dir=_has_report, has_completed_bundle=_has_report)
     assert isinstance(caught.value, RuntimeError)  # compat for older handlers
     assert str(caught.value) == "Too many existing versions of cap (limit 2)"
     assert "review" not in str(caught.value)
