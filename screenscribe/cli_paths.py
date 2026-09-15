@@ -7,6 +7,7 @@ names back into its own namespace so the historical import/patch surface
 ``screenscribe.cli.MAX_REVIEW_VERSIONS``) is preserved.
 """
 
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -249,4 +250,109 @@ def _find_next_review_path(
         base_path,
         owns_dir=lambda path: is_review_directory(path, video_stem),
         has_completed_bundle=lambda path: has_review_report_bundle(path, video_stem),
+    )
+
+
+OutputSlotErrorKind = Literal["foreign", "contended", "create_failed", "unwritable"]
+
+# Prefix of the probe file ``reserve_output_slot`` creates (and removes) to
+# prove an output folder is writable. Only this file is ever deleted.
+WRITE_PROBE_PREFIX = ".screenscribe-write-check-"
+
+
+class OutputSlotError(RuntimeError):
+    """An output folder could not be safely reserved.
+
+    ``kind`` says why: ``"foreign"`` (the slot is now a file or a folder the
+    command does not own and there is no reselection), ``"contended"`` (other
+    files kept appearing at the selected slots), ``"create_failed"`` (creating
+    the folder raised ``cause``) or ``"unwritable"`` (the folder exists but the
+    write probe raised ``cause``).
+    """
+
+    def __init__(self, path: Path, kind: OutputSlotErrorKind, cause: OSError | None = None) -> None:
+        super().__init__(f"Cannot use output folder {path} ({kind})")
+        self.path = path
+        self.kind: OutputSlotErrorKind = kind
+        self.cause = cause
+
+
+def _probe_writable(path: Path) -> None:
+    """Create and remove a uniquely named temp file inside ``path``."""
+    try:
+        with tempfile.NamedTemporaryFile(dir=path, prefix=WRITE_PROBE_PREFIX, delete=True):
+            pass
+    except OSError as exc:
+        raise OutputSlotError(path, "unwritable", exc) from exc
+
+
+def reserve_output_slot(
+    path: Path,
+    *,
+    owns_dir: Callable[[Path], bool],
+    has_completed_bundle: Callable[[Path], bool],
+    reselect: Callable[[], Path] | None = None,
+    max_attempts: int = 3,
+) -> Path:
+    """Reserve ``path`` as the output folder right before anything is written.
+
+    Closes the gap between choosing a slot (``_find_next_versioned_path``) and
+    using it:
+
+    - A slot that does not exist is created with ``mkdir(exist_ok=False)``
+      (parents with ``exist_ok=True``). If something appears there first
+      (``FileExistsError``), the slot is classified again.
+    - An existing slot (empty folder, or the command's own partial/complete
+      folder, e.g. for ``--force`` / ``--resume``) is re-checked with
+      ``classify_output_slot`` and never used when it became ``foreign``.
+    - A ``foreign`` slot is replaced by ``reselect()`` when given (normal
+      version allocation), otherwise ``OutputSlotError(kind="foreign")``.
+    - After at most ``max_attempts`` contended attempts:
+      ``OutputSlotError(kind="contended")``.
+    - Finally a write probe creates and removes one uniquely named temp file
+      (``WRITE_PROBE_PREFIX``) inside the folder; failure raises
+      ``OutputSlotError(kind="unwritable")``. Nothing else is ever deleted.
+
+    Returns the reserved folder (``path`` or a reselected slot). ``reselect``
+    may raise ``OutputVersionsExhaustedError``, which propagates.
+    """
+    target = path
+    for _attempt in range(max_attempts):
+        state = classify_output_slot(
+            target, owns_dir=owns_dir, has_completed_bundle=has_completed_bundle
+        )
+        if state == "foreign":
+            if reselect is None:
+                raise OutputSlotError(target, "foreign")
+            target = reselect()
+            continue
+        try:
+            exists = target.exists()
+        except OSError as exc:
+            raise OutputSlotError(target, "create_failed", exc) from exc
+        if not exists:
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise OutputSlotError(target, "create_failed", exc) from exc
+            try:
+                target.mkdir(exist_ok=False)
+            except FileExistsError:
+                continue  # Something appeared there first: classify again.
+            except OSError as exc:
+                raise OutputSlotError(target, "create_failed", exc) from exc
+        _probe_writable(target)
+        return target
+    raise OutputSlotError(target, "contended")
+
+
+def reserve_review_output_slot(
+    path: Path, video_stem: str | None, *, reselect: Callable[[], Path] | None = None
+) -> Path:
+    """``reserve_output_slot`` with the review ownership rules for ``video_stem``."""
+    return reserve_output_slot(
+        path,
+        owns_dir=lambda candidate: is_review_directory(candidate, video_stem),
+        has_completed_bundle=lambda candidate: has_review_report_bundle(candidate, video_stem),
+        reselect=reselect,
     )

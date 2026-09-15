@@ -21,7 +21,10 @@
   versions prints an "Output Directory Error" instead of a traceback.
   `--force` refuses (exit 1, nothing changed) when the target is a file or a
   non-empty folder that is not a screenscribe review, and a checkpoint cache it
-  cannot remove is reported as an error instead of a traceback.
+  cannot remove is reported as an error instead of a traceback. The output
+  folder is reserved right before use (created exclusively, re-checked, and
+  probed for writability), so a slot taken in the meantime or a read-only
+  folder stops with an error instead of being written into or crashing.
 - **Fixed: semantic pre-filter failures name the real cause.** Provider error
   events inside a 200 response stream (`error`, `response.failed`,
   `response.incomplete`) are captured and shown with their message and code
@@ -42,7 +45,8 @@
   covers logs: retry messages, verbose endpoint and analysis-failure lines,
   summary/LLM-merge warnings, model-validation errors and config mismatch
   messages redact URLs (userinfo and query values masked, fragment dropped),
-  including URLs inside provider-supplied error messages and response bodies.
+  including URLs inside provider-supplied error messages and response bodies
+  (speech-to-text failure details included).
   Screenscribe never reads credentials from endpoint URLs; keys are sent only in
   the Authorization header.
 - **Fixed: semantic pre-filter no longer hangs reasoning without an answer.**

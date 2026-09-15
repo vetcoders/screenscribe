@@ -49,13 +49,16 @@ from .cli_messages import (
     _build_cache_clear_error_message,
     _build_force_foreign_message,
     _build_output_dir_error_message,
+    _build_output_slot_error_message,
     _build_versions_exhausted_message,
 )
 from .cli_paths import (
+    OutputSlotError,
     OutputVersionsExhaustedError,
     _is_dir,
     classify_review_slot,
     is_review_directory,
+    reserve_review_output_slot,
 )
 from .config import ScreenScribeConfig
 from .detect import format_timestamp
@@ -353,11 +356,26 @@ def run_review(
                 # non-TTY / CI: deterministic auto-bump, no prompt.
                 _announce_new_version(console, base_output.name, video_output.name)
 
+        # Reserve the folder right before use: create a new slot exclusively,
+        # re-check an existing one is still ours, and probe that it is writable.
+        # Only a freshly allocated version slot may be reselected on a race;
+        # --force / --resume / Overwrite / the base itself fail closed instead.
+        reselect_slot = None
+        if not (force or effective_resume or video_output == base_output):
+
+            def reselect_slot(base: Path = base_output, stem: str = video_stem) -> Path:
+                return cli._find_next_review_path(base, video_stem=stem)[0]
+
         try:
-            video_output.mkdir(parents=True, exist_ok=True)
-        except OSError as mkdir_error:
+            video_output = reserve_review_output_slot(
+                video_output, video_stem, reselect=reselect_slot
+            )
+        except OutputSlotError as slot_error:
+            _exit_output_dir_error(console, _build_output_slot_error_message(slot_error))
+        except OutputVersionsExhaustedError as exhausted:
             _exit_output_dir_error(
-                console, _build_output_dir_error_message(video_output, mkdir_error)
+                console,
+                _build_versions_exhausted_message(exhausted.base_path, exhausted.limit),
             )
 
         console.print(f"\n[blue]Video:[/] [link=file://{video}]{video}[/link]")
