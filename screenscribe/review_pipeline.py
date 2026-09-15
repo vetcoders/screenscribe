@@ -26,7 +26,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from . import __version__
-from .api_utils import APIError, endpoint_host
+from .api_utils import APIError, endpoint_host, redact_error_message
 from .checkpoint import (
     PipelineCheckpoint,
     checkpoint_valid_for_video,
@@ -954,11 +954,13 @@ def run_review(
                             )
                             checkpoint.visual_summary = visual_summary
                         except Exception as e:
-                            console.print(f"[yellow]Summary generation failed: {e}[/]")
+                            console.print(
+                                f"[yellow]Summary generation failed: {escape(redact_error_message(e))}[/]"
+                            )
                             pipeline_errors.append(
                                 {
                                     "stage": "summary_generation",
-                                    "message": str(e),
+                                    "message": redact_error_message(e),
                                 }
                             )
                     elif detections:
@@ -974,17 +976,23 @@ def run_review(
                                 )
                         except Exception as e:
                             console.print(
-                                f"[yellow]Transcript-only summary generation failed: {e}[/]"
+                                "[yellow]Transcript-only summary generation failed: "
+                                f"{escape(redact_error_message(e))}[/]"
                             )
                             pipeline_errors.append(
                                 {
                                     "stage": "summary_generation",
-                                    "message": f"Transcript-only summary fallback failed: {e}",
+                                    "message": (
+                                        "Transcript-only summary fallback failed: "
+                                        f"{redact_error_message(e)}"
+                                    ),
                                 }
                             )
                 except Exception as e:
                     unified_failed = True
-                    console.print(f"[yellow]Unified analysis failed: {e}[/]")
+                    console.print(
+                        f"[yellow]Unified analysis failed: {escape(redact_error_message(e))}[/]"
+                    )
                     console.print(
                         "[dim]Continuing without AI analysis; checkpoint kept so "
                         "--resume can retry visual analysis.[/]"
@@ -992,7 +1000,7 @@ def run_review(
                     pipeline_errors.append(
                         {
                             "stage": "unified_analysis",
-                            "message": str(e),
+                            "message": redact_error_message(e),
                         }
                     )
                 if not unified_failed and not unified_partial:

@@ -745,6 +745,34 @@ def test_review_warns_when_vision_requested_but_no_vision_key(
     assert "vision" in error_messages
 
 
+def test_review_transcript_only_summary_failure_redacts_url_in_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A raw httpx.HTTPStatusError from the transcript-only summary fallback must
+    not leak credentials/query secrets into the persisted report JSON."""
+    config = ScreenScribeConfig(llm_api_key="test-key")  # pragma: allowlist secret
+    assert config.get_vision_api_key() == ""  # no vision key -> reaches the fallback
+
+    leaking_url = (
+        "https://user:secret@api.example.com/v1/responses?key=abc"  # pragma: allowlist secret
+    )
+
+    def boom(*_: object, **__: object) -> object:
+        request = httpx.Request("POST", leaking_url)
+        response = httpx.Response(500, request=request)
+        response.raise_for_status()
+
+    monkeypatch.setattr("screenscribe.review_pipeline.generate_detection_executive_summary", boom)
+
+    result, output_dir = _run_review_with_one_poi(monkeypatch, tmp_path, config=config)
+
+    assert result.exit_code == 0, result.output
+    report = json.loads((output_dir / "demo_report.json").read_text(encoding="utf-8"))
+    messages = " ".join(e["message"] for e in report["errors"])
+    assert "secret" not in messages
+    assert "key=abc" not in messages
+
+
 def test_review_silent_when_vision_opted_out(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -21,7 +21,7 @@ import typer
 from rich.markup import escape
 from rich.panel import Panel
 
-from .api_utils import APIError
+from .api_utils import APIError, redact_error_message
 from .audio import MediaDecodeError
 from .detect import format_timestamp
 from .transcribe import (
@@ -143,7 +143,7 @@ def _build_transcription_failure_message(exc: Exception) -> str:
             "or use --local for local STT."
         )
     return (
-        f"Could not reach the speech-to-text service: {exc}\n\n"
+        f"Could not reach the speech-to-text service: {escape(redact_error_message(exc))}\n\n"
         "Check your network connection and the configured STT endpoint, then "
         "re-run with --resume to retry."
     )
