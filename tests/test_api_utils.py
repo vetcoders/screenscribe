@@ -480,3 +480,18 @@ def test_extract_response_payload_error_redacts_urls() -> None:
     )
 
     assert str(error) == "via https://***@gw.example.com/x?key=*** (code: server_error)"
+
+
+def test_redaction_handles_uppercase_scheme() -> None:
+    from screenscribe.api_utils import redact_error_message, redact_urls_in_text
+
+    upper = "HTTPS://user:secret@GW.example.com/x?key=abc"  # pragma: allowlist secret
+
+    in_text = redact_urls_in_text(f"call {upper} failed")
+    in_error = redact_error_message(RuntimeError(f"call {upper} failed"))
+
+    for redacted in (in_text, in_error):
+        assert "secret" not in redacted
+        assert "key=abc" not in redacted
+        assert "user:" not in redacted
+    assert in_text == "call https://***@gw.example.com/x?key=*** failed"

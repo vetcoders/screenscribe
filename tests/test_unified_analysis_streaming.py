@@ -576,3 +576,73 @@ def test_non_streaming_incomplete_response_is_not_a_finding(
 
     assert result is None
     assert output == "Unified analysis failed: Response incomplete: max_output_tokens"
+
+
+class _PlainJsonErrorStreamClient:
+    """200 "stream" that is really a plain JSON error body; non-streaming works."""
+
+    stream_calls: ClassVar[int] = 0
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def __enter__(self) -> "_PlainJsonErrorStreamClient":
+        return self
+
+    def __exit__(self, *args: object) -> Literal[False]:
+        return False
+
+    def stream(self, *args: Any, **kwargs: Any) -> _FakeStreamResponse:
+        _PlainJsonErrorStreamClient.stream_calls += 1
+        return _FakeStreamResponse(
+            ['{"error": {"message": "Model is loading", "code": "model_not_ready"}}']
+        )
+
+    def post(self, *args: Any, **kwargs: Any) -> _FakeJsonResponse:
+        return _FakeJsonResponse(
+            {
+                "id": "resp_after_plain_error",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": '{"is_issue": true, "severity": "low", "summary": "ok"}',
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+
+
+def test_streaming_plain_json_error_body_raises_provider_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-SSE JSON error body in a 200 stream is raised with the provider reason
+    (one attempt, non-transient), then the non-streaming fallback runs."""
+    detection = Detection(
+        segment=Segment(id=1, start=12.5, end=15.0, text="The save button does nothing."),
+        category="bug",
+        keywords_found=["semantic:bug"],
+        context="User reports the save button does nothing.",
+    )
+    config = ScreenScribeConfig(
+        llm_api_key="test-key",  # pragma: allowlist secret
+        llm_endpoint="https://api.example.com/v1/responses",
+        llm_model="test-model",
+        verbose=True,
+    )
+    _PlainJsonErrorStreamClient.stream_calls = 0
+    recording = Console(record=True, width=200)
+    monkeypatch.setattr("screenscribe.unified.analyze_one.console", recording)
+    monkeypatch.setattr("screenscribe.unified_analysis.httpx.Client", _PlainJsonErrorStreamClient)
+
+    result = analyze_finding_unified_streaming(detection, None, config)
+    lines = [line.strip() for line in recording.export_text().splitlines()]
+
+    assert result is not None
+    assert _PlainJsonErrorStreamClient.stream_calls == 1
+    assert "Streaming analysis failed: Model is loading (code: model_not_ready)" in lines
