@@ -167,6 +167,8 @@ ALL_ENV_KEYS = [
     "SCREENSCRIBE_LANGUAGE",
     "SCREENSCRIBE_VISION",
     "SCREENSCRIBE_LLM_MERGE",
+    "SCREENSCRIBE_AGENT_EGRESS",
+    "SCREENSCRIBE_AGENT_PRIMARY_TRUST",
 ]
 
 # (env_key, attribute, raw_value, expected) for the single-field vars: plain
@@ -206,6 +208,8 @@ SINGLE_FIELD_CASES = [
         "https://f.example.com/v1/x/",
         "https://f.example.com/v1/x",
     ),
+    ("SCREENSCRIBE_AGENT_EGRESS", "agent_egress", "allow", "allow"),
+    ("SCREENSCRIBE_AGENT_PRIMARY_TRUST", "agent_primary_trust", "internal", "internal"),
 ]
 
 

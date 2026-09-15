@@ -23,11 +23,19 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__
+from .agent.chat import AgentChatError, AgentChatRequest, collect_agent_chat, stream_agent_chat
+from .agent.tools import ReportToolbelt
 from .server_common import (
     MAX_AUDIO_BYTES,
     VALID_MARKER_SEVERITIES,
@@ -344,8 +352,13 @@ def create_review_app(
     report_filename: str,
     video_path: Path,
     config: ScreenScribeConfig,
+    repo_root: Path | None = None,
 ) -> FastAPI:
-    """Create the interactive report review app."""
+    """Create the interactive report review app.
+
+    ``repo_root`` enables the optional ``open_repo_file`` agent tool. Leave it
+    ``None`` unless the operator started the server with a repo path.
+    """
 
     app = FastAPI(
         title="Screenscribe Review",
@@ -1295,6 +1308,51 @@ def create_review_app(
             raise HTTPException(status_code=500, detail="Failed to save review state.") from e
         finally:
             save_lock.release()
+
+    resolved_repo = repo_root.resolve() if repo_root is not None else None
+
+    def _agent_toolbelt(report_data: dict[str, Any]) -> ReportToolbelt:
+        return ReportToolbelt(
+            report_data,
+            output_dir=session.output_dir,
+            repo_root=resolved_repo,
+        )
+
+    @app.post("/api/agent/chat/stream")
+    async def agent_chat_stream(payload: AgentChatRequest) -> StreamingResponse:
+        """SSE agent turn. Contract is binding for the w1-05 UI panel."""
+        _json_path, report_data = load_report_json()
+        toolbelt = _agent_toolbelt(report_data)
+
+        async def event_frames() -> Any:
+            async for frame in stream_agent_chat(
+                config=config,
+                report=report_data,
+                tools=toolbelt,
+                message=payload.message,
+                history=payload.history,
+                previous_response_id=payload.previous_response_id,
+            ):
+                yield frame
+
+        return StreamingResponse(event_frames(), media_type="text/event-stream")
+
+    @app.post("/api/agent/chat")
+    async def agent_chat(payload: AgentChatRequest) -> dict[str, Any]:
+        """Non-streaming agent turn: full text + response_id."""
+        _json_path, report_data = load_report_json()
+        toolbelt = _agent_toolbelt(report_data)
+        try:
+            return await collect_agent_chat(
+                config=config,
+                report=report_data,
+                tools=toolbelt,
+                message=payload.message,
+                history=payload.history,
+                previous_response_id=payload.previous_response_id,
+            )
+        except AgentChatError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     app.mount(
         "/",
