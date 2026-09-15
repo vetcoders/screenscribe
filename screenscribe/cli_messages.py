@@ -21,8 +21,9 @@ import typer
 from rich.markup import escape
 from rich.panel import Panel
 
-from .api_utils import APIError, redact_error_message
+from .api_utils import APIError, redact_error_message, redact_urls_in_text
 from .audio import MediaDecodeError
+from .cli_paths import OutputSlotError
 from .detect import format_timestamp
 from .transcribe import (
     MIN_TRANSCRIPT_TIMELINE_COVERAGE,
@@ -149,6 +150,37 @@ def _build_versions_exhausted_message(base_path: Path, limit: int) -> str:
     )
 
 
+def _build_output_slot_error_message(error: OutputSlotError) -> str:
+    """Friendly text for ``OutputSlotError`` raised while reserving an output folder."""
+    path = escape(str(error.path))
+    if error.kind == "create_failed" and error.cause is not None:
+        return _build_output_dir_error_message(error.path, error.cause)
+    if error.kind == "unwritable":
+        cause = error.cause
+        if isinstance(cause, PermissionError):
+            reason = "permission denied"
+        elif cause is not None and cause.errno == errno.EROFS:
+            reason = "the file system is read-only"
+        else:
+            reason = (cause.strerror if cause is not None else "") or "unknown error"
+        return (
+            f"The output folder exists but cannot be written: {path}\n"
+            f"[dim]Reason:[/] {escape(reason)}\n\n"
+            "Pass [bold]-o[/] with a folder you can write to."
+        )
+    if error.kind == "foreign":
+        return (
+            f"{path} was taken by a file or folder screenscribe does not own while the "
+            "output was being prepared; nothing was written there.\n\n"
+            "Re-run, or pass [bold]-o[/] with a new folder."
+        )
+    return (
+        f"Could not reserve an output folder near {path}: other files kept appearing "
+        "at the chosen location.\n\n"
+        "Re-run, or pass [bold]-o[/] with a new folder."
+    )
+
+
 def _build_transcription_failure_message(exc: Exception) -> str:
     """Turn a raw STT transport/HTTP error into actionable, traceback-free guidance."""
     status: int | None = None
@@ -157,11 +189,13 @@ def _build_transcription_failure_message(exc: Exception) -> str:
         status = exc.response.status_code
         try:
             body = exc.response.json()
-            server_detail = str(
-                body.get("message") or body.get("error") or body.get("detail") or ""
+            server_detail = redact_urls_in_text(
+                str(body.get("message") or body.get("error") or body.get("detail") or "")
             )
         except Exception:
-            server_detail = (exc.response.text or "").strip()[:200]
+            # Redact the whole body before the 200-char cut so a URL on the
+            # boundary cannot leak its userinfo or query.
+            server_detail = redact_urls_in_text((exc.response.text or "").strip())[:200]
     detail_suffix = f": {server_detail}" if server_detail else "."
 
     if status == 429:

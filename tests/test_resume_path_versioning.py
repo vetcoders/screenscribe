@@ -928,3 +928,111 @@ def test_force_cache_clear_failure_is_a_friendly_error(
     assert "Cannot clear the previous checkpoint cache" in normalized
     assert "Reason: permission denied" in normalized
     assert (own / ".screenscribe_cache").is_dir()
+
+
+# --------------------------------------------------------------------------- #
+# Reserving the output slot right before use (race + writability).            #
+# --------------------------------------------------------------------------- #
+
+
+def test_reserve_moves_on_when_slot_is_taken_after_classification(tmp_path: Path) -> None:
+    """A foreign file appears at the chosen slot between classification and mkdir:
+    the reserve step never writes into it and takes the reselected slot."""
+    from screenscribe.cli_paths import reserve_review_output_slot
+
+    chosen = tmp_path / "demo_review_2"
+    real_mkdir = Path.mkdir
+
+    def racing_mkdir(self: Path, *args: object, **kwargs: object) -> None:
+        if self == chosen and not chosen.exists():
+            chosen.write_bytes(b"someone else")  # the race: appears just before us
+        real_mkdir(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    base = tmp_path / "demo_review"
+    base.mkdir()
+    (base / "demo_report.json").write_text("{}")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "mkdir", racing_mkdir)
+        reserved = reserve_review_output_slot(
+            chosen,
+            "demo",
+            reselect=lambda: cli_module._find_next_review_path(base, video_stem="demo")[0],
+        )
+
+    assert reserved == tmp_path / "demo_review_3"
+    assert chosen.read_bytes() == b"someone else"
+    assert reserved.is_dir()
+
+
+def test_reserve_without_reselect_fails_closed_on_race(tmp_path: Path) -> None:
+    from screenscribe.cli_paths import OutputSlotError, reserve_review_output_slot
+
+    chosen = tmp_path / "demo_review"
+    real_mkdir = Path.mkdir
+
+    def racing_mkdir(self: Path, *args: object, **kwargs: object) -> None:
+        if self == chosen and not chosen.exists():
+            chosen.write_bytes(b"someone else")
+        real_mkdir(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "mkdir", racing_mkdir)
+        with pytest.raises(OutputSlotError) as caught:
+            reserve_review_output_slot(chosen, "demo")
+
+    assert caught.value.kind == "foreign"
+    assert chosen.read_bytes() == b"someone else"
+
+
+def test_review_race_on_allocated_slot_never_writes_into_foreign_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """End to end: the allocated ``_2`` is taken by a foreign file after allocation;
+    the review lands in ``_3`` and the foreign bytes are untouched."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    assert _run_default(runner, video_path).exit_code == 0  # type: ignore[attr-defined]
+    slot_2 = tmp_path / "demo_review_2"
+    real_find = cli_module._find_next_review_path
+    calls = {"n": 0}
+
+    def find_then_race(base: Path, video_stem: str | None = None) -> tuple[Path, int | None]:
+        result = real_find(base, video_stem=video_stem)
+        calls["n"] += 1
+        if calls["n"] == 1 and result[0] == slot_2:
+            slot_2.write_bytes(b"raced in")
+        return result
+
+    monkeypatch.setattr(cli_module, "_find_next_review_path", find_then_race)
+
+    result = _run_default(runner, video_path)
+
+    assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
+    assert slot_2.read_bytes() == b"raced in"
+    assert (tmp_path / "demo_review_3" / "demo_report.json").exists()
+
+
+@pytest.mark.parametrize("flag", ["--force", "--resume"])
+def test_unwritable_existing_review_dir_is_a_friendly_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, flag: str
+) -> None:
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    own = tmp_path / "demo_review"
+    (own / ".screenscribe_cache").mkdir(parents=True)
+    (own / "demo_report.json").write_text("{}")
+    before = sorted(str(p.relative_to(own)) for p in own.rglob("*"))
+
+    def _denied(*args: object, **kwargs: object) -> object:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("screenscribe.cli_paths.tempfile.NamedTemporaryFile", _denied)
+
+    result = _run_default(runner, video_path, flag)
+    output = result.output  # type: ignore[attr-defined]
+    normalized = _panel_text(output)
+
+    assert result.exit_code == 1, output  # type: ignore[attr-defined]
+    assert "Traceback" not in output
+    assert "Output Directory Error" in normalized
+    assert "The output folder exists but cannot be written" in normalized
+    assert "Reason: permission denied" in normalized
+    assert sorted(str(p.relative_to(own)) for p in own.rglob("*")) == before
