@@ -600,6 +600,12 @@ opens the HTML report in your browser. Re-running preserves the prior report as
 existing non-empty `_N` is never written into); pass `--force` to overwrite
 instead.
 
+screenscribe never writes into a folder it does not own. If `<video>_review`
+already exists as a file or as a non-empty folder that is not a screenscribe
+review, the run moves on to the next free `_2`, `_3`, … slot and leaves that
+folder untouched. When no free slot is left below the version limit, `review`
+stops with an "Output Directory Error" asking for a new `-o` folder.
+
 A folder counts as a previous review only when it holds a `.screenscribe_cache/`
 checkpoint or this video's own `<video>_report.{json,md,html}` (legacy
 `report.json` / `report.html` also count). Unrelated files such as someone

@@ -9,6 +9,7 @@ names back into its own namespace so the historical import/patch surface
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 from .checkpoint import CHECKPOINT_DIR_NAME
 
@@ -100,93 +101,152 @@ def is_review_directory(path: Path, video_stem: str | None = None) -> bool:
     return has_review_report_bundle(path, video_stem)
 
 
+OutputSlotState = Literal["free", "own_partial", "own_complete", "foreign"]
+
+
+class OutputVersionsExhaustedError(RuntimeError):
+    """No free ``<base>_N`` output slot is left below the version limit.
+
+    Command-neutral (shared by every caller of ``_find_next_versioned_path``).
+    Subclasses ``RuntimeError`` so older ``except RuntimeError`` callers still
+    catch it; CLI commands should catch it and print a friendly error.
+    """
+
+    def __init__(self, base_path: Path, limit: int) -> None:
+        super().__init__(f"Too many existing versions of {base_path.name} (limit {limit})")
+        self.base_path = base_path
+        self.limit = limit
+
+
+def classify_output_slot(
+    path: Path,
+    *,
+    owns_dir: Callable[[Path], bool],
+    has_completed_bundle: Callable[[Path], bool],
+) -> OutputSlotState:
+    """Classify an output location before screenscribe writes anything there.
+
+    - ``"free"``: nothing exists at ``path``, or it is an empty directory.
+    - ``"own_complete"``: a directory the command owns (``owns_dir``) that holds
+      a completed bundle (``has_completed_bundle``).
+    - ``"own_partial"``: an owned directory without a completed bundle (e.g. a
+      review with only a ``.screenscribe_cache/`` checkpoint).
+    - ``"foreign"``: an existing file, a non-empty directory the command does not
+      own, or anything that cannot be read. Screenscribe never writes into,
+      reuses, or deletes inside a foreign slot.
+
+    ``owns_dir`` and ``has_completed_bundle`` are command-specific predicates
+    (review: ``is_review_directory`` / ``has_review_report_bundle``); a command
+    whose ownership marker IS its completed bundle passes the same predicate
+    for both.
+    """
+    try:
+        if not path.exists():
+            return "free"
+        if not path.is_dir():
+            return "foreign"
+        if next(path.iterdir(), None) is None:
+            return "free"
+        if not owns_dir(path):
+            return "foreign"
+        return "own_complete" if has_completed_bundle(path) else "own_partial"
+    except OSError:
+        return "foreign"
+
+
+def classify_review_slot(path: Path, video_stem: str | None = None) -> OutputSlotState:
+    """``classify_output_slot`` with the review ownership rules for ``video_stem``."""
+    return classify_output_slot(
+        path,
+        owns_dir=lambda candidate: is_review_directory(candidate, video_stem),
+        has_completed_bundle=lambda candidate: has_review_report_bundle(candidate, video_stem),
+    )
+
+
 def _find_next_versioned_path(
     base_path: Path,
     *,
+    owns_dir: Callable[[Path], bool] | None = None,
+    has_completed_bundle: Callable[[Path], bool] | None = None,
     artifact_markers: tuple[str, ...] = (),
     artifact_globs: tuple[str, ...] = (),
-    bundle_detector: Callable[[Path], bool] | None = None,
 ) -> tuple[Path, int | None]:
-    """Find next available artifact path, appending _2, _3, etc. if needed.
+    """Find the output path to use, appending _2, _3, etc. if needed.
 
-    Two different questions are asked:
+    Slots are classified with ``classify_output_slot``:
 
-    - ``base_path`` itself is reused unless it holds a completed bundle (the
-      marker/glob checks or ``bundle_detector``), so a partial run or a folder
-      without a bundle keeps being written in place.
-    - A version slot ``<base>_N`` (N >= 2) is available ONLY if it does not
-      exist or is an empty directory. Any existing file, or any non-empty
-      directory -- a bundle or not (another video's report, notes, a
-      checkpoint-only partial run) -- is occupied, so a rerun never mixes its
-      output into someone else's folder.
+    - ``base_path`` is used when it is ``free`` or ``own_partial`` (a partial run
+      keeps being reused in place, so ``--resume`` finds its checkpoint). An
+      ``own_complete`` or ``foreign`` base advances to ``<base>_2``.
+    - A version slot ``<base>_N`` (N >= 2) is used ONLY when it is ``free``
+      (missing or an empty directory). Any existing file or non-empty directory
+      -- owned or not -- is occupied, so a run never mixes its output into
+      another folder.
 
     Args:
-        base_path: The initial desired output path (e.g., video_review)
-        artifact_markers: Exact filenames that prove the directory already
-            contains a completed artifact bundle.
-        artifact_globs: Glob patterns (e.g. ``*_report.html``) that prove a
-            completed bundle.
-        bundle_detector: Optional predicate that decides on its own whether a
-            directory holds a completed bundle. When given, it replaces the
-            marker/glob checks.
+        base_path: The initial desired output path (e.g., video_review).
+        owns_dir: Predicate: does the command own this directory?
+        has_completed_bundle: Predicate: does the directory hold a completed
+            bundle? Pass both predicates for the ownership-aware contract.
+        artifact_markers: Legacy (used when the predicates are omitted): exact
+            filenames that prove a completed bundle.
+        artifact_globs: Legacy: glob patterns that prove a completed bundle.
+            In legacy mode every existing directory counts as owned, so only a
+            file at ``base_path`` is treated as foreign.
 
     Returns:
-        Tuple of (available_path, version_number or None if first)
+        Tuple of (available_path, version_number or None if the base is used).
+
+    Raises:
+        OutputVersionsExhaustedError: no free slot up to ``MAX_REVIEW_VERSIONS``.
     """
+    if owns_dir is None or has_completed_bundle is None:
 
-    def has_artifact_bundle(path: Path) -> bool:
-        if bundle_detector is not None:
-            return bundle_detector(path)
-        if any((path / marker).exists() for marker in artifact_markers):
-            return True
-        return any(next(path.glob(pattern), None) is not None for pattern in artifact_globs)
+        def legacy_bundle(path: Path) -> bool:
+            if any((path / marker).exists() for marker in artifact_markers):
+                return True
+            return any(next(path.glob(pattern), None) is not None for pattern in artifact_globs)
 
-    if not base_path.exists() or not has_artifact_bundle(base_path):
+        owns_dir = owns_dir or (lambda _path: True)
+        has_completed_bundle = has_completed_bundle or legacy_bundle
+
+    base_state = classify_output_slot(
+        base_path, owns_dir=owns_dir, has_completed_bundle=has_completed_bundle
+    )
+    if base_state in ("free", "own_partial"):
         return base_path, None
 
     # Read the cap through the cli module so tests that patch
     # ``cli.MAX_REVIEW_VERSIONS`` (the historical surface) still bind here.
     import screenscribe.cli as cli
 
-    # Find next available number
     version = 2
     while True:
         versioned_path = base_path.parent / f"{base_path.name}_{version}"
-        if _version_slot_is_free(versioned_path):
+        state = classify_output_slot(
+            versioned_path, owns_dir=owns_dir, has_completed_bundle=has_completed_bundle
+        )
+        if state == "free":
             return versioned_path, version
         version += 1
         if version > cli.MAX_REVIEW_VERSIONS:
-            raise RuntimeError(f"Too many review versions for {base_path.name}")
-
-
-def _version_slot_is_free(path: Path) -> bool:
-    """A version slot is free only when nothing exists there or it is an empty dir."""
-    try:
-        if not path.exists():
-            return True
-        if not path.is_dir():
-            return False
-        return next(path.iterdir(), None) is None
-    except OSError:
-        # Unreadable: never treat as free, advance to the next slot instead.
-        return False
+            raise OutputVersionsExhaustedError(base_path, cli.MAX_REVIEW_VERSIONS)
 
 
 def _find_next_review_path(
     base_path: Path, video_stem: str | None = None
 ) -> tuple[Path, int | None]:
-    """Find next available review path, appending _2, _3, etc. if needed.
+    """Find the review output path for ``video_stem``, versioning when needed.
 
-    Versioning is triggered only by a completed report bundle for this video in
-    ``base_path`` (``has_review_report_bundle`` -- the same report rule
-    ``is_review_directory`` uses), never by foreign files. A checkpoint-only
-    ``base_path`` (a partial run that wrote no report) is deliberately NOT a
-    completed bundle: it is reused in place and ``--resume`` picks the checkpoint
-    up. Once versioning starts, ``<base>_N`` slots follow the stricter rule of
-    ``_find_next_versioned_path``: only a missing path or an empty directory is
-    used, so an existing non-empty ``_N`` is never written into.
+    Ownership follows the single review rule: a directory is the review's own
+    when ``is_review_directory`` says so, and complete when it holds this
+    video's report bundle (``has_review_report_bundle``). So a checkpoint-only
+    base (``own_partial``) is reused in place, a completed review or any foreign
+    non-empty folder/file at the base advances to ``_2``, and ``<base>_N`` slots
+    are used only when missing or empty (see ``_find_next_versioned_path``).
     """
     return _find_next_versioned_path(
         base_path,
-        bundle_detector=lambda path: has_review_report_bundle(path, video_stem),
+        owns_dir=lambda path: is_review_directory(path, video_stem),
+        has_completed_bundle=lambda path: has_review_report_bundle(path, video_stem),
     )

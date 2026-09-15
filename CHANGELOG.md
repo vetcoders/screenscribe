@@ -14,6 +14,11 @@
   Permission denied, read-only volumes and file-in-the-way paths now print an
   "Output Directory Error" with the path and reason and exit with code 1,
   instead of a raw traceback.
+- **Fixed: `review` never writes into a folder screenscribe does not own.** An
+  existing file or non-empty non-review folder at `<video>_review` is skipped
+  (the next free `_2`, `_3`, … is used, without the overwrite/resume prompt),
+  a version slot is used only when missing or empty, and running out of
+  versions prints an "Output Directory Error" instead of a traceback.
 - **Fixed: semantic pre-filter failures name the real cause.** Provider error
   events inside a 200 response stream (`error`, `response.failed`,
   `response.incomplete`) are captured and shown with their message and code

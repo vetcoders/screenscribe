@@ -97,6 +97,15 @@ def _build_output_dir_error_message(path: Path, exc: OSError) -> str:
     )
 
 
+def _build_versions_exhausted_message(base_path: Path, limit: int) -> str:
+    """Friendly text for ``OutputVersionsExhaustedError`` (no free ``_N`` slot)."""
+    return (
+        f"Too many existing versions of {escape(base_path.name)} (limit {limit}) in "
+        f"{escape(str(base_path.parent))}.\n\n"
+        "Pass [bold]-o[/] with a new folder, or remove old versions you no longer need."
+    )
+
+
 def _build_transcription_failure_message(exc: Exception) -> str:
     """Turn a raw STT transport/HTTP error into actionable, traceback-free guidance."""
     status: int | None = None
