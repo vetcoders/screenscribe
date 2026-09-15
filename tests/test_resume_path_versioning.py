@@ -735,3 +735,196 @@ def test_checkpoint_only_base_is_still_reused_in_place(tmp_path: Path) -> None:
     (base / ".screenscribe_cache").mkdir(parents=True)
 
     assert cli_module._find_next_review_path(base, video_stem="demo") == (base, None)
+
+
+# --------------------------------------------------------------------------- #
+# Foreign base slots: never written into, reused, or cleaned.                 #
+# --------------------------------------------------------------------------- #
+
+
+def _run_default(runner: CliRunner, video_path: Path, *extra: str) -> object:
+    return runner.invoke(
+        cli_module.app, ["review", str(video_path), "--no-serve", "--skip-validation", *extra]
+    )
+
+
+def test_foreign_base_folder_allocates_next_slot_and_is_untouched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A user-created non-empty ``demo_review`` next to the video is not ours: the
+    review goes to ``demo_review_2``; the foreign folder stays byte-identical and
+    gets no checkpoint cache. No Overwrite/Resume prompt is offered for it."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    foreign = tmp_path / "demo_review"
+    foreign.mkdir()
+    notes = foreign / "notes.txt"
+    notes.write_bytes(b"my own notes")
+    monkeypatch.setattr("screenscribe.review_pipeline._stdin_is_tty", lambda: True)
+
+    def _no_prompt(*a: object, **kw: object) -> str:
+        raise AssertionError("a foreign base must not trigger the rerun prompt")
+
+    monkeypatch.setattr("screenscribe.review_pipeline.Prompt.ask", _no_prompt)
+
+    result = _run_default(runner, video_path)
+
+    assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
+    assert (tmp_path / "demo_review_2" / "demo_report.json").exists()
+    assert sorted(p.name for p in foreign.iterdir()) == ["notes.txt"]
+    assert notes.read_bytes() == b"my own notes"
+
+
+def test_foreign_base_and_foreign_second_slot_allocates_third(tmp_path: Path) -> None:
+    base = tmp_path / "demo_review"
+    base.mkdir()
+    (base / "notes.txt").write_text("foreign")
+    second = tmp_path / "demo_review_2"
+    second.mkdir()
+    (second / "other.txt").write_text("foreign too")
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (
+        tmp_path / "demo_review_3",
+        3,
+    )
+
+
+def test_empty_base_folder_is_used(tmp_path: Path) -> None:
+    base = tmp_path / "demo_review"
+    base.mkdir()
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (base, None)
+
+
+def test_foreign_base_file_is_skipped_by_allocator(tmp_path: Path) -> None:
+    base = tmp_path / "demo_review"
+    base.write_text("a file where the review folder would go")
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (
+        tmp_path / "demo_review_2",
+        2,
+    )
+
+
+def test_version_cap_exhausted_is_a_friendly_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No free slot below the cap -> Output Directory Error panel, exit 1, no traceback."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_module, "MAX_REVIEW_VERSIONS", 3)
+    for name in ("demo_review", "demo_review_2", "demo_review_3"):
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / "demo_report.json").write_text("{}")
+
+    result = _run_default(runner, video_path)
+    output = result.output  # type: ignore[attr-defined]
+    normalized = " ".join(output.split())
+
+    assert result.exit_code == 1, output  # type: ignore[attr-defined]
+    assert result.exception is None or isinstance(result.exception, SystemExit)  # type: ignore[attr-defined]
+    assert "Traceback" not in output
+    assert "Output Directory Error" in normalized
+    assert "Too many existing versions of demo_review (limit 3)" in normalized
+    assert not (tmp_path / "demo_review_4").exists()
+
+
+# --------------------------------------------------------------------------- #
+# --force: only screenscribe's own review folder (or a free slot).            #
+# --------------------------------------------------------------------------- #
+
+
+def _snapshot(folder: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(folder)): path.read_bytes()
+        for path in sorted(folder.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _panel_text(output: str) -> str:
+    """Collapse a Rich panel to plain words (drop borders, join wrapped lines)."""
+    borderless = "".join(" " if ch in "│╭╮╰╯─" else ch for ch in output)
+    return " ".join(borderless.split())
+
+
+def _assert_force_refused(result: object) -> None:
+    output = result.output  # type: ignore[attr-defined]
+    normalized = _panel_text(output)
+    assert result.exit_code == 1, output  # type: ignore[attr-defined]
+    assert "Traceback" not in output
+    assert "Output Directory Error" in normalized
+    assert "is not a screenscribe review folder" in normalized
+    assert "--force only overwrites a previous screenscribe review" in normalized
+
+
+def test_force_refuses_foreign_folder_and_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    foreign = tmp_path / "demo_review"
+    (foreign / "sub").mkdir(parents=True)
+    (foreign / "notes.txt").write_bytes(b"my notes")
+    (foreign / "sub" / "data.bin").write_bytes(b"\x00\x01")
+    before = _snapshot(foreign)
+
+    def _no_rmtree(*a: object, **kw: object) -> None:
+        raise AssertionError("--force must not delete anything in a foreign folder")
+
+    monkeypatch.setattr("screenscribe.review_pipeline.shutil.rmtree", _no_rmtree)
+
+    result = _run_default(runner, video_path, "--force")
+
+    _assert_force_refused(result)
+    assert _snapshot(foreign) == before
+    assert not (foreign / ".screenscribe_cache").exists()
+    assert not (tmp_path / "demo_review_2").exists()
+
+
+def test_force_refuses_foreign_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    blocker = tmp_path / "demo_review"
+    blocker.write_bytes(b"a file")
+
+    result = _run_default(runner, video_path, "--force")
+
+    _assert_force_refused(result)
+    assert blocker.read_bytes() == b"a file"
+
+
+def test_force_overwrites_own_complete_review(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A previous screenscribe review is still overwritten in place with --force."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    assert _run_default(runner, video_path).exit_code == 0  # type: ignore[attr-defined]
+    assert (tmp_path / "demo_review" / "demo_report.json").exists()
+
+    result = _run_default(runner, video_path, "--force")
+
+    assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
+    assert not (tmp_path / "demo_review_2").exists()
+    assert (tmp_path / "demo_review" / "demo_report.json").exists()
+
+
+def test_force_cache_clear_failure_is_a_friendly_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    own = tmp_path / "demo_review"
+    (own / ".screenscribe_cache").mkdir(parents=True)
+
+    def _locked(path: object, *a: object, **kw: object) -> None:
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr("screenscribe.review_pipeline.shutil.rmtree", _locked)
+
+    result = _run_default(runner, video_path, "--force")
+    output = result.output  # type: ignore[attr-defined]
+    normalized = _panel_text(output)
+
+    assert result.exit_code == 1, output  # type: ignore[attr-defined]
+    assert "Traceback" not in output
+    assert "Output Directory Error" in normalized
+    assert "Cannot clear the previous checkpoint cache" in normalized
+    assert "Reason: permission denied" in normalized
+    assert (own / ".screenscribe_cache").is_dir()

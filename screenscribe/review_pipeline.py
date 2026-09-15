@@ -14,10 +14,11 @@ bind. The cli<->review_pipeline import cycle is broken with a function-local
 ``analyze()`` / ``_serve_report`` already use).
 """
 
+import errno
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 import typer
@@ -44,8 +45,18 @@ from .checkpoint import (
     serialize_transcription,
     serialize_unified_finding,
 )
-from .cli_messages import _build_output_dir_error_message
-from .cli_paths import _is_dir, is_review_directory
+from .cli_messages import (
+    _build_cache_clear_error_message,
+    _build_force_foreign_message,
+    _build_output_dir_error_message,
+    _build_versions_exhausted_message,
+)
+from .cli_paths import (
+    OutputVersionsExhaustedError,
+    _is_dir,
+    classify_review_slot,
+    is_review_directory,
+)
 from .config import ScreenScribeConfig
 from .detect import format_timestamp
 from .keywords import KeywordsConfig
@@ -151,6 +162,13 @@ def _has_valid_checkpoint(base_output: Path, video: Path, language: str) -> bool
     return bool(checkpoint and checkpoint_valid_for_video(checkpoint, video, base_output, language))
 
 
+def _exit_output_dir_error(console: Any, message: str) -> NoReturn:
+    """Print an "Output Directory Error" panel and stop with exit code 1."""
+    console.print()
+    console.print(Panel(message, title="[bold red]Output Directory Error[/]", border_style="red"))
+    raise typer.Exit(1)
+
+
 def _announce_new_version(console: Any, base_name: str, new_name: str) -> None:
     """Print the historical 'creating a new versioned copy' panel."""
     console.print(
@@ -239,7 +257,16 @@ def run_review(
             )
         else:
             # -o does not exist yet, or IS a previous screenscribe review:
-            # use it as the review directory itself.
+            # use it as the review directory itself. An existing FILE named by
+            # -o is an explicit, unusable target: stop instead of silently
+            # writing to a versioned sibling.
+            if output.exists() and not _is_dir(output):
+                _exit_output_dir_error(
+                    console,
+                    _build_output_dir_error_message(
+                        output, FileExistsError(errno.EEXIST, "File exists", str(output))
+                    ),
+                )
             base_output = output
 
         # Handle existing reviews: append _2, _3, etc. unless --force.
@@ -249,6 +276,11 @@ def run_review(
         effective_resume = resume
 
         if force:
+            # --force may overwrite only a free slot or screenscribe's own review
+            # folder. A foreign file/folder fails closed BEFORE anything is
+            # created, cleaned or written (per video, so batch mode too).
+            if classify_review_slot(base_output, video_stem) == "foreign":
+                _exit_output_dir_error(console, _build_force_foreign_message(base_output))
             video_output = base_output
         elif effective_resume and _has_valid_checkpoint(base_output, video, language):
             # C6.2b: --resume must continue in the directory that actually holds
@@ -270,7 +302,16 @@ def run_review(
                 f"({base_output.name})[/]"
             )
         else:
-            video_output, version = cli._find_next_review_path(base_output, video_stem=video_stem)
+            base_state = classify_review_slot(base_output, video_stem)
+            try:
+                video_output, version = cli._find_next_review_path(
+                    base_output, video_stem=video_stem
+                )
+            except OutputVersionsExhaustedError as exhausted:
+                _exit_output_dir_error(
+                    console,
+                    _build_versions_exhausted_message(exhausted.base_path, exhausted.limit),
+                )
             # A checkpoint only survives in base_output after a *partial*/failed
             # run; a completed run deletes it on success. Resume is only sound
             # when a *valid* one exists -- otherwise "resume" would start fresh in
@@ -278,7 +319,14 @@ def run_review(
             # validate, don't just check presence, so the [R]esume option is never
             # offered for a checkpoint that would be rejected downstream.
             checkpoint_present = _has_valid_checkpoint(base_output, video, language)
-            if version and _stdin_is_tty():
+            if version and base_state == "foreign":
+                # The base slot is someone else's file/folder, not a previous
+                # review: never offer Overwrite/Resume there, just use the new slot.
+                console.print(
+                    f"[yellow]{escape(base_output.name)} exists and is not a screenscribe "
+                    f"review; writing to {escape(video_output.name)} instead.[/]"
+                )
+            elif version and _stdin_is_tty():
                 # RERUN-UX: a prior bundle exists and we are on a real terminal,
                 # so let the operator choose instead of silently auto-bumping.
                 action = _prompt_rerun_action(base_output, console, allow_resume=checkpoint_present)
@@ -310,15 +358,9 @@ def run_review(
             if not estimate:
                 video_output.mkdir(parents=True, exist_ok=True)
         except OSError as mkdir_error:
-            console.print()
-            console.print(
-                Panel(
-                    _build_output_dir_error_message(video_output, mkdir_error),
-                    title="[bold red]Output Directory Error[/]",
-                    border_style="red",
-                )
+            _exit_output_dir_error(
+                console, _build_output_dir_error_message(video_output, mkdir_error)
             )
-            raise typer.Exit(1) from None
 
         console.print(f"\n[blue]Video:[/] [link=file://{video}]{video}[/link]")
         console.print(f"[blue]Output:[/] [link=file://{video_output}]{video_output}[/link]")
@@ -344,7 +386,12 @@ def run_review(
         if force:
             cache_dir = video_output / ".screenscribe_cache"
             if cache_dir.exists():
-                shutil.rmtree(cache_dir)
+                try:
+                    shutil.rmtree(cache_dir)
+                except OSError as rmtree_error:
+                    _exit_output_dir_error(
+                        console, _build_cache_clear_error_message(cache_dir, rmtree_error)
+                    )
                 console.print(
                     "[yellow]Force mode:[/] Deleted existing checkpoint, starting fresh\n"
                 )

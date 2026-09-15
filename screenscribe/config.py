@@ -9,6 +9,15 @@ from urllib.parse import urlsplit
 
 from .api_utils import redact_url
 
+
+def _invalid_endpoint_label(endpoint: str) -> str:
+    """``Invalid endpoint: <redacted url>`` without ever echoing a raw URL."""
+    redacted = redact_url(endpoint)
+    if redacted == "unknown host":
+        return "Invalid endpoint (unparseable URL)"
+    return f"Invalid endpoint: {redacted}"
+
+
 if TYPE_CHECKING:
     from .keywords import KeywordsConfig
 
@@ -282,7 +291,7 @@ class ScreenScribeConfig:
         for ep in libraxis_endpoints:
             if "/v1/chat/completions" in ep:
                 errors.append(
-                    f"Invalid endpoint: {ep}\n"
+                    f"{_invalid_endpoint_label(ep)}\n"
                     "  LibraxisAI uses /v1/responses, not /v1/chat/completions\n"
                     "  Fix in: ~/.config/screenscribe/config.env"
                 )

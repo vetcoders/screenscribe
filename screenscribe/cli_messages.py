@@ -97,6 +97,34 @@ def _build_output_dir_error_message(path: Path, exc: OSError) -> str:
     )
 
 
+def _build_force_foreign_message(path: Path) -> str:
+    """Why ``--force`` refuses a target screenscribe does not own."""
+    return (
+        f"{escape(str(path))} already exists and is not a screenscribe review folder.\n\n"
+        "[bold]--force[/] only overwrites a previous screenscribe review, so it will "
+        "not overwrite or clean this location. Pass [bold]-o[/] with a new folder."
+    )
+
+
+def _build_cache_clear_error_message(cache_dir: Path, exc: OSError) -> str:
+    """Why ``--force`` could not remove the previous checkpoint cache."""
+    reason = "permission denied" if isinstance(exc, PermissionError) else (exc.strerror or str(exc))
+    return (
+        f"Cannot clear the previous checkpoint cache at {escape(str(cache_dir))}\n"
+        f"[dim]Reason:[/] {escape(reason)}\n\n"
+        "Remove it manually, or pass [bold]-o[/] with a new folder."
+    )
+
+
+def _build_versions_exhausted_message(base_path: Path, limit: int) -> str:
+    """Friendly text for ``OutputVersionsExhaustedError`` (no free ``_N`` slot)."""
+    return (
+        f"Too many existing versions of {escape(base_path.name)} (limit {limit}) in "
+        f"{escape(str(base_path.parent))}.\n\n"
+        "Pass [bold]-o[/] with a new folder, or remove old versions you no longer need."
+    )
+
+
 def _build_transcription_failure_message(exc: Exception) -> str:
     """Turn a raw STT transport/HTTP error into actionable, traceback-free guidance."""
     status: int | None = None

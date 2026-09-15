@@ -55,7 +55,7 @@ def endpoint_host(endpoint: str | None) -> str:
     return host or "unknown host"
 
 
-_URL_IN_TEXT = re.compile(r"https?://[^\s'\"<>]+")
+_URL_IN_TEXT = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
 _URL_TRAILING_PUNCTUATION = "'\")]},.;:"
 
 

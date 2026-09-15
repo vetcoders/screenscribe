@@ -1,5 +1,6 @@
 """CLI interface for screenscribe video review automation."""
 
+import errno
 import os
 import shutil
 import socket
@@ -514,7 +515,10 @@ def review(
         bool,
         typer.Option(
             "--force",
-            help="Force reprocessing, ignore existing checkpoint",
+            help=(
+                "Force reprocessing: overwrite a previous screenscribe review and ignore its "
+                "checkpoint (never a folder screenscribe does not own)"
+            ),
         ),
     ] = False,
     estimate: Annotated[
@@ -587,7 +591,8 @@ def review(
 
     Output options:
     • --serve/--no-serve: Start HTTP server and open report in browser
-    • --force: Overwrite existing review instead of versioning
+    • --force: Overwrite a previous screenscribe review instead of versioning
+      (never a folder screenscribe does not own)
     • --resume: Continue from checkpoint if interrupted
 
     Examples:
@@ -1083,14 +1088,26 @@ def preprocess(
         )
     else:
         # -o does not exist yet, or IS a previous preprocess bundle: use it as
-        # the output directory itself.
+        # the output directory itself. An existing FILE named by -o is an
+        # explicit, unusable target: stop instead of silently writing to a
+        # versioned sibling (same as `review -o`).
+        if output.exists() and not _is_dir(output):
+            from .review_pipeline import _exit_output_dir_error
+
+            _exit_output_dir_error(
+                console,
+                _build_output_dir_error_message(
+                    output, FileExistsError(errno.EEXIST, "File exists", str(output))
+                ),
+            )
         base_output = output
     if force:
         output_dir = base_output
     else:
         output_dir, version = _find_next_versioned_path(
             base_output,
-            bundle_detector=is_preprocess_bundle,
+            owns_dir=is_preprocess_bundle,
+            has_completed_bundle=is_preprocess_bundle,
         )
         if version:
             console.print(

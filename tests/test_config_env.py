@@ -889,3 +889,28 @@ class TestLlmReasoningEffort:
         reloaded = ScreenScribeConfig()
         reloaded._load_from_file(path)
         assert reloaded.llm_reasoning_effort == "low"
+
+
+class TestInvalidEndpointMessageRedaction:
+    """validate() never echoes a raw endpoint URL in the invalid-endpoint error."""
+
+    def test_invalid_libraxis_chat_endpoint_is_redacted(self) -> None:
+        config = ScreenScribeConfig(
+            llm_endpoint=(
+                "https://user:secret@api.libraxis.cloud/v1/chat/completions?key=abc"  # pragma: allowlist secret
+            ),
+        )
+
+        errors = config.validate(providers={"llm"})
+        first_line = errors[0].splitlines()[0]
+
+        assert first_line == (
+            "Invalid endpoint: https://***@api.libraxis.cloud/v1/chat/completions?key=***"
+        )
+        assert "secret" not in errors[0]
+        assert "key=abc" not in errors[0]
+
+    def test_unparseable_endpoint_label(self) -> None:
+        from screenscribe.config import _invalid_endpoint_label
+
+        assert _invalid_endpoint_label("not a url") == "Invalid endpoint (unparseable URL)"

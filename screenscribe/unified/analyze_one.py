@@ -192,6 +192,8 @@ def analyze_finding_unified_streaming(
             # Any reasoning/text delta in THIS attempt makes a later provider
             # error event non-transient (see the stream loop).
             model_output_seen = False
+            # Bounded non-SSE body (a plain JSON error reply to a 200 request).
+            non_sse_body = ""
 
             # A retry that follows a mid-stream drop must not re-forward the
             # prefix the failed attempt already streamed to the consumer.
@@ -232,6 +234,14 @@ def analyze_finding_unified_streaming(
 
                         # Handle SSE format
                         if line.startswith("event:"):
+                            continue
+
+                        if not line.startswith(("data:", ":", "id:", "retry:")):
+                            # Not an SSE line: a provider that answered with a
+                            # plain (e.g. JSON error) body. Keep a bounded copy
+                            # so the error can be surfaced after the loop.
+                            if len(non_sse_body) < 2000:
+                                non_sse_body += line
                             continue
 
                         if line.startswith("data:"):
@@ -335,6 +345,19 @@ def analyze_finding_unified_streaming(
                                 # A provider error-event raises StreamEventError, which is
                                 # deliberately NOT caught here so it still propagates.
                                 continue
+
+            if not collected_content and not model_output_seen and non_sse_body.strip():
+                # A 200 reply that was not an event stream but a JSON error body:
+                # raise the provider error (transient ones are retried, since no
+                # model output was streamed) instead of ending with empty content.
+                try:
+                    body_json = json.loads(non_sse_body)
+                except json.JSONDecodeError:
+                    body_json = None
+                if isinstance(body_json, dict):
+                    body_error = extract_stream_error_event(body_json)
+                    if body_error is not None:
+                        raise body_error
 
             return collected_content, response_id
 
