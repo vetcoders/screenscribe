@@ -39,14 +39,17 @@
 - **Fixed: semantic pre-filter no longer hangs reasoning without an answer.**
   Root cause: the pre-filter sent no reasoning effort, so on a full transcript
   the default LLM reasoned in a loop for 11-20 minutes, emitted no text and
-  ended with `response.failed`. Text-LLM Responses API requests (pre-filter and
-  text-only finding analysis) now send `reasoning.effort`, default `medium`,
+  ended with `response.failed`. All text-LLM Responses API requests (pre-filter,
+  text-only finding analysis, executive summaries, LLM merge) now send
+  `reasoning.effort`, default `medium`,
   configurable with the new `SCREENSCRIBE_LLM_REASONING_EFFORT`
   (`minimal`/`low`/`medium`/`high`); Chat Completions endpoints and the vision
   request are unchanged. An in-stream provider error is retried only if it
   arrives before the model streamed any output, so such a failure is reported
   once (with a hint to lower the effort) instead of being retried for close to
-  an hour.
+  an hour. Non-streaming summary and merge calls also treat a 200 response with
+  status `failed` or `incomplete` as a failure (local summary / merge skipped)
+  instead of using its partial text.
 
 ## [0.1.19] - 2026-08-23
 

@@ -34,8 +34,8 @@ DEFAULT_LLM_MODEL = "programmer"  # screenscribe product default (LibraxisAI pro
 # OpenAI vision model) via SCREENSCRIBE_VISION_MODEL when not on LibraxisAI.
 DEFAULT_VISION_MODEL = "programmer"
 
-# Reasoning effort sent with text-LLM Responses API requests (semantic pre-filter
-# and the text-only unified fallback). Without an explicit effort, reasoning
+# Reasoning effort sent with every text-LLM Responses API request (semantic
+# pre-filter, text-only unified analysis, executive summaries, LLM merge). Without an explicit effort, reasoning
 # models on long prompts can reason in a loop for many minutes, emit no answer
 # and end with ``response.failed``. "medium" keeps the "liberal" pre-filter's
 # recall while bounding the time spent reasoning.
@@ -834,7 +834,8 @@ class ScreenScribeConfig:
             f"SCREENSCRIBE_LLM_MODEL={self.llm_model}",
             f"SCREENSCRIBE_VISION_MODEL={self.vision_model}",
             "",
-            "# Reasoning effort for the text LLM (semantic pre-filter, text-only analysis):",
+            "# Reasoning effort for all text-LLM calls (pre-filter, text-only analysis,",
+            "# summaries, merge):",
             "# minimal | low | medium | high. Lower it (e.g. low) if detection fails after",
             "# the model reasons for a long time without answering.",
             f"SCREENSCRIBE_LLM_REASONING_EFFORT={self.get_llm_reasoning_effort()}",

@@ -395,3 +395,54 @@ def test_retry_request_log_redacts_url(monkeypatch: pytest.MonkeyPatch) -> None:
         "  Error: Server error '503 Service Unavailable' for url "
         "'https://***@api.example.com/v1/responses?key=***&api-version=***'"
     )
+
+
+# --- Non-streaming Responses bodies: answer extraction and status errors -----
+
+
+def test_extract_llm_response_text_skips_reasoning_item() -> None:
+    from screenscribe.api_utils import extract_llm_response_text
+
+    payload = {
+        "output": [
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "thinking..."}]},
+            {"type": "message", "content": [{"type": "output_text", "text": "ANSWER"}]},
+        ],
+        "text": {"format": {"type": "text"}},
+        "reasoning": {"effort": "medium", "summary": "auto"},
+    }
+
+    assert extract_llm_response_text(payload, "https://api.example.com/v1/responses") == "ANSWER"
+
+
+def test_build_llm_request_body_reasoning_effort() -> None:
+    from screenscribe.api_utils import build_llm_request_body
+
+    responses = build_llm_request_body(
+        "m", "p", "https://api.example.com/v1/responses", reasoning_effort="low"
+    )
+    chat = build_llm_request_body(
+        "m", "p", "https://api.example.com/v1/chat/completions", reasoning_effort="low"
+    )
+    plain = build_llm_request_body("m", "p", "https://api.example.com/v1/responses")
+
+    assert responses["reasoning"] == {"summary": "auto", "effort": "low"}
+    assert "reasoning" not in chat
+    assert "reasoning" not in plain
+
+
+def test_extract_response_payload_error() -> None:
+    from screenscribe.api_utils import extract_response_payload_error
+
+    assert extract_response_payload_error({"status": "completed", "error": None}) is None
+    failed = extract_response_payload_error(
+        {"status": "failed", "error": {"code": "server_error", "message": "rejected"}}
+    )
+    incomplete = extract_response_payload_error(
+        {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}}
+    )
+    error_only = extract_response_payload_error({"error": {"message": "bad request"}})
+
+    assert str(failed) == "rejected (code: server_error)"
+    assert str(incomplete) == "Response incomplete: max_output_tokens"
+    assert str(error_only) == "bad request"

@@ -10,6 +10,11 @@ Critical falsify (anti-over-merge): two distinct topics MUST stay two.
 
 from __future__ import annotations
 
+import json as _json
+from typing import Any, Literal
+
+import pytest
+
 from screenscribe.config import ScreenScribeConfig
 from screenscribe.unified.finding import UnifiedFinding
 from screenscribe.unified.llm_merge import llm_merge_findings
@@ -174,3 +179,114 @@ def test_merge_is_conservative_chain_preserves_prior_provenance() -> None:
     ids = merged[0].merged_from_ids
     assert (99, 0.5) in ids  # prior trail survives the second pass
     assert (2, 2.0) in ids
+
+
+# --- Real transport: reasoning effort + failed/incomplete 200 bodies ----------
+
+
+def _merge_client(payload: dict[str, Any], bodies: list[dict[str, Any]]) -> type:
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return payload
+
+    class _Client:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def __enter__(self) -> _Client:
+            return self
+
+        def __exit__(self, *args: object) -> Literal[False]:
+            return False
+
+        def post(self, *args: Any, **kwargs: Any) -> _Response:
+            bodies.append(kwargs.get("json") or {})
+            return _Response()
+
+    return _Client
+
+
+def _groups_payload(status: str = "completed", **extra: Any) -> dict[str, Any]:
+    return {
+        "status": status,
+        **extra,
+        "output": [
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": '{"groups": []}'}]},
+            {
+                "type": "message",
+                "content": [{"type": "output_text", "text": _json.dumps({"groups": [[0, 1]]})}],
+            },
+        ],
+    }
+
+
+def _two_paraphrases() -> list[UnifiedFinding]:
+    return [
+        _mk(1, "Save button does nothing when clicked", timestamp=1.0),
+        _mk(2, "Clicking save has no effect", timestamp=2.0),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "effort", "expected_reasoning"),
+    [
+        (None, None, {"summary": "auto", "effort": "medium"}),
+        (None, "low", {"summary": "auto", "effort": "low"}),
+        ("https://api.example.com/v1/chat/completions", "low", None),
+    ],
+)
+def test_default_caller_sends_configured_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str | None,
+    effort: str | None,
+    expected_reasoning: dict[str, str] | None,
+) -> None:
+    config = _cfg()
+    if endpoint:
+        config.llm_endpoint = endpoint
+    if effort:
+        config.llm_reasoning_effort = effort
+    bodies: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "screenscribe.unified.llm_merge.httpx.Client", _merge_client(_groups_payload(), bodies)
+    )
+
+    llm_merge_findings(_two_paraphrases(), config)
+
+    assert len(bodies) == 1
+    assert bodies[0].get("reasoning") == expected_reasoning
+
+
+def test_default_caller_merges_from_answer_not_reasoning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``output[0]`` is a reasoning item whose summary text is also JSON; only the
+    message's output_text may be parsed as the answer."""
+    monkeypatch.setattr(
+        "screenscribe.unified.llm_merge.httpx.Client", _merge_client(_groups_payload(), [])
+    )
+
+    merged = llm_merge_findings(_two_paraphrases(), _cfg())
+
+    assert len(merged) == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _groups_payload("failed", error={"code": "server_error", "message": "rejected"}),
+        _groups_payload("incomplete", incomplete_details={"reason": "max_output_tokens"}),
+    ],
+)
+def test_default_caller_failed_or_incomplete_body_skips_merge(
+    monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]
+) -> None:
+    """A 200 body with status failed/incomplete is not an answer: merge is skipped."""
+    findings = _two_paraphrases()
+    monkeypatch.setattr("screenscribe.unified.llm_merge.httpx.Client", _merge_client(payload, []))
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda _d: None)
+
+    merged = llm_merge_findings(findings, _cfg())
+
+    assert merged == findings

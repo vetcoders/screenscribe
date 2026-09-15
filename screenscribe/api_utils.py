@@ -227,7 +227,7 @@ def extract_stream_error_event(chunk: dict[str, Any]) -> StreamEventError | None
         message, code = _stream_error_fields(response_payload.get("error"))
         if not message:
             message = (
-                "Streaming response failed."
+                "Response failed."
                 if chunk_type == "response.failed"
                 else "Streaming response completed with failed status."
             )
@@ -292,6 +292,28 @@ def responses_reasoning_options(endpoint: str, effort: str) -> dict[str, str] | 
     if is_chat_completions_endpoint(endpoint):
         return None
     return {"summary": "auto", "effort": effort}
+
+
+def extract_response_payload_error(result: dict[str, Any]) -> StreamEventError | None:
+    """Provider failure carried by a NON-streaming 200 response body, or ``None``.
+
+    A Responses API call can return HTTP 200 with ``status: "failed"`` (and an
+    ``error`` object) or ``status: "incomplete"`` (``incomplete_details.reason``,
+    e.g. a reasoning model that exhausted its budget). Either way any text in
+    ``output`` is not a finished answer and must not be used as one. Reuses the
+    stream-event parser so both paths report the same message and code.
+    """
+    if not isinstance(result, dict):
+        return None
+    status = str(result.get("status", "") or "").strip().lower()
+    if status == "failed":
+        return extract_stream_error_event({"type": "response.failed", "response": result})
+    if status == "incomplete":
+        return extract_stream_error_event({"type": "response.incomplete", "response": result})
+    error_payload = result.get("error")
+    if error_payload:
+        return extract_stream_error_event({"type": "error", "error": error_payload})
+    return None
 
 
 def retry_after_seconds(error: Exception) -> float | None:
@@ -469,6 +491,7 @@ def build_llm_request_body(
     prompt: str,
     endpoint: str,
     image_base64: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """Build request body for either Responses API or Chat Completions API.
 
@@ -477,6 +500,11 @@ def build_llm_request_body(
         prompt: Text prompt
         endpoint: API endpoint URL (used to detect format)
         image_base64: Optional base64-encoded image for vision
+        reasoning_effort: When set, Responses API bodies get a ``reasoning``
+            block with this effort (see ``responses_reasoning_options``);
+            Chat Completions bodies never do. Text-LLM callers pass
+            ``config.get_llm_reasoning_effort()`` so reasoning models cannot
+            loop without an answer on long prompts.
 
     Returns:
         Request body dict
@@ -510,10 +538,15 @@ def build_llm_request_body(
             ]
         else:
             input_content = [{"type": "input_text", "text": prompt}]
-        return {
+        body: dict[str, Any] = {
             "model": model,
             "input": [{"role": "user", "content": input_content}],
         }
+        if reasoning_effort:
+            reasoning = responses_reasoning_options(endpoint, reasoning_effort)
+            if reasoning is not None:
+                body["reasoning"] = reasoning
+        return body
 
 
 def extract_llm_response_text(response_json: dict[str, Any], endpoint: str) -> str:

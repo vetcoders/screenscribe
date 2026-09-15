@@ -435,8 +435,8 @@ export SCREENSCRIBE_LLM_REASONING_EFFORT=medium  # minimal|low|medium|high for t
 
 Defaults: STT `whisper-1`, LLM and vision `programmer` (the LibraxisAI
 default — change these to your provider's model names, e.g. `gpt-4o`).
-Text-LLM Responses API calls (semantic detection, text-only analysis) send
-reasoning effort `medium`; lower it to `low` if detection fails after the model
+All text-LLM Responses API calls (pre-filter, text-only analysis, summaries,
+merge) send reasoning effort `medium`; lower it to `low` if detection fails after the model
 reasons for a long time without answering.
 
 ### Processing options

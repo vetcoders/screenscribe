@@ -9,11 +9,11 @@ from __future__ import annotations
 import httpx
 from rich.markup import escape
 
-from ..api_utils import redact_error_message, retry_request
+from ..api_utils import extract_response_payload_error, redact_error_message, retry_request
 from ..config import ScreenScribeConfig
 from ._console import console
 from .finding import UnifiedFinding
-from .response_parsing import _extract_response_error, extract_response_content
+from .response_parsing import extract_response_content
 
 
 def _build_local_executive_summary(findings: list[UnifiedFinding], language: str) -> str:
@@ -96,7 +96,12 @@ def generate_unified_summary(findings: list[UnifiedFinding], config: ScreenScrib
                         "Authorization": f"Bearer {config.get_llm_api_key()}",
                         "Content-Type": "application/json",
                     },
-                    json=build_llm_request_body(config.llm_model, prompt, config.llm_endpoint),
+                    json=build_llm_request_body(
+                        config.llm_model,
+                        prompt,
+                        config.llm_endpoint,
+                        reasoning_effort=config.get_llm_reasoning_effort(),
+                    ),
                 )
                 response.raise_for_status()
                 return response
@@ -108,9 +113,11 @@ def generate_unified_summary(findings: list[UnifiedFinding], config: ScreenScrib
         )
 
         result = response.json()
-        response_error = _extract_response_error(result)
-        if response_error:
-            raise RuntimeError(response_error)
+        # A 200 body with status failed/incomplete is not a finished summary:
+        # fall back to the local summary instead of using partial text.
+        response_error = extract_response_payload_error(result)
+        if response_error is not None:
+            raise response_error
 
         content = extract_response_content(
             result,
