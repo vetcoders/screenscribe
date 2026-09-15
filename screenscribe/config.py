@@ -146,6 +146,14 @@ class ScreenScribeConfig:
     # when there is no LLM budget). A missing LLM API key also makes it a no-op.
     llm_merge_enabled: bool = True
 
+    # Review-agent chat (POST /api/agent/chat). Screen recordings contain
+    # secrets: providers with trust=external are skipped unless egress is allow.
+    # A host that already analyzed this recording (STT/LLM/vision) is
+    # trust=processor and is kept under deny — so the xAI preset chats without
+    # an extra env var. SCREENSCRIBE_AGENT_PRIMARY_TRUST=external opts it out.
+    agent_egress: str = "deny"
+    agent_primary_trust: str = ""
+
     # Active keyword vocabulary hints (loaded from --keywords-file / global file /
     # built-in default). Passed to the AI as hints during detection and marker
     # analysis; never replaces the LLM. ``None`` means "not yet loaded" — callers
@@ -672,6 +680,8 @@ class ScreenScribeConfig:
             "SCREENSCRIBE_LANGUAGE": "language",
             "SCREENSCRIBE_VISION": "use_vision_analysis",
             "SCREENSCRIBE_LLM_MERGE": "llm_merge_enabled",
+            "SCREENSCRIBE_AGENT_EGRESS": "agent_egress",
+            "SCREENSCRIBE_AGENT_PRIMARY_TRUST": "agent_primary_trust",
         }
 
         for env_key, attr in env_mapping.items():
@@ -736,8 +746,17 @@ class ScreenScribeConfig:
             setattr(self, attr, value.lower() in ("true", "1", "yes"))
         elif attr == "llm_reasoning_effort":
             self.llm_reasoning_effort = self._normalize_reasoning_effort(value)
+        elif attr == "agent_egress":
+            self.agent_egress = self._normalize_agent_egress(value)
+        elif attr == "agent_primary_trust":
+            self.agent_primary_trust = value.strip().lower()
         else:
             setattr(self, attr, value)
+
+    @staticmethod
+    def _normalize_agent_egress(value: str) -> str:
+        raw = value.strip().lower()
+        return "allow" if raw == "allow" else "deny"
 
     def _apply_api_base(self, value: str) -> None:
         """Normalize an API base URL and derive endpoints still at their defaults."""
@@ -788,6 +807,14 @@ class ScreenScribeConfig:
 
         if key_lower == "screenscribe_llm_reasoning_effort":
             self.llm_reasoning_effort = self._normalize_reasoning_effort(value)
+            return
+
+        if key_lower == "screenscribe_agent_egress":
+            self.agent_egress = self._normalize_agent_egress(value)
+            return
+
+        if key_lower == "screenscribe_agent_primary_trust":
+            self.agent_primary_trust = value.strip().lower()
             return
 
         # STT fallback (checked first: "stt_fallback_api_key" also contains the
@@ -986,6 +1013,20 @@ class ScreenScribeConfig:
             sep,
             f"SCREENSCRIBE_LANGUAGE={self.language}",
             f"SCREENSCRIBE_VISION={str(self.use_vision_analysis).lower()}",
+            "",
+            sep,
+            "# REVIEW AGENT CHAT (screen recordings contain secrets)",
+            sep,
+            "# deny = skip providers whose trust is external (default).",
+            "# allow = send the report (and thus the recording's contents) to external hosts.",
+            "# Hosts already used for STT/LLM/vision are trust=processor and stay allowed.",
+            "# SCREENSCRIBE_AGENT_PRIMARY_TRUST=external opts the analysis host out.",
+            f"SCREENSCRIBE_AGENT_EGRESS={self._normalize_agent_egress(self.agent_egress)}",
+            self._emit_optional(
+                "SCREENSCRIBE_AGENT_PRIMARY_TRUST",
+                self.agent_primary_trust,
+                "internal",
+            ),
             "",
         ]
         content = "\n".join(lines)

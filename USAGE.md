@@ -576,6 +576,23 @@ moving to a new provider.
 | `SCREENSCRIBE_VISION` | `true` | Enable visual/screenshot (VLM) analysis (`false` = LLM-only; semantic detection still runs). |
 | `SCREENSCRIBE_LLM_MERGE` | `true` | Semantic LLM-merge pass that dedups cross-category paraphrases after the cheap heuristic dedup (`false`/`0`/`no` = heuristic-only dedup). A missing LLM API key also makes it a no-op. |
 
+### Review agent chat
+
+The review server exposes `POST /api/agent/chat` and `POST /api/agent/chat/stream` (SSE). Screen recordings contain secrets, so **external** providers are skipped unless you opt in. A host that already ran STT, LLM, or vision for this config is `trust=processor` and is kept under `deny`.
+
+The agent can propose edits to findings. Write tools (`set_verdict`, `set_severity`, `edit_finding`, `add_finding`, `propose_review`) **do not write** `report.json`. They validate against the loaded report and return a `review_patch` (or a `review_plan` for broad requests). The browser is the single writer: the panel applies the patch to `reportState` and saves through the existing `/api/save` lock. The agent uses the same credential as `screenscribe auth login xai` / `review` — `ScreenScribeConfig.get_llm_api_key()` already falls back to the signed-in xAI account bearer; there is no extra key. Never treat a tool result as a saved edit; the panel confirms with `review_applied`.
+
+`merge_findings` / `unmerge_finding` currently return `{"unsupported": true}` — merge is a client-only fold (`mergeFindings` in the report UI) with no patch-callable API.
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `SCREENSCRIBE_AGENT_EGRESS` | `deny` | `deny` skips providers whose trust is `external`. `allow` sends the loaded report (and therefore the recording's contents) to those hosts. Analysis hosts (`processor`) are always kept. |
+| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from the LLM host | `local` / `internal` / `processor` / `external`. localhost is `local`; `api.libraxis.cloud` is `internal`; a host matching STT/LLM/vision is `processor`. **xAI (`api.x.ai`) is `processor` on the xAI preset.** Set `external` to opt that host out under `deny`. |
+
+Optional Anthropic fallback (skipped when unset): `ANTHROPIC_API_KEY` or `SCREENSCRIBE_AGENT_FALLBACK_API_KEY`. Install the extra with `pip install 'screenscribe[anthropic]'`.
+
+SSE events (UI contract): `token`, `tool_call`, `tool_result`, `done`, `error`. Request body: `{"message": str, "history": [{role, content}], "previous_response_id": str|null}`. The first turn resumes `analysis_passes.unified_analysis.response_id` when present; otherwise the agent is seeded from the report JSON.
+
 ### xAI, TTS and live STT
 
 | Variable | Purpose |

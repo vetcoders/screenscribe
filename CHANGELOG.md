@@ -37,6 +37,29 @@
   `--keywords-file` > global file > preset dictionary > built-in default;
   non-default presets record `preset` (name + categories) in the JSON report
   and their category badges render in the HTML report.
+- **Added: review-agent chat on the report server.** `POST /api/agent/chat/stream`
+  (SSE) and `POST /api/agent/chat` continue a conversation about the loaded
+  report with tools (`list_findings`, `get_transcript`, `seek`, `show_frame`,
+  `get_report_summary`, optional `open_repo_file`). Primary provider is the
+  configured LLM Responses endpoint (`previous_response_id` chaining); Anthropic
+  is an optional fallback extra. Screen recordings are treated as secrets:
+  `SCREENSCRIBE_AGENT_EGRESS` defaults to `deny` for `trust=external` hosts.
+  A host that already analyzed the recording (STT/LLM/vision) is
+  `trust=processor` and is kept under that default, so the xAI preset chats
+  without an extra env var. `SCREENSCRIBE_AGENT_PRIMARY_TRUST=external` remains
+  the opt-out; a fallback on a different host (e.g. Anthropic) is still skipped
+  under `deny`. The JSON report now stores
+  `analysis_passes.unified_analysis.response_id` so the next review can resume
+  the last VLM pass for free.
+- **Added: review-patch write tools on the review agent.** The agent can
+  `set_verdict`, `set_severity`, `edit_finding`, and `add_finding`, or
+  `propose_review` a plan for a broad request. Tools never write `report.json`;
+  they return a `review_patch` / `review_plan` in the existing SSE `tool_result`
+  envelope so the browser stays the single writer (existing `/api/save` lock and
+  Undo/Reset). `review_finding_state` hydrates additive `summary_override` and
+  `category_override`. Auth is unchanged: empty API key + signed-in xAI account
+  bearer is enough. `merge_findings` / `unmerge_finding` return
+  `{"unsupported": true}` until the panel grows a patch-callable merge.
 
 - **Internal: refresh runtime and development dependencies.** Updated the lockfile
   to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.
