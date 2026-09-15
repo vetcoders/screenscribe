@@ -635,8 +635,13 @@ async def transcribe(
         "text": "your transcript here",
         "language": language,
         "segments": [
-            {"id": 0, "start": 0.0, "end": 3.2,
-             "text": "your transcript here", "no_speech_prob": 0.01}
+            {
+                "id": 0,
+                "start": 0.0,
+                "end": 3.2,
+                "text": "your transcript here",
+                "no_speech_prob": 0.01,
+            }
         ],
     }
 ```

@@ -1,14 +1,17 @@
 # Changelog
 
-## Unreleased
+## [0.1.20.dev0] - Unreleased
+
+- **Internal: refresh runtime and development dependencies.** Updated the lockfile
+  to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.
+  Normalized the development version to PEP 440's `0.1.20.dev0` spelling so
+  project metadata, installed metadata, and this changelog agree.
 
 - **Internal: bandit pre-commit hook runs from the project environment.** The
   remote `PyCQA/bandit` hook's pbr-based build ran `git describe` against our
   tags from inside git hooks and broke on the non-PEP440 recovery tag; the
   hook is now `repo: local` and calls the same `uv run bandit` used by
   `make verify`.
-
-## [0.1.20] - 2026-09-14
 
 - **Fixed: STT models that reject `response_format=verbose_json` no longer abort
   the review.** The file transcription path (`review`, `transcribe`, and every
