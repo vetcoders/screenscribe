@@ -277,6 +277,11 @@ report and opens the HTML report in your browser. Key options:
 
 - `--lang / -l` — transcription language (default `en`; pass `--lang pl` for Polish).
 - `--no-serve` — write the report without starting the browser server.
+- `--transcript-source auto|audio|ocr` — where transcript segments come from:
+  audio STT, or VLM OCR of frames for recordings without (usable) audio.
+  `auto` (default) picks per video, so silent recordings are analyzed instead
+  of rejected; `--no-audio` is the shortcut for `ocr`, and `--frame-interval`
+  sets the seconds between OCR'd frames (default 5).
 - `--no-vision` (alias `--no-vlm`) — skip the visual/screenshot (VLM) step; the
   semantic LLM detection still runs.
 - `--keywords-file` — per-run keywords file. Keywords are always-on AI hints
