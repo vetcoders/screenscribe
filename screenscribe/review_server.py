@@ -477,6 +477,10 @@ def create_review_app(
             # absorbed member's notes or priority onto the survivor.
             "merged_survivor_review": dict(human.get("merged_survivor_review") or {}),
             "merged_review_baseline": dict(human.get("merged_review_baseline") or {}),
+            # Additive reviewer overrides from agent review-patch tools. Older
+            # reports omit these keys; empty string is the honest unset value.
+            "summary_override": human.get("summary_override") or "",
+            "category_override": human.get("category_override") or "",
         }
 
     def work_item_from_review_finding(finding: dict[str, Any]) -> WorkItem:

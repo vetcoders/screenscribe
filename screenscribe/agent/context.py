@@ -17,7 +17,11 @@ _SYSTEM = (
     "and prefer referring to findings by id and timestamp. Use tools to inspect "
     "the report rather than guessing. Reply in the language of the user's message. "
     "When the user asks to jump in the video, call seek. When they ask to see a "
-    "frame, call show_frame."
+    "frame, call show_frame. Apply small, explicit corrections directly with a "
+    "review-patch tool (set_verdict, set_severity, edit_finding, add_finding). "
+    "For broad or ambiguous requests call propose_review first and wait for the "
+    "panel. Never claim an edit is saved — the panel confirms with a "
+    "review_applied message which you may reference."
 )
 
 
