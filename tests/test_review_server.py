@@ -441,6 +441,54 @@ def test_review_state_hydrates_session_manual_frame_image(
     assert frame_base64 in data_url
 
 
+def test_review_state_exposes_summary_and_category_overrides(
+    review_workspace: tuple[Path, Path, Path],
+) -> None:
+    """review_finding_state hydrates additive summary/category overrides.
+
+    Older reports omit those keys; they must still load, with empty strings.
+    """
+    import json
+
+    output_dir, report_file, video_path = review_workspace
+    json_path = output_dir / "screen_report.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "video": "screen.mov",
+                "findings": [{"id": 1}, {"id": 2}],
+                "human_review": {
+                    "findings": {
+                        "1": {
+                            "verdict": "accepted",
+                            "notes": "rewritten",
+                            "summary_override": "Safari clip is the real bug",
+                            "category_override": "ui",
+                        },
+                        "2": {
+                            "verdict": "none",
+                            "notes": "",
+                        },
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    client = TestClient(app)
+    state = client.get("/api/review-state").json()
+    finding_one = state["findings"]["1"]
+    finding_two = state["findings"]["2"]
+    assert finding_one["summary_override"] == "Safari clip is the real bug"
+    assert finding_one["category_override"] == "ui"
+    assert finding_one["verdict"] == "accepted"
+    assert finding_two["summary_override"] == ""
+    assert finding_two["category_override"] == ""
+    assert finding_two["verdict"] == "none"
+
+
 def test_review_server_delete_manual_frame_purges_session(
     review_workspace: tuple[Path, Path, Path],
 ) -> None:
