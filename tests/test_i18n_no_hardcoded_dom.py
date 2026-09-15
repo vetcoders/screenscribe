@@ -27,6 +27,7 @@ ANCHOR_SOURCES = (
     (ASSETS / "templates/partials/capture_panel.html", "analyze"),
     (ASSETS / "templates/partials/voice_notes_panel.html", "analyze"),
     (ASSETS / "templates/partials/export_panel.html", "analyze"),
+    (ASSETS / "templates/partials/lightbox.html", "review"),
     (ASSETS / "templates/partials/frame_modal.html", "analyze"),
 )
 

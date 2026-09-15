@@ -135,7 +135,7 @@ function snapshotFindingReview(state) {
         severity: source.severity || null,
         notes: source.notes || '',
         annotations: Array.isArray(source.annotations)
-            ? source.annotations.map((annotation) => ({ ...annotation }))
+            ? ensureAnnotationsHaveIds(source.annotations.map((annotation) => cloneAnnotation(annotation)))
             : [],
     };
 }
@@ -4457,6 +4457,289 @@ function getActualImageRect(img) {
     };
 }
 
+const ANNOTATION_HANDLE_SIZE = 0.018;
+const ANNOTATION_HIT_SLOP = 0.02;
+
+function newAnnotationId() {
+    try {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+    } catch (error) {
+        console.debug('newAnnotationId: crypto.randomUUID failed', error);
+    }
+    return `ann-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function ensureAnnotationId(ann) {
+    if (!ann || typeof ann !== 'object') return ann;
+    if (!ann.id) ann.id = newAnnotationId();
+    return ann;
+}
+
+function ensureAnnotationsHaveIds(annotations) {
+    if (!Array.isArray(annotations)) return [];
+    annotations.forEach(ensureAnnotationId);
+    return annotations;
+}
+
+function cloneAnnotation(ann) {
+    if (!ann || typeof ann !== 'object') return ann;
+    const copy = { ...ann };
+    if (Array.isArray(ann.points)) {
+        copy.points = ann.points.map((p) => ({ x: p.x, y: p.y }));
+    }
+    return copy;
+}
+
+function estimateTextWidth(ann) {
+    const fontSize = ann.fontSizeRel || 0.036;
+    const chars = (ann.text || '').length || 1;
+    return Math.max(fontSize, chars * fontSize * 0.55);
+}
+
+function annotationBounds(ann) {
+    if (!ann) return null;
+    if (ann.type === 'rect') return normalizeRect(ann);
+    if (ann.type === 'text') {
+        const fontSize = ann.fontSizeRel || 0.036;
+        return {
+            x: ann.x || 0,
+            y: ann.y || 0,
+            width: estimateTextWidth(ann),
+            height: fontSize * 1.25,
+        };
+    }
+    if (ann.type === 'arrow') {
+        const x = Math.min(ann.startX || 0, ann.endX || 0);
+        const y = Math.min(ann.startY || 0, ann.endY || 0);
+        return {
+            x,
+            y,
+            width: Math.abs((ann.endX || 0) - (ann.startX || 0)),
+            height: Math.abs((ann.endY || 0) - (ann.startY || 0)),
+        };
+    }
+    if (ann.type === 'pen' && Array.isArray(ann.points) && ann.points.length) {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        ann.points.forEach((p) => {
+            minX = Math.min(minX, p.x);
+            minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x);
+            maxY = Math.max(maxY, p.y);
+        });
+        return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+    }
+    return null;
+}
+
+function annotationHandles(ann) {
+    if (!ann) return [];
+    if (ann.type === 'rect') {
+        const r = normalizeRect(ann);
+        return [
+            { id: 'nw', x: r.x, y: r.y },
+            { id: 'ne', x: r.x + r.width, y: r.y },
+            { id: 'se', x: r.x + r.width, y: r.y + r.height },
+            { id: 'sw', x: r.x, y: r.y + r.height },
+        ];
+    }
+    if (ann.type === 'arrow') {
+        return [
+            { id: 'start', x: ann.startX, y: ann.startY },
+            { id: 'end', x: ann.endX, y: ann.endY },
+        ];
+    }
+    if (ann.type === 'text') {
+        const fontSize = ann.fontSizeRel || 0.036;
+        return [{ id: 'size', x: (ann.x || 0) + estimateTextWidth(ann), y: (ann.y || 0) + fontSize }];
+    }
+    return [];
+}
+
+function distToSegment(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    if (!len2) return Math.hypot(px - x1, py - y1);
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+function hitTestHandle(ann, x, y) {
+    const half = ANNOTATION_HANDLE_SIZE;
+    for (const handle of annotationHandles(ann)) {
+        if (Math.abs(x - handle.x) <= half && Math.abs(y - handle.y) <= half) {
+            return handle.id;
+        }
+    }
+    return null;
+}
+
+function hitTestAnnotation(ann, x, y) {
+    if (!ann) return false;
+    const slop = ANNOTATION_HIT_SLOP + (ann.strokeWidthRel || 0);
+    if (ann.type === 'rect') {
+        const r = normalizeRect(ann);
+        return x >= r.x - slop && x <= r.x + r.width + slop
+            && y >= r.y - slop && y <= r.y + r.height + slop;
+    }
+    if (ann.type === 'text') {
+        const bounds = annotationBounds(ann);
+        return bounds
+            && x >= bounds.x - slop && x <= bounds.x + bounds.width + slop
+            && y >= bounds.y - slop && y <= bounds.y + bounds.height + slop;
+    }
+    if (ann.type === 'arrow') {
+        return distToSegment(x, y, ann.startX, ann.startY, ann.endX, ann.endY) <= slop;
+    }
+    if (ann.type === 'pen' && Array.isArray(ann.points) && ann.points.length) {
+        if (ann.points.length === 1) {
+            return Math.hypot(x - ann.points[0].x, y - ann.points[0].y) <= slop;
+        }
+        for (let i = 1; i < ann.points.length; i += 1) {
+            const a = ann.points[i - 1];
+            const b = ann.points[i];
+            if (distToSegment(x, y, a.x, a.y, b.x, b.y) <= slop) return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+function hitTestTopAnnotation(annotations, x, y) {
+    const list = Array.isArray(annotations) ? annotations : [];
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+        if (hitTestAnnotation(list[i], x, y)) return list[i];
+    }
+    return null;
+}
+
+function moveAnnotationBy(ann, dx, dy) {
+    if (!ann) return ann;
+    if (ann.type === 'rect' || ann.type === 'text') {
+        ann.x = (ann.x || 0) + dx;
+        ann.y = (ann.y || 0) + dy;
+        return ann;
+    }
+    if (ann.type === 'arrow') {
+        ann.startX = (ann.startX || 0) + dx;
+        ann.startY = (ann.startY || 0) + dy;
+        ann.endX = (ann.endX || 0) + dx;
+        ann.endY = (ann.endY || 0) + dy;
+        return ann;
+    }
+    if (ann.type === 'pen' && Array.isArray(ann.points)) {
+        ann.points.forEach((p) => {
+            p.x += dx;
+            p.y += dy;
+        });
+    }
+    return ann;
+}
+
+function resizeAnnotationHandle(ann, handle, x, y) {
+    if (!ann || !handle) return ann;
+    if (ann.type === 'rect') {
+        const r = normalizeRect(ann);
+        let left = r.x;
+        let top = r.y;
+        let right = r.x + r.width;
+        let bottom = r.y + r.height;
+        if (handle === 'nw') { left = x; top = y; }
+        else if (handle === 'ne') { right = x; top = y; }
+        else if (handle === 'se') { right = x; bottom = y; }
+        else if (handle === 'sw') { left = x; bottom = y; }
+        const next = normalizeRect({ x: left, y: top, width: right - left, height: bottom - top });
+        ann.x = next.x;
+        ann.y = next.y;
+        ann.width = Math.max(0.008, next.width);
+        ann.height = Math.max(0.008, next.height);
+        return ann;
+    }
+    if (ann.type === 'arrow') {
+        if (handle === 'start') {
+            ann.startX = x;
+            ann.startY = y;
+        } else if (handle === 'end') {
+            ann.endX = x;
+            ann.endY = y;
+        }
+        return ann;
+    }
+    if (ann.type === 'text' && handle === 'size') {
+        const next = y - (ann.y || 0);
+        ann.fontSizeRel = Math.max(0.012, Math.min(0.2, next));
+    }
+    return ann;
+}
+
+function applyAnnotationProperties(ann, props) {
+    if (!ann || !props) return ann;
+    if (props.color != null) ann.color = props.color;
+    if (props.strokeWidthRel != null && ann.type !== 'text') {
+        ann.strokeWidthRel = props.strokeWidthRel;
+    }
+    if (props.fontSizeRel != null && ann.type === 'text') {
+        ann.fontSizeRel = props.fontSizeRel;
+    }
+    return ann;
+}
+
+function appendSelectionChrome(group, ann) {
+    if (!group || !ann) return;
+    const bounds = annotationBounds(ann);
+    if (bounds) {
+        const box = document.createElementNS(SVG_NS, 'rect');
+        box.setAttribute('x', String(bounds.x));
+        box.setAttribute('y', String(bounds.y));
+        box.setAttribute('width', String(Math.max(bounds.width, 0.004)));
+        box.setAttribute('height', String(Math.max(bounds.height, 0.004)));
+        box.setAttribute('fill', 'none');
+        box.setAttribute('stroke', ann.color || '#ffffff');
+        box.setAttribute('stroke-width', '0.004');
+        box.setAttribute('stroke-dasharray', '0.012 0.008');
+        box.setAttribute('pointer-events', 'none');
+        box.classList.add('annotation-selection-box');
+        group.appendChild(box);
+    }
+    annotationHandles(ann).forEach((handle) => {
+        const el = document.createElementNS(SVG_NS, 'rect');
+        const size = ANNOTATION_HANDLE_SIZE;
+        el.setAttribute('x', String(handle.x - size / 2));
+        el.setAttribute('y', String(handle.y - size / 2));
+        el.setAttribute('width', String(size));
+        el.setAttribute('height', String(size));
+        el.setAttribute('data-handle', handle.id);
+        el.classList.add('annotation-handle');
+        el.classList.add(`annotation-handle-${handle.id}`);
+        group.appendChild(el);
+    });
+}
+
+function overlayLayoutFromImage(img) {
+    if (!img || typeof img.getBoundingClientRect !== 'function') return null;
+    const imgRect = getActualImageRect(img);
+    const parent = img.parentElement;
+    const containerRect = parent && typeof parent.getBoundingClientRect === 'function'
+        ? parent.getBoundingClientRect()
+        : imgRect;
+    const baseWidth = img.naturalWidth || img.width || 1920;
+    const baseHeight = img.naturalHeight || img.height || 1080;
+    return {
+        imgRect,
+        offsetX: imgRect.left - containerRect.left,
+        offsetY: imgRect.top - containerRect.top,
+        scaleX: baseWidth ? imgRect.width / baseWidth : 1,
+        scaleY: baseHeight ? imgRect.height / baseHeight : 1,
+        baseWidth,
+        baseHeight,
+    };
+}
+
 function normalizeRect(ann) {
     const x1 = ann.x;
     const y1 = ann.y;
@@ -4584,7 +4867,7 @@ function createAnnotationElement(ann) {
     return null;
 }
 
-function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight = 1) {
+function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight = 1, options = {}) {
     if (!svg || !renderWidth || !renderHeight) return;
     while (svg.firstChild) {
         svg.firstChild.remove();
@@ -4594,11 +4877,23 @@ function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight 
     // 'meet' would preserve aspect ratio causing position drift on resize
     svg.setAttribute('preserveAspectRatio', 'none');
 
+    const selectedId = options && options.selectedId;
+    const showHandles = Boolean(options && options.showHandles);
     const group = document.createElementNS(SVG_NS, 'g');
+    let selectedAnn = null;
     (annotations || []).forEach(ann => {
         const el = createAnnotationElement(ann);
-        if (el) group.appendChild(el);
+        if (!el) return;
+        if (ann && ann.id) el.setAttribute('data-ann-id', ann.id);
+        if (selectedId && ann && ann.id === selectedId) {
+            el.classList.add('annotation-selected');
+            selectedAnn = ann;
+        }
+        group.appendChild(el);
     });
+    if (showHandles && selectedAnn) {
+        appendSelectionChrome(group, selectedAnn);
+    }
     svg.appendChild(group);
 }
 
@@ -4756,8 +5051,13 @@ class LightboxAnnotationTool {
         this.currentPath = [];
         this.draftEl = null;
         this.textDraft = null;
-        this.baseWidth = img.naturalWidth || img.width || 1920;
-        this.baseHeight = img.naturalHeight || img.height || 1080;
+        this.selectedId = null;
+        this.dragMode = null;
+        this.dragHandle = null;
+        this.dragOrigin = null;
+        this.dragSnapshot = null;
+        this.baseWidth = (img && (img.naturalWidth || img.width)) || 1920;
+        this.baseHeight = (img && (img.naturalHeight || img.height)) || 1080;
         this.resizeObserver = null;
         this.boundHandlers = [];
 
@@ -4768,48 +5068,92 @@ class LightboxAnnotationTool {
         this.syncOverlaySize();
         this.bindEvents();
         this.loadAnnotations();
-        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
-        // Don't auto-select tool - user must click toolbar to start drawing
-        // This prevents accidental annotations when just viewing
+        this.render();
+        this.setTool('select');
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => this.syncOverlaySize());
+        }
     }
 
     bindEvents() {
-        // Tool selection
-        this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
-            const handler = (e) => {
-                e.stopPropagation();
-                this.selectTool(btn.dataset.tool);
+        if (this.toolbar && this.toolbar.querySelectorAll) {
+            this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
+                const handler = (e) => {
+                    e.stopPropagation();
+                    this.selectTool(btn.dataset.tool);
+                };
+                btn.addEventListener('click', handler);
+                this.boundHandlers.push({ target: btn, event: 'click', handler });
+            });
+        }
+
+        const colorPicker = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.color-picker')
+            : null;
+        if (colorPicker) {
+            colorPicker.value = this.color;
+            const colorClick = (e) => e.stopPropagation();
+            const colorInput = (e) => {
+                this.color = e.target.value;
+                this.applyColorToActiveDraft();
             };
-            btn.addEventListener('click', handler);
-            this.boundHandlers.push({ target: btn, event: 'click', handler });
-        });
+            colorPicker.addEventListener('click', colorClick);
+            colorPicker.addEventListener('input', colorInput);
+            this.boundHandlers.push({ target: colorPicker, event: 'click', handler: colorClick });
+            this.boundHandlers.push({ target: colorPicker, event: 'input', handler: colorInput });
+        }
 
-        // Color picker
-        const colorPicker = this.toolbar.querySelector('.color-picker');
-        // Keep the picker's swatch in sync with the token-derived default so the
-        // HTML literal mirror and the logical default never diverge.
-        if (colorPicker) colorPicker.value = this.color;
-        const colorClick = (e) => e.stopPropagation();
-        // One colour source of truth (this.color) for ALL annotation types.
-        // Recolour any in-progress draft live so the picker affects the
-        // annotation being placed identically for shapes and text.
-        const colorInput = (e) => { this.color = e.target.value; this.applyColorToActiveDraft(); };
-        colorPicker.addEventListener('click', colorClick);
-        colorPicker.addEventListener('input', colorInput);
-        this.boundHandlers.push({ target: colorPicker, event: 'click', handler: colorClick });
-        this.boundHandlers.push({ target: colorPicker, event: 'input', handler: colorInput });
+        const strokeInput = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.stroke-width-input')
+            : null;
+        if (strokeInput) {
+            strokeInput.value = String(this.strokeWidth);
+            const strokeHandler = (e) => {
+                e.stopPropagation();
+                this.strokeWidth = Number(e.target.value) || this.strokeWidth;
+                this.applyPropertiesToSelected({ strokeWidthRel: this.strokeWidth });
+            };
+            strokeInput.addEventListener('input', strokeHandler);
+            this.boundHandlers.push({ target: strokeInput, event: 'input', handler: strokeHandler });
+        }
 
-        // Undo/Clear
-        const undoBtn = this.toolbar.querySelector('.undo-btn');
-        const clearBtn = this.toolbar.querySelector('.clear-btn');
-        const undoHandler = (e) => { e.stopPropagation(); this.undo(); };
-        const clearHandler = (e) => { e.stopPropagation(); this.clear(); };
-        undoBtn.addEventListener('click', undoHandler);
-        clearBtn.addEventListener('click', clearHandler);
-        this.boundHandlers.push({ target: undoBtn, event: 'click', handler: undoHandler });
-        this.boundHandlers.push({ target: clearBtn, event: 'click', handler: clearHandler });
+        const fontInput = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.font-size-input')
+            : null;
+        if (fontInput) {
+            const fontHandler = (e) => {
+                e.stopPropagation();
+                this.applyPropertiesToSelected({ fontSizeRel: Number(e.target.value) });
+            };
+            fontInput.addEventListener('input', fontHandler);
+            this.boundHandlers.push({ target: fontInput, event: 'input', handler: fontHandler });
+        }
 
-        // Drawing events (pointer)
+        const undoBtn = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.undo-btn')
+            : null;
+        const clearBtn = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.clear-btn')
+            : null;
+        const deleteBtn = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.delete-btn')
+            : null;
+        if (undoBtn) {
+            const undoHandler = (e) => { e.stopPropagation(); this.undo(); };
+            undoBtn.addEventListener('click', undoHandler);
+            this.boundHandlers.push({ target: undoBtn, event: 'click', handler: undoHandler });
+        }
+        if (clearBtn) {
+            const clearHandler = (e) => { e.stopPropagation(); this.clear(); };
+            clearBtn.addEventListener('click', clearHandler);
+            this.boundHandlers.push({ target: clearBtn, event: 'click', handler: clearHandler });
+        }
+        if (deleteBtn) {
+            const deleteHandler = (e) => { e.stopPropagation(); this.deleteSelected(); };
+            deleteBtn.addEventListener('click', deleteHandler);
+            this.boundHandlers.push({ target: deleteBtn, event: 'click', handler: deleteHandler });
+        }
+
         const start = (e) => this.startDraw(e);
         const move = (e) => this.draw(e);
         const end = (e) => this.endDraw(e);
@@ -4820,52 +5164,94 @@ class LightboxAnnotationTool {
         this.boundHandlers.push({ target: this.svg, event: 'pointermove', handler: move });
         this.boundHandlers.push({ target: window, event: 'pointerup', handler: end });
 
-        // Resize observer to keep overlay in sync with image size
+        const keyHandler = (e) => this.onKeyDown(e);
+        document.addEventListener('keydown', keyHandler);
+        this.boundHandlers.push({ target: document, event: 'keydown', handler: keyHandler });
+
+        const onViewportChange = () => {
+            this.syncOverlaySize();
+            this.render();
+        };
+        window.addEventListener('scroll', onViewportChange, true);
+        window.addEventListener('resize', onViewportChange);
+        this.boundHandlers.push({ target: window, event: 'scroll', handler: onViewportChange, options: true });
+        this.boundHandlers.push({ target: window, event: 'resize', handler: onViewportChange });
+        const overlayHost = this.img && this.img.parentElement;
+        if (overlayHost && overlayHost.addEventListener) {
+            overlayHost.addEventListener('scroll', onViewportChange);
+            this.boundHandlers.push({ target: overlayHost, event: 'scroll', handler: onViewportChange });
+        }
+
         this.resizeObserver = new ResizeObserver(() => {
             this.syncOverlaySize();
-            // Always render with normalized coordinates (1, 1) - CSS transform handles scaling
-            renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
+            this.render();
         });
-        this.resizeObserver.observe(this.img);
+        if (this.img) this.resizeObserver.observe(this.img);
+    }
+
+    setTool(tool) {
+        this.tool = tool || null;
+        if (this.toolbar && this.toolbar.querySelectorAll) {
+            this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.tool === this.tool);
+            });
+        }
+        if (this.svg && this.svg.classList) {
+            const drawing = this.tool !== null && this.tool !== 'select';
+            this.svg.classList.toggle('drawing', drawing);
+            this.svg.classList.toggle('selecting', this.tool === 'select' || this.tool === null);
+        }
     }
 
     selectTool(tool) {
-        this.tool = this.tool === tool ? null : tool;
-        this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.tool === this.tool);
+        this.setTool(this.tool === tool ? null : tool);
+    }
+
+    render() {
+        if (!this.svg) return;
+        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1, {
+            selectedId: this.selectedId,
+            showHandles: Boolean(this.selectedId),
         });
-        this.svg.classList.toggle('drawing', this.tool !== null);
+    }
+
+    selectedAnnotation() {
+        if (!this.selectedId) return null;
+        return this.annotations.find((ann) => ann.id === this.selectedId) || null;
     }
 
     syncOverlaySize() {
-        // Use actual image rect to account for object-fit: contain
-        const imgRect = getActualImageRect(this.img);
-        const containerRect = this.img.parentElement.getBoundingClientRect();
-        const offsetX = imgRect.left - containerRect.left;
-        const offsetY = imgRect.top - containerRect.top;
-        // Position SVG over the actual visible image area
-        // viewBox is set by renderAnnotationsToSvg to 0 0 1 1 (normalized coordinates)
-        this.svg.style.width = `${this.baseWidth}px`;
-        this.svg.style.height = `${this.baseHeight}px`;
-        this.svg.style.left = `${offsetX}px`;
-        this.svg.style.top = `${offsetY}px`;
-        const scaleX = imgRect.width / this.baseWidth;
-        const scaleY = imgRect.height / this.baseHeight;
+        if (!this.img || !this.svg || typeof this.img.getBoundingClientRect !== 'function') return;
+        const layout = overlayLayoutFromImage(this.img);
+        if (!layout || !layout.imgRect || !layout.imgRect.width) return;
+        this.baseWidth = layout.baseWidth;
+        this.baseHeight = layout.baseHeight;
+        this.svg.style.width = `${layout.baseWidth}px`;
+        this.svg.style.height = `${layout.baseHeight}px`;
+        this.svg.style.left = `${layout.offsetX}px`;
+        this.svg.style.top = `${layout.offsetY}px`;
         this.svg.style.transformOrigin = 'top left';
-        this.svg.style.transform = `scale(${scaleX}, ${scaleY})`;
+        this.svg.style.transform = `scale(${layout.scaleX}, ${layout.scaleY})`;
     }
 
     getPosPct(e) {
-        // Use actual image rect to account for object-fit: contain
+        // Re-read the live image box on every pointer sample. Caching it at
+        // pointerdown (or only on ResizeObserver) is what drifted annotations
+        // after lightbox scroll / player layout change.
+        this.syncOverlaySize();
         const rect = getActualImageRect(this.img);
-        // Clamp to 0-1 range to prevent out-of-bounds annotations
         const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
         const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
         return { x, y, w: rect.width, h: rect.height };
     }
 
     startDraw(e) {
-        if (!this.tool) return;
+        const drawing = this.tool && this.tool !== 'select';
+        if (!drawing) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            this.beginSelectOrDrag(e);
+            return;
+        }
         e.stopPropagation();
         const pos = this.getPosPct(e);
         this.startX = pos.x;
@@ -4918,7 +5304,143 @@ class LightboxAnnotationTool {
         }
     }
 
+    beginSelectOrDrag(e) {
+        if (this.textDraft) return;
+        const pos = this.getPosPct(e);
+        const current = this.selectedAnnotation();
+        if (current) {
+            const handle = hitTestHandle(current, pos.x, pos.y);
+            if (handle) {
+                this.dragMode = 'resize';
+                this.dragHandle = handle;
+                this.dragOrigin = pos;
+                this.dragSnapshot = cloneAnnotation(current);
+                this.isDrawing = true;
+                if (this.svg && e && e.pointerId && this.svg.setPointerCapture) {
+                    this.svg.setPointerCapture(e.pointerId);
+                }
+                return;
+            }
+        }
+        const hit = this.selectAt(pos.x, pos.y);
+        if (hit) {
+            this.dragMode = 'move';
+            this.dragOrigin = pos;
+            this.dragSnapshot = cloneAnnotation(hit);
+            this.isDrawing = true;
+            if (this.svg && e && e.pointerId && this.svg.setPointerCapture) {
+                this.svg.setPointerCapture(e.pointerId);
+            }
+            return;
+        }
+        this.dragMode = null;
+        this.dragHandle = null;
+        this.dragSnapshot = null;
+        this.updatePropertyControls();
+        this.render();
+    }
+
+    selectAt(x, y) {
+        const hit = hitTestTopAnnotation(this.annotations, x, y);
+        this.selectedId = hit ? hit.id : null;
+        this.updatePropertyControls();
+        this.render();
+        return hit || null;
+    }
+
+    moveSelected(dx, dy) {
+        const ann = this.selectedAnnotation();
+        if (!ann) return null;
+        moveAnnotationBy(ann, dx, dy);
+        this.render();
+        return ann;
+    }
+
+    resizeSelected(handle, x, y) {
+        const ann = this.selectedAnnotation();
+        if (!ann) return null;
+        resizeAnnotationHandle(ann, handle, x, y);
+        this.render();
+        return ann;
+    }
+
+    deleteSelected() {
+        if (!this.selectedId) return false;
+        const before = this.annotations.length;
+        this.annotations = this.annotations.filter((ann) => ann.id !== this.selectedId);
+        const removed = this.annotations.length !== before;
+        this.selectedId = null;
+        this.dragMode = null;
+        this.updatePropertyControls();
+        this.render();
+        if (removed) this.saveAnnotations();
+        return removed;
+    }
+
+    applyPropertiesToSelected(props) {
+        const ann = this.selectedAnnotation();
+        if (!ann) return null;
+        applyAnnotationProperties(ann, props);
+        if (props && props.color != null) this.color = props.color;
+        if (props && props.strokeWidthRel != null) this.strokeWidth = props.strokeWidthRel;
+        this.render();
+        this.saveAnnotations();
+        return ann;
+    }
+
+    updatePropertyControls() {
+        if (!this.toolbar || !this.toolbar.querySelector) return;
+        const ann = this.selectedAnnotation();
+        const fontInput = this.toolbar.querySelector('.font-size-input');
+        const strokeInput = this.toolbar.querySelector('.stroke-width-input');
+        const picker = this.toolbar.querySelector('.color-picker');
+        if (fontInput) {
+            fontInput.hidden = !(ann && ann.type === 'text');
+            if (ann && ann.type === 'text') {
+                fontInput.value = String(ann.fontSizeRel || 0.036);
+            }
+        }
+        if (strokeInput) {
+            strokeInput.hidden = Boolean(ann && ann.type === 'text');
+            if (ann && ann.strokeWidthRel != null) {
+                strokeInput.value = String(ann.strokeWidthRel);
+            } else {
+                strokeInput.value = String(this.strokeWidth);
+            }
+        }
+        if (picker && ann && ann.color) picker.value = ann.color;
+    }
+
+    onKeyDown(e) {
+        if (!this.selectedId || this.textDraft) return;
+        const target = e.target;
+        const tag = target && target.tagName ? String(target.tagName).toUpperCase() : '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || (target && target.isContentEditable)) return;
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            e.preventDefault();
+            this.deleteSelected();
+        }
+    }
+
     draw(e) {
+        if (this.dragMode === 'move' || this.dragMode === 'resize') {
+            if (e && e.stopPropagation) e.stopPropagation();
+            const pos = this.getPosPct(e);
+            const ann = this.selectedAnnotation();
+            if (!ann || !this.dragSnapshot) return;
+            const restored = cloneAnnotation(this.dragSnapshot);
+            Object.keys(ann).forEach((key) => {
+                if (!(key in restored)) delete ann[key];
+            });
+            Object.assign(ann, restored);
+            if (this.dragMode === 'move') {
+                moveAnnotationBy(ann, pos.x - this.dragOrigin.x, pos.y - this.dragOrigin.y);
+            } else {
+                resizeAnnotationHandle(ann, this.dragHandle, pos.x, pos.y);
+            }
+            this.render();
+            return;
+        }
         if (!this.isDrawing || !this.tool || !this.draftEl) return;
         e.stopPropagation();
         const pos = this.getPosPct(e);
@@ -4979,7 +5501,23 @@ class LightboxAnnotationTool {
     }
 
     endDraw(e) {
-        if (!this.isDrawing || !this.tool) return;
+        if (this.dragMode) {
+            if (e) {
+                if (e.stopPropagation) e.stopPropagation();
+                if (e.pointerId && this.svg && this.svg.releasePointerCapture) {
+                    this.svg.releasePointerCapture(e.pointerId);
+                }
+            }
+            this.dragMode = null;
+            this.dragHandle = null;
+            this.dragSnapshot = null;
+            this.dragOrigin = null;
+            this.isDrawing = false;
+            this.saveAnnotations();
+            this.render();
+            return;
+        }
+        if (!this.isDrawing || !this.tool || this.tool === 'select') return;
         if (e) {
             e.stopPropagation();
             if (e.pointerId) {
@@ -4992,18 +5530,18 @@ class LightboxAnnotationTool {
 
         if (this.tool === 'pen' && this.currentPath.length > 1) {
             const normPoints = this.currentPath.map(p => ({ x: p.x, y: p.y }));
-            this.annotations.push({
+            this.annotations.push(ensureAnnotationId({
                 type: 'pen',
                 points: normPoints,
                 color: this.color,
                 strokeWidthRel
-            });
+            }));
         } else if (this.tool === 'rect') {
             const w = pos.x - this.startX;
             const h = pos.y - this.startY;
             // Minimum size: 1% of image dimension (coordinates are normalized 0-1)
             if (Math.abs(w) > 0.01 && Math.abs(h) > 0.01) {
-                this.annotations.push({
+                this.annotations.push(ensureAnnotationId({
                     type: 'rect',
                     x: this.startX,
                     y: this.startY,
@@ -5011,14 +5549,14 @@ class LightboxAnnotationTool {
                     height: h,
                     color: this.color,
                     strokeWidthRel
-                });
+                }));
             }
         } else if (this.tool === 'arrow') {
             const dx = pos.x - this.startX;
             const dy = pos.y - this.startY;
             // Minimum length: 2% of image diagonal (coordinates are normalized 0-1)
             if (Math.sqrt(dx*dx + dy*dy) > 0.02) {
-                this.annotations.push({
+                this.annotations.push(ensureAnnotationId({
                     type: 'arrow',
                     startX: this.startX,
                     startY: this.startY,
@@ -5026,7 +5564,7 @@ class LightboxAnnotationTool {
                     endY: pos.y,
                     color: this.color,
                     strokeWidthRel
-                });
+                }));
             }
         }
 
@@ -5036,17 +5574,22 @@ class LightboxAnnotationTool {
             this.draftEl.parentNode.removeChild(this.draftEl);
         }
         this.draftEl = null;
-        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
+        this.render();
     }
 
     undo() {
-        this.annotations.pop();
-        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
+        const removed = this.annotations.pop();
+        if (removed && removed.id === this.selectedId) this.selectedId = null;
+        this.updatePropertyControls();
+        this.render();
     }
 
     clear() {
         this.annotations = [];
-        renderAnnotationsToSvg(this.svg, [], 1, 1);
+        this.selectedId = null;
+        this.updatePropertyControls();
+        this.render();
+        this.saveAnnotations();
     }
 
     // Open a non-blocking inline text draft at the clicked position. The draft
@@ -5149,16 +5692,16 @@ class LightboxAnnotationTool {
         }
         const text = (value || '').trim();
         if (text) {
-            this.annotations.push({
+            this.annotations.push(ensureAnnotationId({
                 type: 'text',
                 x: draft.pos.x,
                 y: draft.pos.y,
                 text,
                 color: this.color,
                 fontSizeRel: 0.036,
-            });
+            }));
         }
-        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
+        this.render();
     }
 
     cancelTextDraft() {
@@ -5177,7 +5720,12 @@ class LightboxAnnotationTool {
     applyColorToActiveDraft() {
         if (this.textDraft && this.textDraft.el && typeof this.textDraft.el.setAttribute === 'function') {
             this.textDraft.el.setAttribute('fill', this.color);
+            if (this.textDraft.input && this.textDraft.input.style) {
+                this.textDraft.input.style.color = this.color;
+            }
+            return;
         }
+        this.applyPropertiesToSelected({ color: this.color });
     }
 
     saveAnnotations() {
@@ -5185,7 +5733,7 @@ class LightboxAnnotationTool {
         if (!reportState.findings[this.findingId]) {
             reportState.findings[this.findingId] = createDefaultFindingState();
         }
-        reportState.findings[this.findingId].annotations = [...this.annotations];
+        reportState.findings[this.findingId].annotations = this.annotations.map((ann) => cloneAnnotation(ann));
         reportState.modified = true;
         scheduleSharedStateSync();
     }
@@ -5194,7 +5742,7 @@ class LightboxAnnotationTool {
         if (!this.findingId) return;
         const state = reportState.findings[this.findingId];
         if (state && state.annotations) {
-            this.annotations = [...state.annotations];
+            this.annotations = ensureAnnotationsHaveIds(state.annotations.map((ann) => cloneAnnotation(ann)));
         }
     }
 
@@ -5203,8 +5751,10 @@ class LightboxAnnotationTool {
         if (this.resizeObserver) {
             this.resizeObserver.disconnect();
         }
-        this.boundHandlers.forEach(({ target, event, handler }) => {
-            target.removeEventListener(event, handler);
+        this.boundHandlers.forEach(({ target, event, handler, options }) => {
+            if (target && target.removeEventListener) {
+                target.removeEventListener(event, handler, options);
+            }
         });
         this.boundHandlers = [];
         if (this.svg) {
@@ -5212,6 +5762,7 @@ class LightboxAnnotationTool {
                 this.svg.firstChild.remove();
             }
             this.svg.classList.remove('drawing');
+            this.svg.classList.remove('selecting');
         }
     }
 }
@@ -5260,27 +5811,23 @@ class AnnotationPreview {
     }
 
     syncSvgSize() {
-        // Use actual image rect to account for object-fit: contain
-        const imgRect = getActualImageRect(this.img);
-        const containerRect = this.img.parentElement.getBoundingClientRect();
-        const offsetX = imgRect.left - containerRect.left;
-        const offsetY = imgRect.top - containerRect.top;
-        // Position SVG over the actual visible image area
-        // viewBox is set by render() to 0 0 1 1 (normalized coordinates)
-        this.svg.style.width = `${this.baseWidth}px`;
-        this.svg.style.height = `${this.baseHeight}px`;
-        this.svg.style.left = `${offsetX}px`;
-        this.svg.style.top = `${offsetY}px`;
-        const scaleX = imgRect.width / this.baseWidth;
-        const scaleY = imgRect.height / this.baseHeight;
+        if (!this.img || !this.svg) return;
+        const layout = overlayLayoutFromImage(this.img);
+        if (!layout || !layout.imgRect || !layout.imgRect.width) return;
+        this.baseWidth = layout.baseWidth;
+        this.baseHeight = layout.baseHeight;
+        this.svg.style.width = `${layout.baseWidth}px`;
+        this.svg.style.height = `${layout.baseHeight}px`;
+        this.svg.style.left = `${layout.offsetX}px`;
+        this.svg.style.top = `${layout.offsetY}px`;
         this.svg.style.transformOrigin = 'top left';
-        this.svg.style.transform = `scale(${scaleX}, ${scaleY})`;
+        this.svg.style.transform = `scale(${layout.scaleX}, ${layout.scaleY})`;
     }
 
     loadAnnotations() {
         const review = reportState.findings[this.findingId];
         if (review && review.annotations && review.annotations.length > 0) {
-            this.annotations = [...review.annotations];
+            this.annotations = ensureAnnotationsHaveIds(review.annotations.map((ann) => cloneAnnotation(ann)));
             this.container.classList.add('has-annotations');
         } else {
             this.annotations = [];
