@@ -680,3 +680,58 @@ def test_output_read_only_filesystem_reason() -> None:
     message = _build_output_dir_error_message(Path("/Volumes/ro/out"), exc)
     assert "read-only" in message
     assert "/Volumes/ro/out" in message
+
+
+# --------------------------------------------------------------------------- #
+# Version slots: an existing non-empty <base>_N is never reused.              #
+# --------------------------------------------------------------------------- #
+
+
+def _completed_base(tmp_path: Path) -> Path:
+    base = tmp_path / "demo_review"
+    base.mkdir()
+    (base / "demo_report.json").write_text("{}")
+    return base
+
+
+def test_version_slot_skips_ordinary_non_empty_folder(tmp_path: Path) -> None:
+    """``demo_review_2`` holds foreign files (not a bundle): it is occupied, so the
+    rerun goes to ``_3`` instead of mixing its output into that folder."""
+    base = _completed_base(tmp_path)
+    occupied = tmp_path / "demo_review_2"
+    occupied.mkdir()
+    (occupied / "notes.md").write_text("# someone else's notes")
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (
+        tmp_path / "demo_review_3",
+        3,
+    )
+
+
+def test_version_slot_reuses_empty_folder(tmp_path: Path) -> None:
+    base = _completed_base(tmp_path)
+    (tmp_path / "demo_review_2").mkdir()
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (
+        tmp_path / "demo_review_2",
+        2,
+    )
+
+
+def test_version_slot_skips_existing_file(tmp_path: Path) -> None:
+    base = _completed_base(tmp_path)
+    (tmp_path / "demo_review_2").write_text("a file, not a folder")
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (
+        tmp_path / "demo_review_3",
+        3,
+    )
+
+
+def test_checkpoint_only_base_is_still_reused_in_place(tmp_path: Path) -> None:
+    """The narrow bundle rule still applies to the base itself: a partial run with
+    only a checkpoint (no report) is reused, not version-bumped."""
+    base = tmp_path / "demo_review"
+    (base / ".screenscribe_cache").mkdir(parents=True)
+
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (base, None)

@@ -23,6 +23,7 @@ from .api_utils import (
     endpoint_host,
     extract_stream_error_event,
     redact_url,
+    redact_urls_in_text,
     responses_reasoning_options,
     retry_request,
     stream_chunk_has_model_output,
@@ -625,13 +626,17 @@ def _empty_stream_reason(stream: _PrefilterStream) -> str:
                 body_error = extract_stream_error_event(parsed)
                 if body_error is not None:
                     return f"LLM endpoint reported an error: {body_error}"
-            return f"LLM endpoint returned no stream events; response body: {body[:200]}"
+            # Redact the whole bounded body BEFORE slicing, so a URL cut at the
+            # 200-char boundary can never leak its userinfo or query.
+            safe_body = redact_urls_in_text(body)
+            return f"LLM endpoint returned no stream events; response body: {safe_body[:200]}"
         return "LLM endpoint returned an empty stream (no events)"
     return "Empty response from semantic pre-filter"
 
 
-def _http_error_detail(response: httpx.Response, endpoint: str) -> str:
-    """Provider message from an HTTP error body, truncated and URL-free."""
+def _http_error_detail(response: httpx.Response) -> str:
+    """Provider message from an HTTP error body: whitespace-collapsed, every URL
+    in it redacted (``redact_urls_in_text``), then capped at 200 characters."""
     try:
         body = response.json()
     except Exception:  # body unread, not JSON, or not decodable
@@ -644,9 +649,7 @@ def _http_error_detail(response: httpx.Response, endpoint: str) -> str:
         message = body.get("message") or body.get("detail")
     if not isinstance(message, str):
         return ""
-    detail = " ".join(message.split())
-    if endpoint:
-        detail = detail.replace(endpoint, endpoint_host(endpoint))
+    detail = redact_urls_in_text(" ".join(message.split()))
     return detail[:200]
 
 
@@ -661,7 +664,7 @@ def _describe_prefilter_failure(error: Exception, endpoint: str) -> str:
     host = endpoint_host(endpoint)
     if isinstance(error, httpx.HTTPStatusError):
         reason = f"HTTP {error.response.status_code} from {host}"
-        detail = _http_error_detail(error.response, endpoint)
+        detail = _http_error_detail(error.response)
         return f"{reason}: {detail}" if detail else reason
     if isinstance(error, httpx.ConnectTimeout):
         return f"LLM host {host} was unreachable (connection or TLS handshake timed out)"

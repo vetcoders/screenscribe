@@ -1043,3 +1043,75 @@ def test_prefilter_reason_never_uses_raw_httpx_strings() -> None:
     assert _describe_prefilter_failure(ValueError("bad json"), _USERINFO_ENDPOINT) == (
         "ValueError: bad json"
     )
+
+
+# --- Provider-supplied text in pre-filter reasons is URL-redacted -------------
+
+_GATEWAY_URL = "https://user:secret@gw.example.com/x?key=abc"  # pragma: allowlist secret
+
+
+def _assert_gateway_secrets_absent(text: str) -> None:
+    assert "secret" not in text
+    assert "key=abc" not in text
+    assert "user:" not in text
+
+
+def test_prefilter_response_failed_message_url_is_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    lines = [
+        _event(
+            {
+                "type": "response.failed",
+                "response": {
+                    "error": {
+                        "code": "invalid_request",
+                        "message": f"Gateway {_GATEWAY_URL} said no",
+                    }
+                },
+            }
+        )
+    ]
+    monkeypatch.setattr("screenscribe.semantic_filter.httpx.Client", _sequenced_client([lines], []))
+
+    result = semantic_prefilter(transcription, config)
+
+    _assert_gateway_secrets_absent(result.error)
+    assert result.error == (
+        "LLM endpoint reported an error: Gateway https://***@gw.example.com/x?key=*** said no "
+        "(code: invalid_request)"
+    )
+
+
+def test_prefilter_non_sse_body_url_is_redacted_before_truncation(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """A long plain-text body: the URL is redacted before the 200-char cut, so a
+    URL straddling the boundary cannot leak its query."""
+    body = ["x" * 180 + " " + _GATEWAY_URL + " " + "y" * 200]
+    monkeypatch.setattr("screenscribe.semantic_filter.httpx.Client", _sequenced_client([body], []))
+
+    result = semantic_prefilter(transcription, config)
+
+    _assert_gateway_secrets_absent(result.error)
+    redacted_body = ("x" * 180 + " https://***@gw.example.com/x?key=*** " + "y" * 200)[:200]
+    assert result.error == (
+        f"LLM endpoint returned no stream events; response body: {redacted_body}"
+    )
+
+
+def test_http_error_detail_redacts_any_url() -> None:
+    from screenscribe.semantic_filter import _http_error_detail
+
+    response = httpx.Response(
+        400, json={"error": {"message": f"Bad upstream   {_GATEWAY_URL}\n retry later"}}
+    )
+
+    detail = _http_error_detail(response)
+
+    _assert_gateway_secrets_absent(detail)
+    assert detail == "Bad upstream https://***@gw.example.com/x?key=*** retry later"

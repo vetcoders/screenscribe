@@ -516,3 +516,63 @@ def test_analyze_one_no_key_warns_instead_of_silent_none(
     assert result is None  # None preserved: orchestrator/recursion skip signal
     assert "API key" in output  # but no longer silent
     assert "skip" in output.lower()
+
+
+class _IncompleteNonStreamingClient:
+    """Non-streaming 200 body with status incomplete and a partial output_text."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def __enter__(self) -> "_IncompleteNonStreamingClient":
+        return self
+
+    def __exit__(self, *args: object) -> Literal[False]:
+        return False
+
+    def post(self, *args: Any, **kwargs: Any) -> _FakeJsonResponse:
+        return _FakeJsonResponse(
+            {
+                "id": "resp_incomplete",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": '{"is_issue": true, "severity": "high", "summary": "Trunc',
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+
+
+def test_non_streaming_incomplete_response_is_not_a_finding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 200 body with status incomplete must not become a normal finding from its
+    partial text; the reason is surfaced and the call returns None (failure)."""
+    detection = Detection(
+        segment=Segment(id=1, start=12.5, end=15.0, text="The save button does nothing."),
+        category="bug",
+        keywords_found=["semantic:bug"],
+        context="User reports the save button does nothing.",
+    )
+    config = ScreenScribeConfig(
+        llm_api_key="test-key",  # pragma: allowlist secret
+        llm_endpoint="https://api.example.com/v1/responses",
+        llm_model="test-model",
+    )
+    recording = Console(record=True, width=200)
+    monkeypatch.setattr("screenscribe.unified.analyze_one.console", recording)
+    monkeypatch.setattr("screenscribe.unified_analysis.httpx.Client", _IncompleteNonStreamingClient)
+
+    result = analyze_finding_unified(detection, None, config)
+    output = " ".join(recording.export_text().split())
+
+    assert result is None
+    assert output == "Unified analysis failed: Response incomplete: max_output_tokens"

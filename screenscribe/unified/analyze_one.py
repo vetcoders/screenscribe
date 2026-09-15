@@ -15,6 +15,7 @@ import httpx
 from rich.markup import escape
 
 from ..api_utils import (
+    extract_response_payload_error,
     extract_stream_error_event,
     redact_error_message,
     retry_request,
@@ -28,7 +29,6 @@ from ._console import console
 from .finding import UnifiedFinding
 from .response_parsing import (
     _build_unified_finding,
-    _extract_response_error,
     extract_response_content,
     parse_json_response,
 )
@@ -503,9 +503,12 @@ def analyze_finding_unified(
             console.print(f"[yellow]Failed to parse API response: {e}[/]")
             return None
 
-        response_error = _extract_response_error(result)
-        if response_error:
-            raise RuntimeError(response_error)
+        # status failed OR incomplete (or an error object) in a 200 body: the
+        # output is not a finished answer, so raise into the existing fallback
+        # instead of building a finding from partial text.
+        response_error = extract_response_payload_error(result)
+        if response_error is not None:
+            raise response_error
 
         # Extract content from response (supports both API formats)
         content_text = extract_response_content(result, endpoint=endpoint)

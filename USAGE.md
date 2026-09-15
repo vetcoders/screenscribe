@@ -602,7 +602,9 @@ uv run screenscribe review demo.mov
 screenscribe transcribes, finds actionable moments, captures screenshots,
 confirms them with the vision model, writes JSON/Markdown/HTML reports, and
 opens the HTML report in your browser. Re-running preserves the prior report as
-`_2`, `_3`, …; pass `--force` to overwrite instead.
+`_2`, `_3`, … (the first slot that does not exist or is an empty folder; an
+existing non-empty `_N` is never written into); pass `--force` to overwrite
+instead.
 
 A folder counts as a previous review only when it holds a `.screenscribe_cache/`
 checkpoint or this video's own `<video>_report.{json,md,html}` (legacy
