@@ -21,7 +21,9 @@
   a screenscribe preprocess bundle. Running out of versions and failing to
   write a bundle file (permission denied, disk full) also print an "Output
   Directory Error" instead of a traceback; partial files are left in place.
-- **Fixed: `review --estimate` no longer creates an empty output directory.**
+- **Fixed: `review --estimate` is read-only.** It prints the time table before
+  any output-folder handling, so it no longer creates an empty output directory,
+  shows the rerun prompt, or refuses a `--force` target.
 - **Fixed: an output directory that cannot be created is a clear error.**
   Permission denied, read-only volumes and file-in-the-way paths now print an
   "Output Directory Error" with the path and reason and exit with code 1,
