@@ -278,15 +278,21 @@ def validate_models(
     """
     console.print("[dim]Validating configuration...[/]")
 
-    # Check API key presence - at least one key must be configured
+    # Check credential presence - at least one endpoint must resolve a bearer.
+    # Resolve through the per-endpoint accessors, not the raw fields: a signed-in
+    # provider account (`screenscribe auth login xai`) backs requests without any
+    # SCREENSCRIBE_*_API_KEY, and `config --show` already reports such a config as
+    # READY. Checking the raw fields here turned that READY into "No API key
+    # configured" at the first `review`.
     has_any_key = (
-        config.api_key or config.stt_api_key or config.llm_api_key or config.vision_api_key
+        config.get_stt_api_key() or config.get_llm_api_key() or config.get_vision_api_key()
     )
     if not has_any_key:
         raise APIKeyError(
             "No API key configured. "
             "Run `screenscribe config setup`, or set SCREENSCRIBE_API_KEY, "
-            "or set per-endpoint keys such as SCREENSCRIBE_STT_API_KEY"
+            "or set per-endpoint keys such as SCREENSCRIBE_STT_API_KEY, "
+            "or sign in with `screenscribe auth login xai`"
         )
 
     validation_results: list[tuple[str, str, bool]] = []
