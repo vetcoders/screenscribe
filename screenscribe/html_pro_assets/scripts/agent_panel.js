@@ -11,15 +11,18 @@
     var FAB_SIZE = 56;
     var GAP = 16;
     var VIEW_MARGIN = 8;
+    var SHEET_CLASS = 'ss-agent-sheet';
 
     var state = {
         collapsed: true,
         left: null,
         top: null,
+        sheet: false,
         history: [],
         previousResponseId: null,
         streaming: false,
         drag: null,
+        playerObserver: null,
     };
 
     function tx(key, args) {
@@ -39,8 +42,8 @@
         try {
             root.localStorage.setItem(storageKey(), JSON.stringify({
                 collapsed: state.collapsed,
-                left: state.left,
-                top: state.top,
+                left: state.sheet ? null : state.left,
+                top: state.sheet ? null : state.top,
             }));
         } catch (_err) { /* private-mode storage: position is session-only */ }
     }
@@ -77,7 +80,72 @@
     }
 
     function rectsOverlap(a, b) {
+        if (!a || !b) return false;
         return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+    }
+
+    function boxFromRect(rect) {
+        if (!rect) return null;
+        var left = Number(rect.left) || 0;
+        var top = Number(rect.top) || 0;
+        var width = Number(rect.width);
+        var height = Number(rect.height);
+        var right = Number.isFinite(Number(rect.right)) ? Number(rect.right) : left + (Number.isFinite(width) ? width : 0);
+        var bottom = Number.isFinite(Number(rect.bottom)) ? Number(rect.bottom) : top + (Number.isFinite(height) ? height : 0);
+        return {
+            left: left,
+            top: top,
+            right: right,
+            bottom: bottom,
+            width: right - left,
+            height: bottom - top,
+        };
+    }
+
+    function unionBoxes(a, b) {
+        if (!a) return b || null;
+        if (!b) return a;
+        var left = Math.min(a.left, b.left);
+        var top = Math.min(a.top, b.top);
+        var right = Math.max(a.right, b.right);
+        var bottom = Math.max(a.bottom, b.bottom);
+        return {
+            left: left,
+            top: top,
+            right: right,
+            bottom: bottom,
+            width: right - left,
+            height: bottom - top,
+        };
+    }
+
+    function nodeBox(node) {
+        if (!node || typeof node.getBoundingClientRect !== 'function') return null;
+        var box = boxFromRect(node.getBoundingClientRect());
+        if (!box || (box.width <= 0 && box.height <= 0)) return null;
+        return box;
+    }
+
+    function panelBoxAt(left, top, width, height) {
+        return {
+            left: left,
+            top: top,
+            right: left + width,
+            bottom: top + height,
+            width: width,
+            height: height,
+        };
+    }
+
+    function positionClear(left, top, width, height, obstacle, viewport) {
+        var vw = viewport.width;
+        var vh = viewport.height;
+        var placed = clampToViewport(left, top, width, height, vw, vh);
+        var box = panelBoxAt(placed.left, placed.top, width, height);
+        if (box.left < VIEW_MARGIN - 0.5 || box.top < VIEW_MARGIN - 0.5) return null;
+        if (box.right > vw - VIEW_MARGIN + 0.5 || box.bottom > vh - VIEW_MARGIN + 0.5) return null;
+        if (obstacle && rectsOverlap(box, obstacle)) return null;
+        return placed;
     }
 
     function placeBesidePlayer(playerRect, viewport, panelSize) {
@@ -85,27 +153,24 @@
         var h = panelSize.height;
         var vw = viewport.width;
         var vh = viewport.height;
-        var left;
-        var spaceRight = vw - playerRect.right - GAP;
-        var spaceLeft = playerRect.left - GAP;
-        if (spaceRight >= w) {
-            left = playerRect.right + GAP;
-        } else if (spaceLeft >= w) {
-            left = playerRect.left - GAP - w;
-        } else {
-            left = vw - w - GAP;
+        var obstacle = boxFromRect(playerRect) || playerRect;
+        var candidates = [
+            { left: obstacle.right + GAP, top: obstacle.top },
+            { left: obstacle.left - GAP - w, top: obstacle.top },
+            { left: obstacle.left, top: obstacle.bottom + GAP },
+            { left: Math.max(VIEW_MARGIN, vw - w - GAP), top: obstacle.bottom + GAP },
+            { left: obstacle.right + GAP, top: VIEW_MARGIN },
+            { left: VIEW_MARGIN, top: obstacle.bottom + GAP },
+            { left: obstacle.left, top: Math.max(VIEW_MARGIN, obstacle.top - GAP - h) },
+        ];
+        for (var i = 0; i < candidates.length; i += 1) {
+            var hit = positionClear(candidates[i].left, candidates[i].top, w, h, obstacle, viewport);
+            if (hit) {
+                return { left: hit.left, top: hit.top, sheet: false };
+            }
         }
-        var placed = clampToViewport(left, playerRect.top, w, h, vw, vh);
-        var panelBox = {
-            left: placed.left,
-            top: placed.top,
-            right: placed.left + w,
-            bottom: placed.top + h,
-        };
-        if (rectsOverlap(panelBox, playerRect) && (playerRect.bottom + GAP + h) <= vh) {
-            placed = clampToViewport(placed.left, playerRect.bottom + GAP, w, h, vw, vh);
-        }
-        return placed;
+        var docked = clampToViewport(vw - w - VIEW_MARGIN, VIEW_MARGIN, w, h, vw, vh);
+        return { left: docked.left, top: docked.top, sheet: true };
     }
 
     function parseSseBlock(block) {
@@ -195,18 +260,49 @@
 
     function playerRect() {
         var doc = root.document;
-        var player = doc.getElementById('videoPlayer')
-            || doc.querySelector('.main-column')
-            || doc.querySelector('.video-panel');
-        if (player && typeof player.getBoundingClientRect === 'function') {
-            return player.getBoundingClientRect();
+        var box = nodeBox(doc.getElementById('videoPlayer'));
+        box = unionBoxes(box, nodeBox(doc.getElementById('videoControls')));
+        box = unionBoxes(box, nodeBox(doc.querySelector('.video-controls-pro')));
+        if (!box) {
+            box = nodeBox(doc.querySelector('.video-container'))
+                || nodeBox(doc.querySelector('.main-column'))
+                || nodeBox(doc.querySelector('.video-panel'));
         }
+        if (box) return box;
         return { left: 16, top: 96, right: 640, bottom: 480, width: 624, height: 384 };
     }
 
-    function defaultExpandedPosition() {
-        var view = viewportSize();
-        return placeBesidePlayer(playerRect(), view, { width: PANEL_WIDTH, height: PANEL_HEIGHT });
+    function protectedRect() {
+        return playerRect();
+    }
+
+    function resolveExpandedPlacement(obstacle, viewport, panelSize, savedLeft, savedTop) {
+        var w = panelSize.width;
+        var h = panelSize.height;
+        if (Number.isFinite(savedLeft) && Number.isFinite(savedTop)) {
+            var kept = positionClear(savedLeft, savedTop, w, h, obstacle, viewport);
+            if (kept) {
+                return { left: kept.left, top: kept.top, sheet: false };
+            }
+        }
+        return placeBesidePlayer(obstacle, viewport, panelSize);
+    }
+
+    function setSheetMode(rootEl, enabled) {
+        var doc = root.document;
+        var htmlEl = doc && doc.documentElement;
+        state.sheet = Boolean(enabled);
+        if (rootEl) {
+            if (state.sheet) rootEl.classList.add(SHEET_CLASS);
+            else rootEl.classList.remove(SHEET_CLASS);
+        }
+        if (htmlEl && htmlEl.classList) {
+            if (state.sheet) htmlEl.classList.add(SHEET_CLASS);
+            else htmlEl.classList.remove(SHEET_CLASS);
+        }
+        if (htmlEl && htmlEl.style) {
+            htmlEl.style.setProperty('--ss-agent-sheet-width', PANEL_WIDTH + 'px');
+        }
     }
 
     function applyDomState() {
@@ -228,6 +324,7 @@
         var panel = root.document.getElementById('ss-agent-panel');
         var view = viewportSize();
         if (collapsed) {
+            setSheetMode(rootEl, false);
             var fabPos = clampToViewport(
                 view.width - FAB_SIZE - GAP,
                 view.height - FAB_SIZE - GAP,
@@ -238,32 +335,80 @@
             );
             rootEl.style.left = fabPos.left + 'px';
             rootEl.style.top = fabPos.top + 'px';
+            rootEl.style.right = 'auto';
             rootEl.style.width = FAB_SIZE + 'px';
             rootEl.style.height = FAB_SIZE + 'px';
             if (panel) panel.hidden = true;
             return;
         }
-        var pos = (state.left == null || state.top == null)
-            ? defaultExpandedPosition()
-            : clampToViewport(state.left, state.top, PANEL_WIDTH, PANEL_HEIGHT, view.width, view.height);
-        state.left = pos.left;
-        state.top = pos.top;
-        rootEl.style.left = pos.left + 'px';
-        rootEl.style.top = pos.top + 'px';
-        rootEl.style.width = PANEL_WIDTH + 'px';
-        rootEl.style.height = PANEL_HEIGHT + 'px';
+        var obstacle = protectedRect();
+        var probe = obstacle;
+        if (state.sheet) {
+            probe = unionBoxes(obstacle, {
+                left: obstacle.right,
+                top: obstacle.top,
+                right: Math.min(view.width, obstacle.right + PANEL_WIDTH + GAP),
+                bottom: obstacle.bottom,
+                width: 0,
+                height: 0,
+            }) || obstacle;
+        }
+        var savedLeft = state.drag ? state.left : (state.sheet ? null : state.left);
+        var savedTop = state.drag ? state.top : (state.sheet ? null : state.top);
+        if (state.drag && Number.isFinite(state.left) && Number.isFinite(state.top)) {
+            var dragged = positionClear(state.left, state.top, PANEL_WIDTH, PANEL_HEIGHT, obstacle, view);
+            if (dragged) {
+                state.left = dragged.left;
+                state.top = dragged.top;
+                state.sheet = false;
+            } else {
+                var placedDrag = placeBesidePlayer(obstacle, view, { width: PANEL_WIDTH, height: PANEL_HEIGHT });
+                state.left = placedDrag.left;
+                state.top = placedDrag.top;
+                state.sheet = Boolean(placedDrag.sheet);
+            }
+        } else {
+            var placed = resolveExpandedPlacement(
+                probe,
+                view,
+                { width: PANEL_WIDTH, height: PANEL_HEIGHT },
+                savedLeft,
+                savedTop
+            );
+            state.left = placed.left;
+            state.top = placed.top;
+            state.sheet = Boolean(placed.sheet);
+        }
+        setSheetMode(rootEl, state.sheet);
+        if (state.sheet) {
+            rootEl.style.left = 'auto';
+            rootEl.style.right = '0px';
+            rootEl.style.top = '';
+            rootEl.style.width = PANEL_WIDTH + 'px';
+            rootEl.style.height = '';
+        } else {
+            rootEl.style.right = 'auto';
+            rootEl.style.left = state.left + 'px';
+            rootEl.style.top = state.top + 'px';
+            rootEl.style.width = PANEL_WIDTH + 'px';
+            rootEl.style.height = PANEL_HEIGHT + 'px';
+        }
         if (panel) panel.hidden = false;
     }
 
     function setCollapsed(next) {
         state.collapsed = Boolean(next);
-        if (!state.collapsed && (state.left == null || state.top == null)) {
-            var placed = defaultExpandedPosition();
-            state.left = placed.left;
-            state.top = placed.top;
+        if (state.collapsed) {
+            state.sheet = false;
         }
         applyDomState();
         persist();
+    }
+
+    function relayout() {
+        if (state.drag) return;
+        applyDomState();
+        if (!state.collapsed) persist();
     }
 
     function toggle() {
@@ -280,6 +425,25 @@
             log.scrollTop = log.scrollHeight || 0;
         }
         return row;
+    }
+
+    function paintAssistantError(row, message) {
+        var text = message || tx('review.agentEmpty');
+        if (row) {
+            row.textContent = text;
+            row.className = 'ss-agent-msg ss-agent-msg-error';
+            return row;
+        }
+        return appendMessage('error', text);
+    }
+
+    function removeEmptyAssistant(row) {
+        if (!row) return;
+        var text = String(row.textContent || '');
+        if (text) return;
+        if (row.parentNode && typeof row.parentNode.removeChild === 'function') {
+            row.parentNode.removeChild(row);
+        }
     }
 
     function showOfflineNotice() {
@@ -327,18 +491,23 @@
         parseSseStream(text).forEach(onEvent);
     }
 
+    function canSend(text) {
+        return Boolean(String(text || '').trim()) && !state.streaming;
+    }
+
     async function send(text) {
         var message = String(text || '').trim();
-        if (!message || state.streaming) return;
+        if (!message || state.streaming) return false;
         appendMessage('user', message);
         state.history.push({ role: 'user', content: message });
         if (isOffline()) {
             showOfflineNotice();
-            return;
+            return true;
         }
         state.streaming = true;
         var assistantRow = appendMessage('assistant', '');
         var assembled = '';
+        var errored = false;
         try {
             var response = await root.fetch(STREAM_URL, {
                 method: 'POST',
@@ -354,9 +523,14 @@
             });
             if (!response || !response.ok) {
                 var fallback = tx('review.agentOffline');
-                showPanelError(fallback);
+                paintAssistantError(assistantRow, fallback);
+                var notice = root.document.getElementById('ss-agent-offline');
+                if (notice && /screenscribe serve/i.test(String(fallback))) {
+                    notice.hidden = false;
+                    notice.textContent = fallback;
+                }
                 state.streaming = false;
-                return;
+                return true;
             }
             await consumeSse(response, function (evt) {
                 if (!evt) return;
@@ -373,20 +547,30 @@
                         state.previousResponseId = evt.data.response_id;
                     }
                 } else if (evt.event === 'error') {
-                    showPanelError((evt.data && evt.data.message) || tx('review.agentOffline'));
+                    errored = true;
+                    paintAssistantError(
+                        assistantRow,
+                        (evt.data && evt.data.message) || tx('review.agentOffline')
+                    );
                 }
             });
             if (assembled) {
                 state.history.push({ role: 'assistant', content: assembled });
+            } else if (!errored) {
+                removeEmptyAssistant(assistantRow);
             }
         } catch (_err) {
             showOfflineNotice();
+            if (assistantRow && !assembled) {
+                paintAssistantError(assistantRow, tx('review.agentOffline'));
+            }
         }
         state.streaming = false;
+        return true;
     }
 
     function startDrag(event) {
-        if (state.collapsed) return;
+        if (state.collapsed || state.sheet) return;
         var point = event.touches ? event.touches[0] : event;
         state.drag = {
             startX: point.clientX,
@@ -420,11 +604,35 @@
         persist();
     }
 
+    function isComposerIme(event) {
+        return Boolean(event && (event.isComposing || event.keyCode === 229));
+    }
+
+    function isComposerEnter(event) {
+        if (!event) return false;
+        return event.key === 'Enter' || event.keyCode === 13;
+    }
+
     function bindComposer(form, input) {
         form.addEventListener('submit', function (event) {
             if (event && event.preventDefault) event.preventDefault();
-            send(input.value);
+            var value = input.value;
+            if (!canSend(value)) return;
             input.value = '';
+            send(value);
+        });
+        input.addEventListener('keydown', function (event) {
+            if (!isComposerEnter(event)) return;
+            if (event.shiftKey) return;
+            if (isComposerIme(event)) return;
+            if (event.preventDefault) event.preventDefault();
+            if (typeof form.requestSubmit === 'function') {
+                form.requestSubmit();
+            } else if (typeof form.dispatchEvent === 'function') {
+                form.dispatchEvent({ type: 'submit', preventDefault: function () {} });
+            } else {
+                form.submit();
+            }
         });
     }
 
@@ -490,8 +698,32 @@
         doc.addEventListener('mouseup', endDrag);
         doc.addEventListener('touchmove', moveDrag);
         doc.addEventListener('touchend', endDrag);
+        bindLayoutListeners();
+    }
+
+    function observePlayer(node) {
+        if (!node || !state.playerObserver || typeof state.playerObserver.observe !== 'function') return;
+        try {
+            state.playerObserver.observe(node);
+        } catch (_err) { /* ignore unobservable nodes in tests */ }
+    }
+
+    function bindLayoutListeners() {
+        var doc = root.document;
         if (root.addEventListener) {
-            root.addEventListener('resize', function () { applyDomState(); });
+            root.addEventListener('resize', function () { relayout(); });
+        }
+        var video = doc.getElementById('videoPlayer');
+        if (video && typeof video.addEventListener === 'function') {
+            video.addEventListener('loadedmetadata', function () { relayout(); });
+        }
+        if (typeof root.ResizeObserver === 'function' && !state.playerObserver) {
+            state.playerObserver = new root.ResizeObserver(function () { relayout(); });
+            observePlayer(video);
+            observePlayer(doc.getElementById('videoControls'));
+            observePlayer(doc.querySelector('.video-controls-pro'));
+            observePlayer(doc.querySelector('.video-container'));
+            observePlayer(doc.querySelector('.video-panel'));
         }
     }
 
@@ -517,6 +749,11 @@
         applyToolCall: applyToolCall,
         placeBesidePlayer: placeBesidePlayer,
         clampToViewport: clampToViewport,
+        rectsOverlap: rectsOverlap,
+        protectedRect: protectedRect,
+        resolveExpandedPlacement: resolveExpandedPlacement,
+        applyDomState: applyDomState,
+        relayout: relayout,
         persist: persist,
         restore: restore,
         setCollapsed: setCollapsed,
