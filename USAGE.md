@@ -261,8 +261,11 @@ is screenscribe's own manifest (a JSON object with `"mode": "preprocess"` and an
 `artifacts` object). A stray `transcript.txt` or another tool's
 `preprocess.json` never does, so `preprocess demo.mov -o ~/Downloads` writes
 `~/Downloads/demo_preprocess` instead of versioning `~/Downloads` itself.
-The bundle directory itself (`<video>_preprocess`, or the `-o` path) is used
-when it does not exist or is empty. A previous bundle there is kept and a new
+Any existing `-o` folder that is not a previous bundle, even an empty one, is a
+parent. The bundle directory is therefore `<video>_preprocess` next to the
+video, `<folder>/<video>_preprocess` for such a parent, or a `-o` path that does
+not exist yet; it is used as-is when it does not exist or is an empty folder
+(an empty `<video>_preprocess`). A previous bundle there is kept and a new
 version is created; a file or non-empty folder there that is not a preprocess
 bundle is skipped the same way (never written into). A new version goes to the
 first `_2`, `_3`, … slot that does not exist or is an empty folder, so an
