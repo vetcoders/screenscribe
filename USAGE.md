@@ -578,12 +578,12 @@ moving to a new provider.
 
 ### Review agent chat
 
-The review server exposes `POST /api/agent/chat` and `POST /api/agent/chat/stream` (SSE). Screen recordings contain secrets, so **external** providers are skipped unless you opt in.
+The review server exposes `POST /api/agent/chat` and `POST /api/agent/chat/stream` (SSE). Screen recordings contain secrets, so **external** providers are skipped unless you opt in. A host that already ran STT, LLM, or vision for this config is `trust=processor` and is kept under `deny`.
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `SCREENSCRIBE_AGENT_EGRESS` | `deny` | `deny` skips providers whose trust is `external`. `allow` sends the loaded report (and therefore the recording's contents) to those hosts. |
-| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from the LLM host | `local` / `internal` / `external`. localhost is `local`; `api.libraxis.cloud` is `internal`; **xAI (`api.x.ai`) is `external` unless you set this to `internal`.** |
+| `SCREENSCRIBE_AGENT_EGRESS` | `deny` | `deny` skips providers whose trust is `external`. `allow` sends the loaded report (and therefore the recording's contents) to those hosts. Analysis hosts (`processor`) are always kept. |
+| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from the LLM host | `local` / `internal` / `processor` / `external`. localhost is `local`; `api.libraxis.cloud` is `internal`; a host matching STT/LLM/vision is `processor`. **xAI (`api.x.ai`) is `processor` on the xAI preset.** Set `external` to opt that host out under `deny`. |
 
 Optional Anthropic fallback (skipped when unset): `ANTHROPIC_API_KEY` or `SCREENSCRIBE_AGENT_FALLBACK_API_KEY`. Install the extra with `pip install 'screenscribe[anthropic]'`.
 

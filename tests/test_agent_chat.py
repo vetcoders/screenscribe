@@ -39,11 +39,27 @@ def _xai_config(**overrides: Any) -> ScreenScribeConfig:
     values: dict[str, Any] = {
         "api_key": "test-key",  # pragma: allowlist secret
         "llm_endpoint": "https://api.x.ai/v1/responses",
+        "stt_endpoint": "https://api.x.ai/v1/stt",
+        "vision_endpoint": "https://api.x.ai/v1/responses",
         "llm_model": "grok-4.6",
         "agent_egress": "deny",
     }
     values.update(overrides)
     return ScreenScribeConfig(**values)
+
+
+def _drop_agent_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "SCREENSCRIBE_AGENT_FALLBACK_API_KEY",
+        "SCREENSCRIBE_AGENT_FALLBACK_URL",
+        "SCREENSCRIBE_AGENT_FALLBACK_TRUST",
+        "SCREENSCRIBE_AGENT_FALLBACK_PROTOCOL",
+        "SCREENSCRIBE_AGENT_FALLBACK_MODEL",
+        "SCREENSCRIBE_AGENT_PRIMARY_TRUST",
+        "SCREENSCRIBE_AGENT_EGRESS",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
 
 def test_format_sse_named_event_contract() -> None:
@@ -95,23 +111,50 @@ def test_prepare_turn_seeds_json_when_no_chain_id() -> None:
     assert "save fails" in turn.instructions or "1" in turn.instructions
 
 
-def test_egress_deny_skips_external_xai() -> None:
-    config = _xai_config(agent_egress="deny")
+def test_default_xai_primary_is_processor_kept(monkeypatch: pytest.MonkeyPatch) -> None:
+    _drop_agent_env(monkeypatch)
+    config = _xai_config()
+    providers = build_providers(config)
+    assert providers[0].trust == "processor"
+    assert providers[0].host == "api.x.ai"
+    kept, skipped = apply_egress(providers, config.agent_egress)
+    assert skipped == []
+    assert kept[0].name == "primary"
+
+
+def test_fallback_foreign_host_skipped_under_deny(monkeypatch: pytest.MonkeyPatch) -> None:
+    _drop_agent_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")  # pragma: allowlist secret
+    config = _xai_config()
+    kept, skipped = apply_egress(build_providers(config), config.agent_egress)
+    assert [p.name for p in kept] == ["primary"]
+    assert kept[0].trust == "processor"
+    assert skipped and skipped[0].name == "fallback"
+    assert skipped[0].host == "api.anthropic.com"
+    assert skipped[0].trust == "external"
+
+
+def test_explicit_external_primary_skipped_under_deny(monkeypatch: pytest.MonkeyPatch) -> None:
+    _drop_agent_env(monkeypatch)
+    config = _xai_config(agent_primary_trust="external")
     providers = build_providers(config)
     assert providers[0].trust == "external"
     kept, skipped = apply_egress(providers, config.agent_egress)
     assert kept == []
-    assert skipped and skipped[0].host == "api.x.ai"
+    assert skipped and skipped[0].name == "primary"
+    assert skipped[0].host == "api.x.ai"
 
 
-def test_egress_allow_keeps_external_xai() -> None:
+def test_egress_allow_keeps_xai(monkeypatch: pytest.MonkeyPatch) -> None:
+    _drop_agent_env(monkeypatch)
     config = _xai_config(agent_egress="allow")
     kept, skipped = apply_egress(build_providers(config), config.agent_egress)
     assert skipped == []
     assert kept[0].host == "api.x.ai"
 
 
-def test_primary_trust_internal_survives_deny() -> None:
+def test_primary_trust_internal_survives_deny(monkeypatch: pytest.MonkeyPatch) -> None:
+    _drop_agent_env(monkeypatch)
     config = _xai_config(agent_egress="deny", agent_primary_trust="internal")
     kept, skipped = apply_egress(build_providers(config), config.agent_egress)
     assert skipped == []
@@ -119,11 +162,13 @@ def test_primary_trust_internal_survives_deny() -> None:
 
 
 def test_stream_agent_chat_emits_token_and_done(monkeypatch: pytest.MonkeyPatch) -> None:
+    _drop_agent_env(monkeypatch)
+
     async def fake_round(_provider: AgentProvider, _payload: dict[str, Any]) -> ProviderRound:
         return ProviderRound(text="Krytyczne: layout.", response_id="resp_live", function_calls=[])
 
     monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
-    config = _xai_config(agent_egress="allow")
+    config = _xai_config()
     report = _load_fixture()
 
     async def _collect() -> str:
@@ -145,6 +190,36 @@ def test_stream_agent_chat_emits_token_and_done(monkeypatch: pytest.MonkeyPatch)
     assert "resp_live" in body
 
 
+def test_default_xai_streams_tokens_under_deny(monkeypatch: pytest.MonkeyPatch) -> None:
+    _drop_agent_env(monkeypatch)
+
+    async def fake_round(_provider: AgentProvider, _payload: dict[str, Any]) -> ProviderRound:
+        return ProviderRound(text="token-ok", response_id="resp_default", function_calls=[])
+
+    monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
+    config = _xai_config()
+    report = _load_fixture()
+
+    async def _collect() -> str:
+        return "".join(
+            [
+                frame
+                async for frame in stream_agent_chat(
+                    config=config,
+                    report=report,
+                    tools=ReportToolbelt(report),
+                    message="Które findings są krytyczne?",
+                )
+            ]
+        )
+
+    body = asyncio.run(_collect())
+    assert "event: token" in body
+    assert "token-ok" in body
+    assert "event: done" in body
+    assert "egress" not in body.lower()
+
+
 def test_stream_agent_chat_runs_tool_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     rounds = iter(
         [
@@ -164,7 +239,8 @@ def test_stream_agent_chat_runs_tool_loop(monkeypatch: pytest.MonkeyPatch) -> No
         return next(rounds)
 
     monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
-    config = _xai_config(agent_egress="allow")
+    _drop_agent_env(monkeypatch)
+    config = _xai_config()
     report = _load_fixture()
 
     async def _collect() -> str:
@@ -189,8 +265,11 @@ def test_stream_agent_chat_runs_tool_loop(monkeypatch: pytest.MonkeyPatch) -> No
     assert '"response_id": "resp_final"' in body
 
 
-def test_collect_agent_chat_raises_when_egress_denies_all() -> None:
-    config = _xai_config(agent_egress="deny")
+def test_collect_agent_chat_raises_when_egress_denies_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _drop_agent_env(monkeypatch)
+    config = _xai_config(agent_primary_trust="external")
     report = _load_fixture()
 
     async def _run() -> None:
@@ -201,8 +280,11 @@ def test_collect_agent_chat_raises_when_egress_denies_all() -> None:
             message="hi",
         )
 
-    with pytest.raises(AgentChatError, match="egress"):
+    with pytest.raises(AgentChatError, match="egress") as excinfo:
         asyncio.run(_run())
+    message = str(excinfo.value)
+    assert "primary (api.x.ai, trust=external)" in message
+    assert "SCREENSCRIBE_AGENT_PRIMARY_TRUST=external" in message
 
 
 def test_pipeline_writes_last_pass_response_id(tmp_path: Path) -> None:

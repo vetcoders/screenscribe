@@ -148,7 +148,9 @@ class ScreenScribeConfig:
 
     # Review-agent chat (POST /api/agent/chat). Screen recordings contain
     # secrets: providers with trust=external are skipped unless egress is allow.
-    # xAI (api.x.ai) is external unless SCREENSCRIBE_AGENT_PRIMARY_TRUST=internal.
+    # A host that already analyzed this recording (STT/LLM/vision) is
+    # trust=processor and is kept under deny — so the xAI preset chats without
+    # an extra env var. SCREENSCRIBE_AGENT_PRIMARY_TRUST=external opts it out.
     agent_egress: str = "deny"
     agent_primary_trust: str = ""
 
@@ -1017,7 +1019,8 @@ class ScreenScribeConfig:
             sep,
             "# deny = skip providers whose trust is external (default).",
             "# allow = send the report (and thus the recording's contents) to external hosts.",
-            "# xAI (api.x.ai) is external unless SCREENSCRIBE_AGENT_PRIMARY_TRUST=internal.",
+            "# Hosts already used for STT/LLM/vision are trust=processor and stay allowed.",
+            "# SCREENSCRIBE_AGENT_PRIMARY_TRUST=external opts the analysis host out.",
             f"SCREENSCRIBE_AGENT_EGRESS={self._normalize_agent_egress(self.agent_egress)}",
             self._emit_optional(
                 "SCREENSCRIBE_AGENT_PRIMARY_TRUST",

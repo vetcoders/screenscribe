@@ -2,7 +2,7 @@
 
 The donor (family-onko-portal ``ai_chat.py``) is ~1790 lines of medical chat.
 This module keeps the same contracts — PRIMARY/FALLBACK, trust
-local/internal/external, Responses ``previous_response_id``, Anthropic tools,
+local/internal/processor/external, Responses ``previous_response_id``, Anthropic tools,
 streaming, egress deny-by-default — and reimplements the loop without PubMed,
 dossiers, or abstract translation.
 
@@ -41,7 +41,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_TOOL_ROUNDS = 8
 _INTERNAL_HOSTS = {"api.libraxis.cloud"}
-_TRUST_LEVELS = {"local", "internal", "external"}
+_TRUST_LEVELS = {"local", "internal", "processor", "external"}
+_KEPT_UNDER_DENY = {"local", "internal", "processor"}
 
 # Tests replace this to avoid the network.
 RoundTripper = Callable[["AgentProvider", dict[str, Any]], Awaitable["ProviderRound"]]
@@ -96,7 +97,29 @@ def normalize_agent_egress(value: str | None) -> str:
     return "allow" if raw == "allow" else "deny"
 
 
-def infer_trust(host: str, explicit: str | None = None) -> str:
+def analysis_hosts(config: ScreenScribeConfig) -> frozenset[str]:
+    """Hosts that already received this recording (STT, LLM, vision)."""
+    hosts: set[str] = set()
+    for url in (config.stt_endpoint, config.llm_endpoint, config.vision_endpoint):
+        host = _host_of(url)
+        if host:
+            hosts.add(host)
+    return frozenset(hosts)
+
+
+def infer_trust(
+    host: str,
+    explicit: str | None = None,
+    *,
+    processor_hosts: frozenset[str] | set[str] | None = None,
+) -> str:
+    """Classify a provider host.
+
+    Explicit ``SCREENSCRIBE_AGENT_PRIMARY_TRUST`` / fallback trust wins.
+    Loopback is ``local``; Libraxis is ``internal``. A remaining host that
+    already analyzed this recording (STT/LLM/vision) is ``processor``.
+    Everything else is ``external``.
+    """
     if explicit:
         level = explicit.strip().lower()
         if level in _TRUST_LEVELS:
@@ -106,12 +129,15 @@ def infer_trust(host: str, explicit: str | None = None) -> str:
         return "local"
     if lowered in _INTERNAL_HOSTS or lowered.endswith(".libraxis.cloud"):
         return "internal"
+    if processor_hosts and lowered in processor_hosts:
+        return "processor"
     return "external"
 
 
 def build_providers(config: ScreenScribeConfig) -> list[AgentProvider]:
     """PRIMARY = screenscribe LLM Responses endpoint; FALLBACK = optional Anthropic."""
     providers: list[AgentProvider] = []
+    processor_hosts = analysis_hosts(config)
     primary_key = config.get_llm_api_key()
     if primary_key:
         url = config.llm_endpoint
@@ -123,7 +149,9 @@ def build_providers(config: ScreenScribeConfig) -> list[AgentProvider]:
                 key=primary_key,
                 model=config.llm_model,
                 url=url,
-                trust=infer_trust(host, config.agent_primary_trust),
+                trust=infer_trust(
+                    host, config.agent_primary_trust, processor_hosts=processor_hosts
+                ),
                 slot="primary",
                 host=host,
             )
@@ -152,7 +180,7 @@ def build_providers(config: ScreenScribeConfig) -> list[AgentProvider]:
                 key=fallback_key,
                 model=model,
                 url=url,
-                trust=infer_trust(host, trust_override),
+                trust=infer_trust(host, trust_override, processor_hosts=processor_hosts),
                 slot="fallback",
                 host=host,
             )
@@ -163,12 +191,12 @@ def build_providers(config: ScreenScribeConfig) -> list[AgentProvider]:
 def apply_egress(
     providers: list[AgentProvider], egress: str
 ) -> tuple[list[AgentProvider], list[AgentProvider]]:
-    """Keep local/internal always; keep external only when egress is allow."""
+    """Keep local/internal/processor always; keep external only when egress is allow."""
     policy = normalize_agent_egress(egress)
     kept: list[AgentProvider] = []
     skipped: list[AgentProvider] = []
     for provider in providers:
-        if provider.trust in {"local", "internal"} or policy == "allow":
+        if provider.trust in _KEPT_UNDER_DENY or policy == "allow":
             kept.append(provider)
         else:
             skipped.append(provider)
@@ -586,9 +614,11 @@ def _no_provider_message(skipped: list[AgentProvider], config: ScreenScribeConfi
         return (
             "All agent providers were skipped by egress policy "
             f"(SCREENSCRIBE_AGENT_EGRESS={normalize_agent_egress(config.agent_egress)}). "
-            f"Skipped: {names}. Set SCREENSCRIBE_AGENT_EGRESS=allow to permit "
-            "external providers, or SCREENSCRIBE_AGENT_PRIMARY_TRUST=internal "
-            "if this host is trusted for screen-recording content."
+            f"Skipped: {names}. Hosts already used for STT, LLM, or vision "
+            "analysis are kept as trust=processor. Set "
+            "SCREENSCRIBE_AGENT_EGRESS=allow to permit other external providers. "
+            "SCREENSCRIBE_AGENT_PRIMARY_TRUST=external opts the analysis host "
+            "out of that keep-list."
         )
     return "No LLM API key configured for the review agent."
 
