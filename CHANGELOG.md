@@ -60,6 +60,13 @@
   beside the player (or docks as a side sheet that shrinks `.app-container`
   when no clear spot fits); an error turn paints the assistant bubble instead
   of leaving an empty one.
+  A host that already analyzed the recording (STT/LLM/vision) is
+  `trust=processor` and is kept under that default, so the xAI preset chats
+  without an extra env var. `SCREENSCRIBE_AGENT_PRIMARY_TRUST=external` remains
+  the opt-out; a fallback on a different host (e.g. Anthropic) is still skipped
+  under `deny`. The JSON report now stores
+  `analysis_passes.unified_analysis.response_id` so the next review can resume
+  the last VLM pass for free.
 
 - **Internal: refresh runtime and development dependencies.** Updated the lockfile
   to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.

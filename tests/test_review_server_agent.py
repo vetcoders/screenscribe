@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from screenscribe.agent.chat import format_sse
+from screenscribe.agent.chat import AgentProvider, ProviderRound, format_sse
 from screenscribe.config import ScreenScribeConfig
 from screenscribe.review_server import create_review_app
 
@@ -21,9 +21,9 @@ def _config() -> ScreenScribeConfig:
     return ScreenScribeConfig(
         api_key="test-key",  # pragma: allowlist secret
         llm_endpoint="https://api.x.ai/v1/responses",
+        stt_endpoint="https://api.x.ai/v1/stt",
+        vision_endpoint="https://api.x.ai/v1/responses",
         llm_model="grok-4.6",
-        agent_egress="allow",
-        agent_primary_trust="internal",
     )
 
 
@@ -52,6 +52,34 @@ async def _fake_stream(**_kwargs: Any) -> AsyncIterator[str]:
 
 async def _fake_collect(**_kwargs: Any) -> dict[str, Any]:
     return {"text": "HIGH: układ.", "response_id": "resp_mock"}
+
+
+def test_agent_chat_stream_default_config_does_not_egress_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "SCREENSCRIBE_AGENT_FALLBACK_API_KEY",
+        "SCREENSCRIBE_AGENT_EGRESS",
+        "SCREENSCRIBE_AGENT_PRIMARY_TRUST",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    async def fake_round(_provider: AgentProvider, _payload: dict[str, Any]) -> ProviderRound:
+        return ProviderRound(text="HIGH: układ.", response_id="resp_default", function_calls=[])
+
+    monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
+    client = TestClient(_app(tmp_path))
+    response = client.post(
+        "/api/agent/chat/stream",
+        json={"message": "Które findings są krytyczne?", "history": []},
+    )
+    assert response.status_code == 200
+    body = response.text
+    assert "event: token\n" in body
+    assert "HIGH: układ." in body
+    assert "event: done\n" in body
+    assert "egress" not in body.lower()
 
 
 def test_agent_chat_stream_sse_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
