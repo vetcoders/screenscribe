@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 from pathlib import Path
@@ -594,3 +595,85 @@ def test_preprocess_force_overwrites_own_bundle_in_place(
     assert result.exit_code == 0, result.output
     assert (base / "transcript.txt").read_text() == _sample_transcription().text
     assert not (tmp_path / "demo_preprocess_2").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Friendly errors: version cap and bundle write failures.                     #
+# --------------------------------------------------------------------------- #
+
+
+def test_preprocess_version_cap_is_a_friendly_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No free ``_N`` slot below the cap -> Output Directory Error, exit 1."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    base = tmp_path / "demo_preprocess"
+    assert _run_preprocess(runner, video_path, None).exit_code == 0
+    slot_2_before = _make_foreign_dir(tmp_path / "demo_preprocess_2")
+    base_before = _snapshot(base)
+    monkeypatch.setattr("screenscribe.cli.MAX_REVIEW_VERSIONS", 2)
+
+    result = _run_preprocess(runner, video_path, None)
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert "Traceback" not in result.output
+    assert "Output Directory Error" in normalized
+    assert "Too many existing versions of demo_preprocess (limit 2)" in normalized
+    assert "review" not in normalized
+    assert _snapshot(base) == base_before
+    assert _snapshot(tmp_path / "demo_preprocess_2") == slot_2_before
+    assert not (tmp_path / "demo_preprocess_3").exists()
+
+
+def _assert_bundle_write_error(result: Result, reason: str) -> None:
+    normalized = " ".join(result.output.split())
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert "Traceback" not in result.output
+    assert "Output Directory Error" in normalized
+    assert "Cannot write the preprocess bundle to:" in normalized
+    assert reason in normalized
+
+
+def test_preprocess_write_text_failure_is_a_friendly_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A PermissionError from a bundle file write -> panel, exit 1, dir kept."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    base = tmp_path / "demo_preprocess"
+    real_write_text = Path.write_text
+
+    def failing_write_text(self: Path, *args: object, **kwargs: object) -> int:
+        if self.parent == base.resolve() and self.name == "transcript.timestamped.txt":
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return real_write_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "write_text", failing_write_text)
+
+    result = _run_preprocess(runner, video_path, None)
+
+    _assert_bundle_write_error(result, "permission denied")
+    assert base.is_dir()
+    assert (base / "transcript.txt").exists()  # partial output is not cleaned up
+    assert not (base / "preprocess.json").exists()
+
+
+def test_preprocess_audio_copy_failure_is_a_friendly_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ENOSPC while copying audio into the bundle -> panel, exit 1, dir kept."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    base = tmp_path / "demo_preprocess"
+
+    def no_space(_src: object, dst: object, **_kwargs: object) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device", str(dst))
+
+    monkeypatch.setattr("screenscribe.preprocess.shutil.copy2", no_space)
+
+    result = _run_preprocess(runner, video_path, None)
+
+    _assert_bundle_write_error(result, "No space left on device")
+    assert base.is_dir()
+    assert (base / "transcript.vtt").exists()

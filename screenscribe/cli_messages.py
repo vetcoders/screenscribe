@@ -77,8 +77,8 @@ def _build_transcript_timeline_coverage_message(
     )
 
 
-def _build_output_dir_error_message(path: Path, exc: OSError) -> str:
-    """Turn an output-directory ``mkdir`` OSError into actionable guidance."""
+def _describe_output_os_error(path: Path, exc: OSError) -> tuple[str, str]:
+    """``(reason, where)`` for an OSError hit while creating/writing output."""
     blocked = Path(exc.filename) if exc.filename else path
     if isinstance(exc, PermissionError):
         reason = "permission denied"
@@ -89,11 +89,31 @@ def _build_output_dir_error_message(path: Path, exc: OSError) -> str:
     else:
         reason = exc.strerror or str(exc)
     where = "" if blocked == path else f"\n[dim]Blocked at:[/] {escape(str(blocked))}"
+    return reason, where
+
+
+def _build_output_dir_error_message(path: Path, exc: OSError) -> str:
+    """Turn an output-directory ``mkdir`` OSError into actionable guidance."""
+    reason, where = _describe_output_os_error(path, exc)
     return (
         f"Cannot create the output directory: {escape(str(path))}\n"
         f"[dim]Reason:[/] {escape(reason)}{where}\n\n"
         "Pass [bold]-o[/] with a folder you can write to, for example one inside "
         "your home directory."
+    )
+
+
+def _build_bundle_write_error_message(path: Path, exc: OSError) -> str:
+    """An OSError while writing the preprocess bundle files into ``path``.
+
+    Partial files are left in place (never cleaned up), so the message says so.
+    """
+    reason, where = _describe_output_os_error(path, exc)
+    return (
+        f"Cannot write the preprocess bundle to: {escape(str(path))}\n"
+        f"[dim]Reason:[/] {escape(reason)}{where}\n\n"
+        "Files written before the error were left in place. Free up space or fix "
+        "permissions and re-run, or pass [bold]-o[/] with a folder you can write to."
     )
 
 

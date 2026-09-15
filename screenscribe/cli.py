@@ -49,8 +49,10 @@ from .cli_estimate import (
     _show_estimate as _show_estimate,
 )
 from .cli_messages import (
+    _build_bundle_write_error_message,
     _build_force_foreign_message,
     _build_output_dir_error_message,
+    _build_versions_exhausted_message,
 )
 from .cli_messages import (
     _build_transcript_timeline_coverage_message as _build_transcript_timeline_coverage_message,
@@ -71,12 +73,17 @@ from .cli_paths import (
     MAX_REVIEW_VERSIONS as MAX_REVIEW_VERSIONS,
 )
 from .cli_paths import (
+    OutputVersionsExhaustedError,
+    _is_dir,
+    classify_output_slot,
+    is_preprocess_bundle,
+)
+from .cli_paths import (
     _find_next_review_path as _find_next_review_path,
 )
 from .cli_paths import (
     _find_next_versioned_path as _find_next_versioned_path,
 )
-from .cli_paths import _is_dir, classify_output_slot, is_preprocess_bundle
 from .cli_reporting import (
     _print_report_artifact_paths as _print_report_artifact_paths,
 )
@@ -1123,11 +1130,19 @@ def preprocess(
             )
         output_dir = base_output
     else:
-        output_dir, version = _find_next_versioned_path(
-            base_output,
-            owns_dir=is_preprocess_bundle,
-            has_completed_bundle=is_preprocess_bundle,
-        )
+        try:
+            output_dir, version = _find_next_versioned_path(
+                base_output,
+                owns_dir=is_preprocess_bundle,
+                has_completed_bundle=is_preprocess_bundle,
+            )
+        except OutputVersionsExhaustedError as exhausted:
+            from .review_pipeline import _exit_output_dir_error
+
+            _exit_output_dir_error(
+                console,
+                _build_versions_exhausted_message(exhausted.base_path, exhausted.limit),
+            )
         if version and base_state == "foreign":
             # Someone else's file/folder sits at the base: not a previous bundle.
             console.print(
@@ -1195,14 +1210,20 @@ def preprocess(
         verbose=config.verbose,
     )
 
-    write_preprocess_bundle(
-        video_path=video.resolve(),
-        output_dir=output_dir.resolve(),
-        transcription=transcription,
-        duration_seconds=duration,
-        extracted_audio_path=audio_path,
-        include_audio=include_audio,
-    )
+    try:
+        write_preprocess_bundle(
+            video_path=video.resolve(),
+            output_dir=output_dir.resolve(),
+            transcription=transcription,
+            duration_seconds=duration,
+            extracted_audio_path=audio_path,
+            include_audio=include_audio,
+        )
+    except OSError as write_error:
+        # No cleanup: partial files stay so nothing the user may need is removed.
+        from .review_pipeline import _exit_output_dir_error
+
+        _exit_output_dir_error(console, _build_bundle_write_error_message(output_dir, write_error))
 
 
 config_app = typer.Typer(

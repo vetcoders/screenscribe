@@ -711,8 +711,11 @@ your STT key/endpoint), and network failures (check connection and endpoint).
 
 If `-o` points somewhere screenscribe cannot write (permission denied, a
 read-only volume, or a file sitting where a folder should be), `review` and
-`preprocess` stop with an "Output Directory Error" naming the path and the reason, and exits with
-code 1 — no traceback. Pass `-o` with a folder you can write to.
+`preprocess` stop with an "Output Directory Error" naming the path and the
+reason, and exit with code 1 — no traceback. Pass `-o` with a folder you can
+write to. The same panel is shown when every `_2` … `_99` version slot is
+already taken, and when `preprocess` cannot write a bundle file (for example
+the disk is full); files written before that error are left in place.
 
 ### Issue detection failed
 
