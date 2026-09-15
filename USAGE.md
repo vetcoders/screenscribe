@@ -85,6 +85,9 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 | `--prompt`, `-P` | none | Append custom instructions to the semantic, semantic-prefilter, and vision prompts. |
 | `--lang`, `-l` | `en` | Language code for transcription. |
 | `--local` | off | Use a local STT server instead of the cloud provider. |
+| `--transcript-source` | `auto` | Where transcript segments come from: `auto` (audio STT when an audio track exists, frame OCR otherwise), `audio` (STT; fails fast on silent recordings), `ocr` (VLM OCR of frames, no audio needed). |
+| `--no-audio` | off | Alias for `--transcript-source ocr`: skip audio/STT entirely and build the transcript from OCR'd frames. Conflicts with `--transcript-source audio`. |
+| `--frame-interval` | `5.0` | Seconds between frames for the OCR transcript source (minimum 0.5). |
 | `--vision` / `--no-vision` (alias `--no-vlm`) | on | Skip visual/screenshot analysis. Semantic LLM detection still runs. |
 | `--json` / `--no-json` | on | Save the JSON report. |
 | `--markdown` / `--no-markdown` (`--md`) | on | Save the Markdown report. |
@@ -118,6 +121,32 @@ auto-creates a finding from a keyword alone, and an empty or missing dictionary
 is a safe no-op. Use the global file by default, or `--keywords-file` for a
 per-run dictionary.
 
+**Transcript source (audio STT or frame OCR)**
+
+The transcript is an abstraction over where timestamped segments come from:
+
+- `audio` — the classic path: extract audio, transcribe with STT.
+- `ocr` — frames taken every `--frame-interval` seconds are read by the vision
+  model (VLM OCR), visually identical frames are deduplicated before any paid
+  call, and each surviving frame with readable text becomes one segment with
+  the exact STT shape (`start`, `end`, `text`). Everything downstream
+  (semantic pre-filter, screenshots, unified VLM analysis, reports, response
+  chaining) works unchanged. OCR uses the vision credentials/endpoint, so it
+  also works under `--no-vision` (which only skips VLM *analysis*).
+- `auto` (default) — `audio` when the recording has an audio track, `ocr`
+  otherwise. A silent recording therefore reaches semantic analysis instead
+  of failing at the audio gate. `--no-audio` is a shortcut for
+  `--transcript-source ocr`.
+
+`--prompt` instructions reach the OCR stage and all analysis stages either
+way. OCR results are cached per frame content hash, so re-runs and `--resume`
+never re-pay for a frame that was already read.
+
+```bash
+uv run screenscribe review silent-demo.mov --no-audio --prompt "No audio; the explanations are written on screen"
+uv run screenscribe review silent-demo.mov --transcript-source ocr --frame-interval 2.5
+```
+
 **Examples**
 
 ```bash
@@ -130,9 +159,11 @@ uv run screenscribe review demo.mov --lang en --prompt "Focus on accessibility i
 uv run screenscribe review demo.mov --estimate            # just the time estimate
 ```
 
-> `review` and `transcribe` require an **audio track**. On a silent recording
-> they fail fast and point you to `uv run screenscribe analyze` (vision-only). See
-> [Troubleshooting](#no-audio-track).
+> `review` and `transcribe` expect an **audio track** by default — but `review`
+> no longer fails on silent recordings: the default `auto` transcript source
+> routes them to frame OCR. Only an explicit `--transcript-source audio` keeps
+> the fail-fast behavior, pointing you to `uv run screenscribe analyze`
+> (vision-only). See [Troubleshooting](#no-audio-track).
 
 ---
 
@@ -822,8 +853,12 @@ answer, set `SCREENSCRIBE_LLM_REASONING_EFFORT=low` (default `medium`) or switch
 
 ### No audio track
 
-`review` and `transcribe` require audio. On a silent recording they fail fast
-with a clear message and suggest the vision-only path:
+`review` handles silent recordings out of the box: the default `auto`
+transcript source routes them to frame OCR (`--transcript-source ocr`, alias
+`--no-audio`), reading frames every `--frame-interval` seconds with the vision
+model. Only an explicit `--transcript-source audio` (and `transcribe`, which
+is STT-only) fails fast on a missing audio track, with a clear message that
+suggests the vision-only path:
 
 ```bash
 uv run screenscribe analyze <video-path>

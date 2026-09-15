@@ -29,6 +29,7 @@ from .audio import (
 # the callers read them via cli.<name>).
 from .audio import extract_audio as extract_audio
 from .audio import get_video_duration as get_video_duration
+from .audio import has_audio_stream as has_audio_stream
 from .audio import require_audio_stream as require_audio_stream
 from .audio import tail_is_silent as tail_is_silent
 from .cli_auth import auth_app
@@ -99,6 +100,7 @@ from .cli_serve import (
     _serve_report as _serve_report,
 )
 from .config import ScreenScribeConfig
+from .frame_ocr import transcribe_video_ocr as transcribe_video_ocr
 from .keywords import (
     CATEGORIES,
     GLOBAL_KEYWORDS_PATH,
@@ -128,6 +130,12 @@ from .stt_stream import stream_client_for_endpoint as stream_client_for_endpoint
 from .transcribe import filter_hallucinated_segments as filter_hallucinated_segments
 from .transcribe import transcribe_audio as transcribe_audio
 from .transcribe import transcribe_audio_chunked as transcribe_audio_chunked
+from .transcript_sources import (
+    normalize_transcript_source as normalize_transcript_source,
+)
+from .transcript_sources import (
+    resolve_transcript_source as resolve_transcript_source,
+)
 from .validation import APIKeyError, ModelValidationError, validate_models
 
 # Legacy imports kept for backwards compatibility (not used in unified pipeline)
@@ -468,6 +476,35 @@ def review(
             help="Use local STT server instead of LibraxisAI cloud",
         ),
     ] = False,
+    transcript_source: Annotated[
+        str,
+        typer.Option(
+            "--transcript-source",
+            help=(
+                "Where transcript segments come from: 'auto' (audio STT when an "
+                "audio track exists, frame OCR otherwise), 'audio' (STT, requires "
+                "an audio track), 'ocr' (VLM OCR of frames, no audio needed)"
+            ),
+        ),
+    ] = "auto",
+    no_audio: Annotated[
+        bool,
+        typer.Option(
+            "--no-audio",
+            help=(
+                "Alias for the OCR transcript source: skip audio/STT entirely "
+                "and build the transcript from OCR'd frames"
+            ),
+        ),
+    ] = False,
+    frame_interval: Annotated[
+        float,
+        typer.Option(
+            "--frame-interval",
+            min=0.5,
+            help="Seconds between frames for the OCR transcript source",
+        ),
+    ] = 5.0,
     vision: Annotated[
         bool,
         typer.Option(
@@ -607,6 +644,13 @@ def review(
       never replace the LLM analysis. Manage them with `screenscribe keywords`.
     • --keywords-file: override the global dictionary with a per-run file.
 
+    Transcript source:
+    • --transcript-source auto|audio|ocr: audio STT when the recording has an
+      audio track, frame OCR otherwise ('auto' is the default); the OCR source
+      also has a single boolean alias flag and reads frames on a configurable
+      interval with the vision model — no audio track required, and custom
+      prompt instructions still reach the OCR and semantic stages.
+
     Output options:
     • --serve/--no-serve: Start HTTP server and open report in browser
     • --force: Overwrite a previous screenscribe review instead of versioning
@@ -643,13 +687,35 @@ def review(
     # Check FFmpeg is installed (shared guard — identical message across commands)
     _check_ffmpeg_or_exit()
 
+    # Fold --no-audio into the transcript source and validate the combination
+    # before any probing or paid work happens.
+    try:
+        requested_source = normalize_transcript_source(transcript_source, no_audio=no_audio)
+    except ValueError as e:
+        console.print(f"[red]Error:[/] {e}")
+        raise typer.Exit(2) from None
+
     # --estimate is a zero-cost preview that only needs the container duration,
     # not a decoded audio stream. Requiring audio here would exit an estimate on
     # an audioless clip; skip the audio guard in estimate mode (run_review reads
     # the duration defensively and still renders the table).
+    #
+    # The audio gate now sits UNDER the transcript-source decision: 'auto'
+    # probes each video and routes audioless recordings to frame OCR instead of
+    # failing, while an explicit 'audio' source keeps the historical readable
+    # "has no audio track" error.
+    resolved_sources: dict[Path, str] = {}
     if not estimate:
         for video in videos:
-            _require_audio_or_exit(video)
+            source = resolve_transcript_source(requested_source, video, has_audio=has_audio_stream)
+            resolved_sources[video] = source
+            if source == "audio":
+                _require_audio_or_exit(video)
+            else:
+                console.print(
+                    f"[blue]Transcript source:[/] OCR (frames every {frame_interval:g}s) "
+                    f"for {video.name}"
+                )
 
     # --embed-video inlines the clip as base64, but the HTML renderer silently
     # falls back to a file reference for anything >=50MB. Warn up front so the
@@ -679,10 +745,15 @@ def review(
     config.analysis_prompt_override = (prompt or "").strip()
 
     if not estimate:
+        # STT is only paid for videos routed to the audio source; OCR videos
+        # hit the vision endpoint instead, so vision credentials are required
+        # for them even under --no-vision (which only skips VLM analysis).
+        needs_audio_stt = any(source == "audio" for source in resolved_sources.values())
+        needs_ocr = any(source == "ocr" for source in resolved_sources.values())
         active_providers = {"llm"}
-        if not local:
+        if not local and needs_audio_stt:
             active_providers.add("stt")
-        if vision:
+        if vision or needs_ocr:
             active_providers.add("vision")
         _check_provider_config_or_exit(config, providers=active_providers)
 
@@ -690,9 +761,15 @@ def review(
     # LOCAL Whisper server; the LLM pre-filter and the Vision stage still hit the
     # cloud, so they must be validated even under --local -- only the STT probe is
     # skipped. --estimate is a zero-cost preview and skips validation entirely.
+    # OCR-sourced videos need the vision model (that is where OCR runs) and no
+    # STT model at all.
     if not skip_validation and not estimate:
         try:
-            validate_models(config, use_vision=vision, validate_stt=not local)
+            validate_models(
+                config,
+                use_vision=vision or needs_ocr,
+                validate_stt=(not local) and needs_audio_stt,
+            )
         except APIKeyError as e:
             console.print(f"[red]API Key Error:[/] {e}")
             raise typer.Exit(1) from None
@@ -759,6 +836,8 @@ def review(
         dry_run=dry_run,
         serve=serve,
         port=port,
+        transcript_source=requested_source,
+        frame_interval=frame_interval,
     )
 
 

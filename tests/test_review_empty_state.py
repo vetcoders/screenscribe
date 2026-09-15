@@ -494,7 +494,12 @@ def test_review_reports_failure_when_primary_and_fallback_both_fail(
 def test_review_no_audio_exits_before_model_validation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Silent videos should fail before touching model/API validation."""
+    """Explicit audio source: silent videos fail before model/API validation.
+
+    (The default 'auto' transcript source now routes such videos to frame OCR
+    instead; the historical hard error stays pinned to
+    ``--transcript-source audio``.)
+    """
     runner = CliRunner()
 
     video_path = tmp_path / "silent.mov"
@@ -524,7 +529,10 @@ def test_review_no_audio_exits_before_model_validation(
 
     monkeypatch.setattr("screenscribe.cli.validate_models", fail_if_called)
 
-    result = runner.invoke(cli_module.app, ["review", str(video_path), "--no-serve"])
+    result = runner.invoke(
+        cli_module.app,
+        ["review", str(video_path), "--no-serve", "--transcript-source", "audio"],
+    )
     normalized_output = " ".join(result.output.split())
 
     assert result.exit_code == 1

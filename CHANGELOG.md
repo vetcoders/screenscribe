@@ -9,6 +9,21 @@
   the active object. Overlay position re-reads `getActualImageRect` on every
   pointer sample and on scroll/resize so a rectangle drawn next to on-screen
   text no longer lands in a different place after the player layout shifts.
+- **Added: transcript source abstraction for `review` — audio STT or frame OCR.**
+  New flags `--transcript-source auto|audio|ocr`, `--no-audio` (alias for
+  `ocr`), and `--frame-interval <s>` (default 5). The transcript is now an
+  abstraction over where timestamped segments come from: the classic STT path
+  (`audio`, unchanged) or VLM OCR of frames taken every N seconds (`ocr`),
+  where visually identical frames are deduplicated before any paid call and
+  every surviving frame with readable text becomes one segment in the exact
+  STT shape (`start`, `end`, `text`). The default `auto` probes each video and
+  routes silent recordings to OCR, so a recording without an audio track now
+  reaches semantic analysis and the report instead of dying at the
+  "has no audio track" gate; an explicit `--transcript-source audio` keeps
+  that readable fail-fast error. `--prompt` instructions reach the OCR stage
+  and all analysis stages, OCR results are cached per frame content hash, and
+  the rest of the pipeline (semantic pre-filter, screenshots, unified VLM
+  analysis, reports, response chaining) works unchanged on OCR segments.
 
 - **Internal: refresh runtime and development dependencies.** Updated the lockfile
   to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.
