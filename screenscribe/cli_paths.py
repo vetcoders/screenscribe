@@ -109,6 +109,17 @@ def _find_next_versioned_path(
 ) -> tuple[Path, int | None]:
     """Find next available artifact path, appending _2, _3, etc. if needed.
 
+    Two different questions are asked:
+
+    - ``base_path`` itself is reused unless it holds a completed bundle (the
+      marker/glob checks or ``bundle_detector``), so a partial run or a folder
+      without a bundle keeps being written in place.
+    - A version slot ``<base>_N`` (N >= 2) is available ONLY if it does not
+      exist or is an empty directory. Any existing file, or any non-empty
+      directory -- a bundle or not (another video's report, notes, a
+      checkpoint-only partial run) -- is occupied, so a rerun never mixes its
+      output into someone else's folder.
+
     Args:
         base_path: The initial desired output path (e.g., video_review)
         artifact_markers: Exact filenames that prove the directory already
@@ -141,11 +152,24 @@ def _find_next_versioned_path(
     version = 2
     while True:
         versioned_path = base_path.parent / f"{base_path.name}_{version}"
-        if not versioned_path.exists() or not has_artifact_bundle(versioned_path):
+        if _version_slot_is_free(versioned_path):
             return versioned_path, version
         version += 1
         if version > cli.MAX_REVIEW_VERSIONS:
             raise RuntimeError(f"Too many review versions for {base_path.name}")
+
+
+def _version_slot_is_free(path: Path) -> bool:
+    """A version slot is free only when nothing exists there or it is an empty dir."""
+    try:
+        if not path.exists():
+            return True
+        if not path.is_dir():
+            return False
+        return next(path.iterdir(), None) is None
+    except OSError:
+        # Unreadable: never treat as free, advance to the next slot instead.
+        return False
 
 
 def _find_next_review_path(
@@ -153,11 +177,14 @@ def _find_next_review_path(
 ) -> tuple[Path, int | None]:
     """Find next available review path, appending _2, _3, etc. if needed.
 
-    Versioning is triggered only by a completed report bundle for this video
-    (``has_review_report_bundle`` -- the same report rule ``is_review_directory``
-    uses), never by foreign files. A checkpoint-only directory (a partial run
-    that wrote no report) is deliberately NOT a completed bundle here: it is
-    reused in place, as before, and ``--resume`` picks the checkpoint up.
+    Versioning is triggered only by a completed report bundle for this video in
+    ``base_path`` (``has_review_report_bundle`` -- the same report rule
+    ``is_review_directory`` uses), never by foreign files. A checkpoint-only
+    ``base_path`` (a partial run that wrote no report) is deliberately NOT a
+    completed bundle: it is reused in place and ``--resume`` picks the checkpoint
+    up. Once versioning starts, ``<base>_N`` slots follow the stricter rule of
+    ``_find_next_versioned_path``: only a missing path or an empty directory is
+    used, so an existing non-empty ``_N`` is never written into.
     """
     return _find_next_versioned_path(
         base_path,
