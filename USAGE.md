@@ -92,7 +92,7 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 | `--keywords-file`, `-k` | global file | Per-run keywords YAML. Keywords are always-on AI hints (never replace the LLM, safe when empty); overrides the global `~/.config/screenscribe/keywords.yaml`. |
 | `--resume` | off | Resume from a previous checkpoint if available. |
 | `--force` | off | Force reprocessing and overwrite the existing review instead of versioning. |
-| `--estimate` | off | Show a time estimate (from video duration) without processing. |
+| `--estimate` | off | Show a time estimate (from video duration) without processing. Creates no output directory. |
 | `--dry-run` | off | **Not free.** Still runs paid transcription (STT, unless `--local`) and LLM issue detection, then stops before writing reports. For a zero-cost preview use `--estimate` instead. |
 | `--skip-validation` | off | Skip the model-availability check (faster start, may fail mid-pipeline). |
 | `--serve` / `--no-serve` | **on** | Start an HTTP server and open the report in the browser after processing. |

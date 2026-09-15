@@ -313,6 +313,26 @@ def test_review_estimate_skips_validation_and_prints_table(
     assert result.exit_code == 0, result.output
     assert "Estimated Processing Time" in result.output
     assert "Total estimated time" in result.output
+    assert not (tmp_path / "v_review").exists()
+
+
+def test_review_estimate_does_not_create_output_dir(tmp_path: Path, monkeypatch: Any) -> None:
+    """--estimate with -o only prints estimates; it must not create the folder."""
+    video = tmp_path / "v.mov"
+    video.write_bytes(b"x")
+    target = tmp_path / "planned" / "out"
+
+    monkeypatch.setattr(cli, "check_ffmpeg_installed", lambda: None)
+    monkeypatch.setattr(cli, "_require_audio_or_exit", lambda _v: None)
+    monkeypatch.setattr(cli, "get_video_duration", lambda _v: 300.0)
+    monkeypatch.setattr(
+        cli.ScreenScribeConfig, "load", classmethod(lambda _c: ScreenScribeConfig())
+    )
+
+    result = runner.invoke(app, ["review", str(video), "-o", str(target), "--estimate"])
+    assert result.exit_code == 0, result.output
+    assert "Estimated Processing Time" in result.output
+    assert not (tmp_path / "planned").exists()
 
 
 def test_review_estimate_always_runs_the_semantic_prefilter(

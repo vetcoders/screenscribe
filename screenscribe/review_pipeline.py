@@ -306,7 +306,9 @@ def run_review(
                 _announce_new_version(console, base_output.name, video_output.name)
 
         try:
-            video_output.mkdir(parents=True, exist_ok=True)
+            # --estimate only prints a time table: never create the output dir.
+            if not estimate:
+                video_output.mkdir(parents=True, exist_ok=True)
         except OSError as mkdir_error:
             console.print()
             console.print(
