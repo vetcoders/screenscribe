@@ -61,7 +61,10 @@ function makeElement(tag) {
         parentNode: null,
         attributes: attrs,
         dataset: {},
-        style: {},
+        style: {
+            setProperty(name, value) { this[name] = String(value); },
+            removeProperty(name) { delete this[name]; },
+        },
         classList: makeClassList(),
         className: '',
         id: '',
@@ -77,6 +80,11 @@ function makeElement(tag) {
             (listeners[type] || (listeners[type] = [])).push(fn);
         },
         removeEventListener() {},
+        dispatchEvent(event) {
+            const type = event && event.type;
+            (listeners[type] || []).forEach((fn) => fn(event));
+            return true;
+        },
         setAttribute(name, value) {
             attrs[name] = String(value);
             if (name === 'id') el.id = String(value);
@@ -88,6 +96,15 @@ function makeElement(tag) {
             children.push(child);
             if (child.id) registry.set(child.id, child);
             return child;
+        },
+        removeChild(child) {
+            const idx = children.indexOf(child);
+            if (idx >= 0) children.splice(idx, 1);
+            if (child) child.parentNode = null;
+            return child;
+        },
+        requestSubmit() {
+            (listeners.submit || []).forEach((fn) => fn({ preventDefault() {} }));
         },
         querySelector(sel) { return query(el, sel, true); },
         querySelectorAll(sel) { return query(el, sel, false); },
@@ -165,6 +182,12 @@ video.id = 'videoPlayer';
 video._rect = { left: 20, top: 80, right: 520, bottom: 400, width: 500, height: 320 };
 registry.set('videoPlayer', video);
 body.appendChild(video);
+const toolbar = makeElement('div');
+toolbar.id = 'videoControls';
+toolbar.className = 'video-controls-pro';
+toolbar._rect = { left: 28, top: 48, right: 420, bottom: 80, width: 392, height: 32 };
+registry.set('videoControls', toolbar);
+body.appendChild(toolbar);
 
 const finding = makeElement('article');
 finding.className = 'finding';
@@ -242,7 +265,14 @@ sandbox.window.localStorage = localStorage;
 sandbox.window.innerWidth = sandbox.innerWidth;
 sandbox.window.innerHeight = sandbox.innerHeight;
 sandbox.window.fetch = (...args) => sandbox.fetch(...args);
-sandbox.window.addEventListener = () => {};
+sandbox.window.addEventListener = (type, fn) => {
+    (sandbox._windowListeners[type] || (sandbox._windowListeners[type] = [])).push(fn);
+};
+sandbox._windowListeners = {};
+sandbox.window.dispatchEvent = (event) => {
+    (sandbox._windowListeners[event.type] || []).forEach((fn) => fn(event));
+    return true;
+};
 sandbox.document.defaultView = sandbox.window;
 sandbox.__screenscribeAgentPanelSkipInit = true;
 
@@ -458,3 +488,248 @@ def test_rendered_report_includes_agent_panel_assets() -> None:
     assert ".ss-agent-fab" in html
     assert "Run `screenscribe serve` to chat about this report." in html
     assert "cdnjs.cloudflare.com" not in html
+
+
+def test_enter_sends_and_respects_ime_shift_and_whitespace() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = ScreenScribeAgentPanel;
+            const fetches = [];
+            fetch = async (url, opts) => {
+                fetches.push({ url, body: JSON.parse(opts.body) });
+                return {
+                    ok: true,
+                    text: async () => 'event: token\\ndata: {"text":"ok"}\\n\\nevent: done\\ndata: {}\\n\\n',
+                };
+            };
+            window.fetch = fetch;
+            api.init();
+            const form = document.getElementById('ss-agent-form');
+            const input = document.getElementById('ss-agent-input');
+
+            function fireKey(partial) {
+                const event = Object.assign({
+                    key: 'Enter',
+                    shiftKey: false,
+                    isComposing: false,
+                    keyCode: 13,
+                    preventDefault() { event._prevented = true; },
+                    _prevented: false,
+                }, partial);
+                input.dispatchEvent(Object.assign({ type: 'keydown' }, event));
+                return event;
+            }
+
+            input.value = 'hello from enter';
+            const sent = fireKey({});
+            if (!sent._prevented) throw new Error('Enter must preventDefault');
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            if (input.value !== '') throw new Error('input should clear after send starts');
+            if (fetches.length !== 1) throw new Error('Enter should send once, got ' + fetches.length);
+            if (fetches[0].body.message !== 'hello from enter') throw new Error('message');
+
+            input.value = 'keep newline';
+            const shifted = fireKey({ shiftKey: true });
+            if (shifted._prevented) throw new Error('Shift+Enter must not send');
+            if (input.value !== 'keep newline') throw new Error('Shift+Enter must not clear');
+            if (fetches.length !== 1) throw new Error('Shift+Enter sent');
+
+            input.value = 'ime text';
+            const ime = fireKey({ isComposing: true, keyCode: 229 });
+            if (ime._prevented) throw new Error('IME Enter must not send');
+            if (input.value !== 'ime text') throw new Error('IME must not clear');
+            if (fetches.length !== 1) throw new Error('IME sent');
+
+            const imeKey = fireKey({ key: 'Enter', keyCode: 229, isComposing: false });
+            if (imeKey._prevented) throw new Error('keyCode 229 must not send');
+            if (fetches.length !== 1) throw new Error('keyCode 229 sent');
+
+            input.value = '   \\t  ';
+            form.submit();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            if (input.value !== '   \\t  ') throw new Error('whitespace-only must not clear');
+            if (fetches.length !== 1) throw new Error('whitespace-only sent');
+
+            process.stdout.write('enter:ok');
+            """
+        )
+    )
+    assert "enter:ok" in output
+
+
+def test_error_turn_reuses_assistant_bubble() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = ScreenScribeAgentPanel;
+            fetch = async () => ({
+                ok: true,
+                text: async () => 'event: error\\ndata: {"message":"egress deny: external provider blocked"}\\n\\n',
+            });
+            window.fetch = fetch;
+            api.init();
+            await api.send('What broke?');
+            const log = document.getElementById('ss-agent-log');
+            const msgs = (log.children || []).filter((n) => String(n.className || '').includes('ss-agent-msg'));
+            if (msgs.length !== 2) throw new Error('expected user+error, got ' + msgs.length + ' ' + msgs.map((m) => m.className + ':' + m.textContent).join('|'));
+            if (!String(msgs[0].className).includes('ss-agent-msg-user')) throw new Error('first should be user');
+            if (!String(msgs[1].className).includes('ss-agent-msg-error')) throw new Error('error class: ' + msgs[1].className);
+            if (msgs[1].textContent !== 'egress deny: external provider blocked') throw new Error('error text: ' + msgs[1].textContent);
+            const emptyAssistant = msgs.filter((m) => String(m.className).includes('ss-agent-msg-assistant') && !String(m.textContent || '').trim());
+            if (emptyAssistant.length) throw new Error('empty assistant bubble remained');
+            process.stdout.write('error-bubble:ok');
+            """
+        )
+    )
+    assert "error-bubble:ok" in output
+
+
+def test_geometry_default_avoids_player_and_toolbar() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = ScreenScribeAgentPanel;
+            api.init();
+            api.setCollapsed(false);
+            const rootEl = document.getElementById('ss-agent-root');
+            const left = parseFloat(rootEl.style.left);
+            const top = parseFloat(rootEl.style.top);
+            const panel = { left, top, right: left + 360, bottom: top + 480 };
+            const player = document.getElementById('videoPlayer').getBoundingClientRect();
+            const toolbar = document.getElementById('videoControls').getBoundingClientRect();
+            const overlapPlayer = api.rectsOverlap(panel, player);
+            const overlapToolbar = api.rectsOverlap(panel, toolbar);
+            if (overlapPlayer) throw new Error('default overlaps player ' + JSON.stringify({panel, player}));
+            if (overlapToolbar) throw new Error('default overlaps toolbar ' + JSON.stringify({panel, toolbar}));
+            if (api.getState().sheet) throw new Error('1280x800 should float, not sheet');
+            process.stdout.write('geometry-a:ok');
+            """
+        )
+    )
+    assert "geometry-a:ok" in output
+
+
+def test_geometry_discards_overlapping_restored_position() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = ScreenScribeAgentPanel;
+            api.init();
+            const key = [...localStorage._store.keys()][0] || (api.STORAGE_KEY + ':http://localhost/report.html');
+            localStorage.setItem(key, JSON.stringify({ collapsed: false, left: 30, top: 90 }));
+            const state = api.getState();
+            state.collapsed = true;
+            state.left = null;
+            state.top = null;
+            state.sheet = false;
+            api.restore();
+            api.setCollapsed(false);
+            const rootEl = document.getElementById('ss-agent-root');
+            const left = parseFloat(rootEl.style.left);
+            const top = parseFloat(rootEl.style.top);
+            const panel = { left, top, right: left + 360, bottom: top + 480 };
+            const player = document.getElementById('videoPlayer').getBoundingClientRect();
+            const toolbar = document.getElementById('videoControls').getBoundingClientRect();
+            if (api.rectsOverlap(panel, player)) throw new Error('restored overlap player ' + JSON.stringify({left, top, player}));
+            if (api.rectsOverlap(panel, toolbar)) throw new Error('restored overlap toolbar');
+            if (left === 30 && top === 90) throw new Error('overlapping restore was kept');
+            process.stdout.write('geometry-b:ok');
+            """
+        )
+    )
+    assert "geometry-b:ok" in output
+
+
+def test_geometry_recomputes_on_metadata_resize_and_player_rect() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = ScreenScribeAgentPanel;
+            api.init();
+            api.setCollapsed(false);
+            const video = document.getElementById('videoPlayer');
+            const toolbar = document.getElementById('videoControls');
+            function panelBox() {
+                const rootEl = document.getElementById('ss-agent-root');
+                const st = api.getState();
+                if (st.sheet) {
+                    return { left: 1280 - 360, top: 0, right: 1280, bottom: 800 };
+                }
+                const left = parseFloat(rootEl.style.left);
+                const top = parseFloat(rootEl.style.top);
+                return { left, top, right: left + 360, bottom: top + 480 };
+            }
+            function assertClear(label) {
+                const panel = panelBox();
+                const player = video.getBoundingClientRect();
+                const bar = toolbar.getBoundingClientRect();
+                if (!api.getState().sheet && api.rectsOverlap(panel, player)) {
+                    throw new Error(label + ' overlaps player ' + JSON.stringify({panel, player}));
+                }
+                if (!api.getState().sheet && api.rectsOverlap(panel, bar)) {
+                    throw new Error(label + ' overlaps toolbar');
+                }
+            }
+            video._rect = { left: 0, top: 0, right: 900, bottom: 700, width: 900, height: 700 };
+            toolbar._rect = { left: 8, top: 8, right: 400, bottom: 44, width: 392, height: 36 };
+            video.dispatchEvent({ type: 'loadedmetadata' });
+            assertClear('loadedmetadata');
+
+            innerWidth = 1440;
+            window.innerWidth = 1440;
+            video._rect = { left: 20, top: 80, right: 700, bottom: 500, width: 680, height: 420 };
+            toolbar._rect = { left: 28, top: 48, right: 420, bottom: 80, width: 392, height: 32 };
+            window.dispatchEvent({ type: 'resize' });
+            assertClear('resize');
+
+            video._rect = { left: 10, top: 40, right: 1100, bottom: 760, width: 1090, height: 720 };
+            toolbar._rect = { left: 16, top: 8, right: 380, bottom: 40, width: 364, height: 32 };
+            api.relayout();
+            const after = api.getState();
+            if (!after.sheet) {
+                const panel = panelBox();
+                if (api.rectsOverlap(panel, video.getBoundingClientRect())) {
+                    throw new Error('player-rect change still overlaps');
+                }
+            }
+            if (document.documentElement.classList.contains('ss-agent-sheet') !== after.sheet) {
+                throw new Error('sheet class mismatch');
+            }
+            process.stdout.write('geometry-c:ok sheet=' + after.sheet);
+            """
+        )
+    )
+    assert "geometry-c:ok" in output
+
+
+def test_geometry_docks_sheet_when_no_clear_spot() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = ScreenScribeAgentPanel;
+            const player = { left: 8, top: 8, right: 1272, bottom: 792, width: 1264, height: 784 };
+            const placed = api.placeBesidePlayer(player, { width: 1280, height: 800 }, { width: 360, height: 480 });
+            if (!placed.sheet) throw new Error('expected sheet when player fills viewport: ' + JSON.stringify(placed));
+            innerWidth = 900;
+            innerHeight = 700;
+            window.innerWidth = 900;
+            window.innerHeight = 700;
+            const video = document.getElementById('videoPlayer');
+            const toolbar = document.getElementById('videoControls');
+            video._rect = { left: 0, top: 0, right: 890, bottom: 690, width: 890, height: 690 };
+            toolbar._rect = { left: 8, top: 8, right: 400, bottom: 40, width: 392, height: 32 };
+            api.init();
+            api.setCollapsed(false);
+            if (!api.getState().sheet) throw new Error('expanded cramped layout must dock');
+            if (!document.documentElement.classList.contains('ss-agent-sheet')) {
+                throw new Error('html sheet class missing');
+            }
+            if (!document.getElementById('ss-agent-root').classList.contains('ss-agent-sheet')) {
+                throw new Error('root sheet class missing');
+            }
+            process.stdout.write('geometry-sheet:ok');
+            """
+        )
+    )
+    assert "geometry-sheet:ok" in output

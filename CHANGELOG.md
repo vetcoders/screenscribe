@@ -54,6 +54,13 @@
   error. Tool calls `seek` and `show_frame` jump the player and highlight the
   matching finding. Cut `w1-05-agent-floating`.
 
+- **Fixed: 『s』 agent panel send, coverage, and empty error bubbles.** Enter
+  sends (Shift+Enter keeps a newline; IME composition does not send);
+  overlapping restored positions are discarded and the panel is recomputed
+  beside the player (or docks as a side sheet that shrinks `.app-container`
+  when no clear spot fits); an error turn paints the assistant bubble instead
+  of leaving an empty one.
+
 - **Internal: refresh runtime and development dependencies.** Updated the lockfile
   to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.
   Normalized the development version to PEP 440's `0.1.20.dev0` spelling so

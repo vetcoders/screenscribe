@@ -9,6 +9,22 @@
     pointer-events: none;
 }
 
+html.ss-agent-sheet .app-container {
+    right: var(--ss-agent-sheet-width, 360px);
+}
+
+.ss-agent-root.ss-agent-sheet {
+    left: auto;
+    right: 0;
+    top: var(--header-height);
+    width: var(--ss-agent-sheet-width, 360px);
+    height: calc(100% - var(--header-height));
+}
+
+.ss-agent-root.ss-agent-sheet .ss-agent-header {
+    cursor: default;
+}
+
 .ss-agent-root > * {
     pointer-events: auto;
 }
