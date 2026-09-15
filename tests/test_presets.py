@@ -392,3 +392,72 @@ def test_unknown_preset_fails_before_pipeline(tmp_path: Path, monkeypatch: Any) 
 
     assert result.exit_code == 1
     assert "Unknown preset" in _plain(result.output)
+
+
+def test_preset_and_no_audio_reach_run_review_together(tmp_path: Path, monkeypatch: Any) -> None:
+    """--preset veterinary --no-audio: CLI validation passes (mocked OCR/LLM)
+    and run_review receives BOTH the OCR transcript source and the preset."""
+    from screenscribe import review_pipeline
+    from screenscribe.config import ScreenScribeConfig
+    from screenscribe.semantic_filter import SemanticFilterResult
+
+    monkeypatch.setattr(cli, "_check_ffmpeg_or_exit", lambda: None)
+    monkeypatch.setattr("screenscribe.cli.get_video_duration", lambda _p: 12.0)
+    monkeypatch.setattr("screenscribe.cli.validate_models", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        ScreenScribeConfig,
+        "load",
+        classmethod(lambda cls: ScreenScribeConfig(api_key="test-key")),  # pragma: allowlist secret
+    )
+    monkeypatch.setattr("screenscribe.cli.has_audio_stream", lambda _p: False)
+
+    def fake_ocr(video_path: Path, config: Any, *, frame_interval: float = 5.0) -> Any:
+        return TranscriptionResult(
+            text="Pacjent kaszle.",
+            segments=[Segment(id=0, start=0.0, end=5.0, text="Pacjent kaszle.")],
+            language="pl",
+        )
+
+    monkeypatch.setattr("screenscribe.cli.transcribe_video_ocr", fake_ocr)
+    monkeypatch.setattr(
+        "screenscribe.cli.semantic_prefilter",
+        lambda *a, **kw: SemanticFilterResult(pois=[]),
+    )
+
+    captured: dict[str, Any] = {}
+    real_run_review = review_pipeline.run_review
+
+    def spy_run_review(videos: Any, config: Any, **kwargs: Any) -> None:
+        captured.update(kwargs)
+        real_run_review(videos, config, **kwargs)
+
+    monkeypatch.setattr(review_pipeline, "run_review", spy_run_review)
+
+    video = tmp_path / "consult.mov"
+    video.write_bytes(b"video")
+    output_dir = tmp_path / "consult_review"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "review",
+            str(video),
+            "-o",
+            str(output_dir),
+            "--no-serve",
+            "--preset",
+            "veterinary",
+            "--no-audio",
+        ],
+    )
+
+    assert result.exit_code == 0, _plain(result.output)
+    assert captured["transcript_source"] == "ocr"
+    assert captured["frame_interval"] == 5.0
+    preset = captured["preset"]
+    assert preset is not None
+    assert preset.name == "veterinary"
+    # The OCR-sourced run records the non-default preset in the JSON report.
+    report = json.loads((output_dir / "consult_report.json").read_text(encoding="utf-8"))
+    assert report["preset"]["name"] == "veterinary"
+    assert report["preset"]["categories"] == list(preset.categories)
