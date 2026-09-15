@@ -12,6 +12,7 @@ from typing import Annotated
 import typer
 import typer.rich_utils as _typer_rich_utils
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 
 from . import __version__
@@ -47,6 +48,9 @@ from .cli_estimate import (
     _show_estimate as _show_estimate,
 )
 from .cli_messages import (
+    _build_output_dir_error_message,
+)
+from .cli_messages import (
     _build_transcript_timeline_coverage_message as _build_transcript_timeline_coverage_message,
 )
 from .cli_messages import (
@@ -70,6 +74,7 @@ from .cli_paths import (
 from .cli_paths import (
     _find_next_versioned_path as _find_next_versioned_path,
 )
+from .cli_paths import _is_dir, is_preprocess_bundle
 from .cli_reporting import (
     _print_report_artifact_paths as _print_report_artifact_paths,
 )
@@ -1008,7 +1013,11 @@ def preprocess(
         typer.Option(
             "--output",
             "-o",
-            help="Output directory for preprocess artifacts",
+            help=(
+                "Output directory for preprocess artifacts. An existing folder that "
+                "is not a previous preprocess bundle is used as a parent "
+                "(<folder>/<video>_preprocess)."
+            ),
         ),
     ] = None,
     language: Annotated[
@@ -1061,13 +1070,27 @@ def preprocess(
     if not local:
         _check_provider_config_or_exit(config, providers={"stt"})
 
-    base_output = output or (video.parent / f"{video.stem}_preprocess")
+    if output is None:
+        base_output = video.parent / f"{video.stem}_preprocess"
+    elif _is_dir(output) and not is_preprocess_bundle(output):
+        # -o names an existing ordinary folder (not a previous preprocess
+        # bundle): treat it as the PARENT, like `review -o`. Re-runs then
+        # version inside it (<stem>_preprocess_2), never next to it.
+        base_output = output / f"{video.stem}_preprocess"
+        console.print(
+            f"[dim]{escape(str(output))} is an existing folder, not a previous "
+            f"preprocess bundle; writing into {escape(base_output.name)}[/]"
+        )
+    else:
+        # -o does not exist yet, or IS a previous preprocess bundle: use it as
+        # the output directory itself.
+        base_output = output
     if force:
         output_dir = base_output
     else:
         output_dir, version = _find_next_versioned_path(
             base_output,
-            artifact_markers=("preprocess.json", "transcript.txt"),
+            bundle_detector=is_preprocess_bundle,
         )
         if version:
             console.print(
@@ -1079,7 +1102,18 @@ def preprocess(
                 )
             )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as mkdir_error:
+        console.print()
+        console.print(
+            Panel(
+                _build_output_dir_error_message(output_dir, mkdir_error),
+                title="[bold red]Output Directory Error[/]",
+                border_style="red",
+            )
+        )
+        raise typer.Exit(1) from None
 
     console.print()
     console.print(

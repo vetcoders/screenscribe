@@ -328,7 +328,9 @@ uv run screenscribe preprocess demo.mov --no-audio --lang en
 
 Output bundle: `transcript.txt`, `transcript.timestamped.txt`,
 `transcript.segments.json`, `transcript.vtt`, a `preprocess.json` manifest, and
-(by default) the extracted `audio.mp3`.
+(by default) the extracted `audio.mp3`. It goes to `<video>_preprocess` next to
+the video; `-o` names the bundle directory, and an existing folder that is not a
+previous preprocess bundle is used as a parent (`<folder>/<video>_preprocess`).
 
 ### `screenscribe config`
 
@@ -487,7 +489,9 @@ previous review is used as a parent, giving `<folder>/<video>_review`):
 
 A `preprocess` run writes a transcript-first bundle (`transcript.txt`,
 `transcript.timestamped.txt`, `transcript.segments.json`, `transcript.vtt`,
-`preprocess.json`, and optionally `audio.mp3`).
+`preprocess.json`, and optionally `audio.mp3`) into `<video>_preprocess` next to
+the video, or `<folder>/<video>_preprocess` when `-o` names an existing folder
+that is not a previous preprocess bundle.
 
 ---
 

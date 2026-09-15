@@ -7,6 +7,7 @@ names back into its own namespace so the historical import/patch surface
 ``screenscribe.cli.MAX_REVIEW_VERSIONS``) is preserved.
 """
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -23,6 +24,12 @@ LEGACY_REVIEW_REPORT_MARKERS = ("report.html", "report.json")
 REVIEW_REPORT_EXTENSIONS = ("html", "json", "md")
 
 REVIEW_DIR_SUFFIX = "_review"
+
+# Manifest written by ``write_preprocess_bundle`` (screenscribe/preprocess.py).
+PREPROCESS_MANIFEST_NAME = "preprocess.json"
+
+# A real manifest is a few KB; anything bigger is not ours and is not read.
+MAX_PREPROCESS_MANIFEST_BYTES = 1024 * 1024
 
 
 def _is_dir(path: Path) -> bool:
@@ -98,6 +105,48 @@ def is_review_directory(path: Path, video_stem: str | None = None) -> bool:
     if _is_dir(path / CHECKPOINT_DIR_NAME):
         return True
     return has_review_report_bundle(path, video_stem)
+
+
+def is_preprocess_bundle(path: Path) -> bool:
+    """Whether ``path`` is a screenscribe preprocess bundle (the single rule).
+
+    True only when ``path`` is a directory holding a ``preprocess.json`` that is
+    screenscribe's own manifest: a JSON object with ``"mode": "preprocess"`` and
+    an ``"artifacts"`` object. ``write_preprocess_bundle`` has written both keys
+    since the first public release, and ``mode`` is the field that names what
+    produced the file. The manifest is read with a size cap; an unreadable,
+    oversized, non-JSON or foreign ``preprocess.json`` is not a bundle, and a
+    lone ``transcript.txt`` never is (plenty of tools write one).
+
+    The ``preprocess`` command treats an existing ordinary folder passed via
+    ``-o`` as a PARENT and writes ``<folder>/<stem>_preprocess`` inside it, so
+    the check is kept deliberately narrow: a false positive would version a
+    sibling next to the user's folder (``~/Downloads_2``), a false negative only
+    nests one level. A bundle made for a different video still counts -- it is
+    screenscribe output either way, and versioning keeps it intact.
+    """
+    if not _is_dir(path):
+        return False
+    manifest = path / PREPROCESS_MANIFEST_NAME
+    if not _is_file(manifest):
+        return False
+    try:
+        with manifest.open("rb") as handle:
+            raw = handle.read(MAX_PREPROCESS_MANIFEST_BYTES + 1)
+    except OSError:
+        return False
+    if len(raw) > MAX_PREPROCESS_MANIFEST_BYTES:
+        return False
+    try:
+        data = json.loads(raw)
+    except (ValueError, RecursionError):
+        # ValueError covers JSONDecodeError and UnicodeDecodeError.
+        return False
+    return (
+        isinstance(data, dict)
+        and data.get("mode") == "preprocess"
+        and isinstance(data.get("artifacts"), dict)
+    )
 
 
 def _find_next_versioned_path(

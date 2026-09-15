@@ -232,7 +232,7 @@ uv run screenscribe preprocess VIDEO [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--output`, `-o` | `<video>_preprocess` next to the video | Output directory for the bundle. |
+| `--output`, `-o` | `<video>_preprocess` next to the video | Where the bundle is written. A path that does not exist yet becomes the bundle directory. An existing folder that is **not** a previous preprocess bundle (e.g. `~/Downloads`) is used as a parent: the bundle goes to `<folder>/<video>_preprocess`, and re-runs create `<video>_preprocess_2`, … inside that folder. An existing previous bundle directory is versioned next to itself (`_2`, `_3`, …). |
 | `--lang`, `-l` | `en` | Language code for transcription. |
 | `--local` | off | Use a local STT server. |
 | `--audio` / `--no-audio` | on | Include the extracted `audio.mp3` in the bundle. |
@@ -255,6 +255,12 @@ uv run screenscribe preprocess demo.mov --no-audio --lang en
 - `preprocess.json` — manifest (language, duration, timeline-coverage stats,
   word/segment counts, artifact paths).
 - `audio.mp3` — the extracted audio (unless `--no-audio`).
+
+A folder counts as a previous preprocess bundle only when its `preprocess.json`
+is screenscribe's own manifest (a JSON object with `"mode": "preprocess"` and an
+`artifacts` object). A stray `transcript.txt` or another tool's
+`preprocess.json` never does, so `preprocess demo.mov -o ~/Downloads` writes
+`~/Downloads/demo_preprocess` instead of versioning `~/Downloads` itself.
 
 ---
 
@@ -690,8 +696,8 @@ your STT key/endpoint), and network failures (check connection and endpoint).
 ### Output directory cannot be created
 
 If `-o` points somewhere screenscribe cannot write (permission denied, a
-read-only volume, or a file sitting where a folder should be), `review` stops
-with an "Output Directory Error" naming the path and the reason, and exits with
+read-only volume, or a file sitting where a folder should be), `review` and
+`preprocess` stop with an "Output Directory Error" naming the path and the reason, and exits with
 code 1 — no traceback. Pass `-o` with a folder you can write to.
 
 ### Issue detection failed

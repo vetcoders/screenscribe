@@ -10,6 +10,11 @@
   a parent (`<folder>/<video>_review`, re-runs version inside it), matching
   batch mode, instead of creating a `<folder>_2` sibling. A path that does not
   exist, or a real previous review, behaves as before.
+- **Fixed: `preprocess -o <existing folder>` follows the same folder contract.**
+  Only a folder whose `preprocess.json` is screenscribe's own manifest counts as
+  a previous bundle (a stray `transcript.txt` no longer does); any other existing
+  folder is used as a parent (`<folder>/<video>_preprocess`), and an output
+  directory that cannot be created shows the same "Output Directory Error".
 - **Fixed: an output directory that cannot be created is a clear error.**
   Permission denied, read-only volumes and file-in-the-way paths now print an
   "Output Directory Error" with the path and reason and exit with code 1,
