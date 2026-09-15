@@ -10,6 +10,24 @@
   a parent (`<folder>/<video>_review`, re-runs version inside it), matching
   batch mode, instead of creating a `<folder>_2` sibling. A path that does not
   exist, or a real previous review, behaves as before.
+- **Fixed: `preprocess -o <existing folder>` follows the same folder contract.**
+  Only a folder whose `preprocess.json` is screenscribe's own manifest counts as
+  a previous bundle (a stray `transcript.txt` no longer does); any other existing
+  folder is used as a parent (`<folder>/<video>_preprocess`), and an output
+  directory that cannot be created shows the same "Output Directory Error".
+  Like `review`, a file or non-empty non-bundle folder at `<video>_preprocess`
+  is skipped for the next free version, `-o` naming an existing file is an
+  error, and `--force` refuses (exit 1, nothing changed) a target that is not
+  a screenscribe preprocess bundle. Running out of versions and failing to
+  write a bundle file (permission denied, disk full) also print an "Output
+  Directory Error" instead of a traceback; partial files are left in place.
+  The output folder is reserved and checked for writability before audio
+  extraction and transcription, so folder creation, reservation, writability
+  and version-limit errors stop before any STT call; a bundle write failure
+  (e.g. disk full) is still reported after transcription has run.
+- **Fixed: `review --estimate` is read-only.** It prints the time table before
+  any output-folder handling, so it no longer creates an empty output directory,
+  shows the rerun prompt, or refuses a `--force` target.
 - **Fixed: an output directory that cannot be created is a clear error.**
   Permission denied, read-only volumes and file-in-the-way paths now print an
   "Output Directory Error" with the path and reason and exit with code 1,

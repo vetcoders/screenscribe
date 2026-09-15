@@ -7,6 +7,7 @@ names back into its own namespace so the historical import/patch surface
 ``screenscribe.cli.MAX_REVIEW_VERSIONS``) is preserved.
 """
 
+import json
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -25,6 +26,12 @@ LEGACY_REVIEW_REPORT_MARKERS = ("report.html", "report.json")
 REVIEW_REPORT_EXTENSIONS = ("html", "json", "md")
 
 REVIEW_DIR_SUFFIX = "_review"
+
+# Manifest written by ``write_preprocess_bundle`` (screenscribe/preprocess.py).
+PREPROCESS_MANIFEST_NAME = "preprocess.json"
+
+# A real manifest is a few KB; anything bigger is not ours and is not read.
+MAX_PREPROCESS_MANIFEST_BYTES = 1024 * 1024
 
 
 def _is_dir(path: Path) -> bool:
@@ -102,6 +109,48 @@ def is_review_directory(path: Path, video_stem: str | None = None) -> bool:
     return has_review_report_bundle(path, video_stem)
 
 
+def is_preprocess_bundle(path: Path) -> bool:
+    """Whether ``path`` is a screenscribe preprocess bundle (the single rule).
+
+    True only when ``path`` is a directory holding a ``preprocess.json`` that is
+    screenscribe's own manifest: a JSON object with ``"mode": "preprocess"`` and
+    an ``"artifacts"`` object. ``write_preprocess_bundle`` has written both keys
+    since the first public release, and ``mode`` is the field that names what
+    produced the file. The manifest is read with a size cap; an unreadable,
+    oversized, non-JSON or foreign ``preprocess.json`` is not a bundle, and a
+    lone ``transcript.txt`` never is (plenty of tools write one).
+
+    The ``preprocess`` command treats an existing ordinary folder passed via
+    ``-o`` as a PARENT and writes ``<folder>/<stem>_preprocess`` inside it, so
+    the check is kept deliberately narrow: a false positive would version a
+    sibling next to the user's folder (``~/Downloads_2``), a false negative only
+    nests one level. A bundle made for a different video still counts -- it is
+    screenscribe output either way, and versioning keeps it intact.
+    """
+    if not _is_dir(path):
+        return False
+    manifest = path / PREPROCESS_MANIFEST_NAME
+    if not _is_file(manifest):
+        return False
+    try:
+        with manifest.open("rb") as handle:
+            raw = handle.read(MAX_PREPROCESS_MANIFEST_BYTES + 1)
+    except OSError:
+        return False
+    if len(raw) > MAX_PREPROCESS_MANIFEST_BYTES:
+        return False
+    try:
+        data = json.loads(raw)
+    except (ValueError, RecursionError):
+        # ValueError covers JSONDecodeError and UnicodeDecodeError.
+        return False
+    return (
+        isinstance(data, dict)
+        and data.get("mode") == "preprocess"
+        and isinstance(data.get("artifacts"), dict)
+    )
+
+
 OutputSlotState = Literal["free", "own_partial", "own_complete", "foreign"]
 
 
@@ -167,10 +216,8 @@ def classify_review_slot(path: Path, video_stem: str | None = None) -> OutputSlo
 def _find_next_versioned_path(
     base_path: Path,
     *,
-    owns_dir: Callable[[Path], bool] | None = None,
-    has_completed_bundle: Callable[[Path], bool] | None = None,
-    artifact_markers: tuple[str, ...] = (),
-    artifact_globs: tuple[str, ...] = (),
+    owns_dir: Callable[[Path], bool],
+    has_completed_bundle: Callable[[Path], bool],
 ) -> tuple[Path, int | None]:
     """Find the output path to use, appending _2, _3, etc. if needed.
 
@@ -188,12 +235,8 @@ def _find_next_versioned_path(
         base_path: The initial desired output path (e.g., video_review).
         owns_dir: Predicate: does the command own this directory?
         has_completed_bundle: Predicate: does the directory hold a completed
-            bundle? Pass both predicates for the ownership-aware contract.
-        artifact_markers: Legacy (used when the predicates are omitted): exact
-            filenames that prove a completed bundle.
-        artifact_globs: Legacy: glob patterns that prove a completed bundle.
-            In legacy mode every existing directory counts as owned, so only a
-            file at ``base_path`` is treated as foreign.
+            bundle? A command whose ownership marker is its completed bundle
+            passes the same predicate for both.
 
     Returns:
         Tuple of (available_path, version_number or None if the base is used).
@@ -201,16 +244,6 @@ def _find_next_versioned_path(
     Raises:
         OutputVersionsExhaustedError: no free slot up to ``MAX_REVIEW_VERSIONS``.
     """
-    if owns_dir is None or has_completed_bundle is None:
-
-        def legacy_bundle(path: Path) -> bool:
-            if any((path / marker).exists() for marker in artifact_markers):
-                return True
-            return any(next(path.glob(pattern), None) is not None for pattern in artifact_globs)
-
-        owns_dir = owns_dir or (lambda _path: True)
-        has_completed_bundle = has_completed_bundle or legacy_bundle
-
     base_state = classify_output_slot(
         base_path, owns_dir=owns_dir, has_completed_bundle=has_completed_bundle
     )

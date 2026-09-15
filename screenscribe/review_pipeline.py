@@ -172,6 +172,17 @@ def _exit_output_dir_error(console: Any, message: str) -> NoReturn:
     raise typer.Exit(1)
 
 
+def _read_video_duration(cli: Any, console: Any, video: Path) -> float:
+    """Print and return the video duration (0.0 when it cannot be determined)."""
+    try:
+        duration: float = cli.get_video_duration(video)
+    except RuntimeError:
+        console.print("[yellow]Could not determine video duration[/]\n")
+        return 0.0
+    console.print(f"[blue]Duration:[/] {format_timestamp(duration)}\n")
+    return duration
+
+
 def _announce_new_version(console: Any, base_name: str, new_name: str) -> None:
     """Print the historical 'creating a new versioned copy' panel."""
     console.print(
@@ -241,6 +252,15 @@ def run_review(
     for video_idx, video in enumerate(videos):
         if len(videos) > 1:
             console.rule(f"[bold magenta]Video {video_idx + 1}/{len(videos)}: {video.name}[/]")
+
+        # --estimate is read-only: it resolves no output path and never prompts,
+        # refuses, versions or creates anything -- it only prints the time table.
+        if estimate:
+            console.print(f"\n[blue]Video:[/] [link=file://{video}]{video}[/link]")
+            console.print(f"[blue]Visual (VLM) analysis:[/] {'✓' if vision else '✗'}")
+            console.print("[blue]Detection:[/] semantic pre-filter (LLM)")
+            cli._show_estimate(_read_video_duration(cli, console, video), vision)
+            continue  # Continue to next video in batch mode
 
         # Setup output directory (per-video in batch mode)
         video_stem = video.stem  # Video name without extension for file naming
@@ -385,18 +405,7 @@ def run_review(
         if batch_context_response_id:
             console.print("[blue]Context:[/] Chained from previous video")
 
-        # Get video duration
-        duration = 0.0
-        try:
-            duration = cli.get_video_duration(video)
-            console.print(f"[blue]Duration:[/] {format_timestamp(duration)}\n")
-        except RuntimeError:
-            console.print("[yellow]Could not determine video duration[/]\n")
-
-        # --estimate mode: show time estimates and exit
-        if estimate:
-            cli._show_estimate(duration, vision)
-            continue  # Continue to next video in batch mode
+        duration = _read_video_duration(cli, console, video)
 
         # Handle --force: delete existing checkpoint
         if force:

@@ -92,7 +92,7 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 | `--keywords-file`, `-k` | global file | Per-run keywords YAML. Keywords are always-on AI hints (never replace the LLM, safe when empty); overrides the global `~/.config/screenscribe/keywords.yaml`. |
 | `--resume` | off | Resume from a previous checkpoint if available. |
 | `--force` | off | Force reprocessing and overwrite the existing review instead of versioning. Only a screenscribe review folder (or a missing/empty one) can be overwritten; if the target is a file or a non-empty folder screenscribe does not own, `review` stops with an error and changes nothing. |
-| `--estimate` | off | Show a time estimate (from video duration) without processing. |
+| `--estimate` | off | Show a time estimate (from video duration) without processing. Read-only: it skips output-folder handling entirely (no rerun prompt, no `--force` check, nothing created). |
 | `--dry-run` | off | **Not free.** Still runs paid transcription (STT, unless `--local`) and LLM issue detection, then stops before writing reports. For a zero-cost preview use `--estimate` instead. |
 | `--skip-validation` | off | Skip the model-availability check (faster start, may fail mid-pipeline). |
 | `--serve` / `--no-serve` | **on** | Start an HTTP server and open the report in the browser after processing. |
@@ -232,11 +232,11 @@ uv run screenscribe preprocess VIDEO [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--output`, `-o` | `<video>_preprocess` next to the video | Output directory for the bundle. |
+| `--output`, `-o` | `<video>_preprocess` next to the video | Where the bundle is written. A path that does not exist yet becomes the bundle directory. An existing folder that is **not** a previous preprocess bundle (e.g. `~/Downloads`) is used as a parent: the bundle goes to `<folder>/<video>_preprocess`, and re-runs create `<video>_preprocess_2`, … inside that folder. An existing previous bundle directory is versioned next to itself (`_2`, `_3`, …). An existing file named by `-o` is an error. |
 | `--lang`, `-l` | `en` | Language code for transcription. |
 | `--local` | off | Use a local STT server. |
 | `--audio` / `--no-audio` | on | Include the extracted `audio.mp3` in the bundle. |
-| `--force` | off | Reuse the output directory even if a preprocess bundle already exists (otherwise a new `_2`, `_3`, … version is created). |
+| `--force` | off | Overwrite a previous preprocess bundle in place instead of creating a new `_2`, `_3`, … version. Only a screenscribe preprocess bundle (or a missing/empty folder) can be overwritten; if the target is a file or a non-empty folder screenscribe does not own, `preprocess` stops with an error and changes nothing. |
 
 **Examples**
 
@@ -255,6 +255,21 @@ uv run screenscribe preprocess demo.mov --no-audio --lang en
 - `preprocess.json` — manifest (language, duration, timeline-coverage stats,
   word/segment counts, artifact paths).
 - `audio.mp3` — the extracted audio (unless `--no-audio`).
+
+A folder counts as a previous preprocess bundle only when its `preprocess.json`
+is screenscribe's own manifest (a JSON object with `"mode": "preprocess"` and an
+`artifacts` object). A stray `transcript.txt` or another tool's
+`preprocess.json` never does, so `preprocess demo.mov -o ~/Downloads` writes
+`~/Downloads/demo_preprocess` instead of versioning `~/Downloads` itself.
+Any existing `-o` folder that is not a previous bundle, even an empty one, is a
+parent. The bundle directory is therefore `<video>_preprocess` next to the
+video, `<folder>/<video>_preprocess` for such a parent, or a `-o` path that does
+not exist yet; it is used as-is when it does not exist or is an empty folder
+(an empty `<video>_preprocess`). A previous bundle there is kept and a new
+version is created; a file or non-empty folder there that is not a preprocess
+bundle is skipped the same way (never written into). A new version goes to the
+first `_2`, `_3`, … slot that does not exist or is an empty folder, so an
+existing non-empty `_N` (bundle or not) is never written into either.
 
 ---
 
@@ -641,7 +656,7 @@ uv run screenscribe preprocess demo.mov
 
 Hand the resulting `transcript.txt` / `transcript.segments.json` /
 `preprocess.json` to a downstream model or agent. Use `--no-audio` to keep the
-bundle text-only, and `--force` to reuse a directory in place.
+bundle text-only, and `--force` to overwrite a previous bundle in place.
 
 ---
 
@@ -698,9 +713,17 @@ your STT key/endpoint), and network failures (check connection and endpoint).
 ### Output directory cannot be created
 
 If `-o` points somewhere screenscribe cannot write (permission denied, a
-read-only volume, or a file sitting where a folder should be), `review` stops
-with an "Output Directory Error" naming the path and the reason, and exits with
-code 1 — no traceback. Pass `-o` with a folder you can write to.
+read-only volume, or a file sitting where a folder should be), `review` and
+`preprocess` stop with an "Output Directory Error" naming the path and the
+reason, and exit with code 1 — no traceback. Pass `-o` with a folder you can
+write to. The same panel is shown when every `_2` … `_99` version slot is
+already taken, and when `preprocess` cannot write a bundle file (for example
+the disk is full); files written before that error are left in place.
+`preprocess` reserves the output folder and checks that it is writable before
+extracting audio or transcribing, so a folder that cannot be created, reserved
+or written, or running out of versions, stops before any STT call. A bundle
+write failure (for example a full disk) can only happen after transcription,
+so that transcription has already run when the error is reported.
 
 ### Issue detection failed
 
