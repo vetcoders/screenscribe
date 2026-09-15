@@ -580,6 +580,10 @@ moving to a new provider.
 
 The review server exposes `POST /api/agent/chat` and `POST /api/agent/chat/stream` (SSE). Screen recordings contain secrets, so **external** providers are skipped unless you opt in. A host that already ran STT, LLM, or vision for this config is `trust=processor` and is kept under `deny`.
 
+The agent can propose edits to findings. Write tools (`set_verdict`, `set_severity`, `edit_finding`, `add_finding`, `propose_review`) **do not write** `report.json`. They validate against the loaded report and return a `review_patch` (or a `review_plan` for broad requests). The browser is the single writer: the panel applies the patch to `reportState` and saves through the existing `/api/save` lock. The agent uses the same credential as `screenscribe auth login xai` / `review` — `ScreenScribeConfig.get_llm_api_key()` already falls back to the signed-in xAI account bearer; there is no extra key. Never treat a tool result as a saved edit; the panel confirms with `review_applied`.
+
+`merge_findings` / `unmerge_finding` currently return `{"unsupported": true}` — merge is a client-only fold (`mergeFindings` in the report UI) with no patch-callable API.
+
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `SCREENSCRIBE_AGENT_EGRESS` | `deny` | `deny` skips providers whose trust is `external`. `allow` sends the loaded report (and therefore the recording's contents) to those hosts. Analysis hosts (`processor`) are always kept. |
