@@ -23,6 +23,7 @@
         streaming: false,
         drag: null,
         playerObserver: null,
+        patchOfflineAnnounced: false,
     };
 
     function tx(key, args) {
@@ -229,6 +230,217 @@
             return 'show_frame';
         }
         return null;
+    }
+
+    function getAgentHost() {
+        return root.__screenscribeAgentHost || {};
+    }
+
+    function fingerprintToolResult(name, result) {
+        try {
+            return String(name || '') + ':' + JSON.stringify(result);
+        } catch (_err) {
+            return String(name || '') + ':' + String(result);
+        }
+    }
+
+    function appendSystemLine(text, className) {
+        var row = appendMessage('system', text);
+        if (row && className) {
+            row.className = 'ss-agent-msg ss-agent-msg-system ' + className;
+        }
+        return row;
+    }
+
+    function describeOp(op) {
+        if (!op || typeof op !== 'object') return '';
+        var kind = String(op.op || '');
+        var id = op.finding_id != null ? String(op.finding_id) : '';
+        if (id) return kind + ' #' + id;
+        if (kind === 'add_finding') return kind + ' @' + String(op.timestamp);
+        return kind;
+    }
+
+    function confirmationLine(explain, extra) {
+        var body = tx('review.agentPatchApplied', { explain: explain || '' });
+        var hint = tx('review.agentPatchUndoHint');
+        var line = body + ' — ' + hint;
+        if (extra) line += ' ' + extra;
+        return line;
+    }
+
+    function attachRetry(row, retryFn) {
+        if (!row) return;
+        var btn = el('button', 'ss-agent-retry', { type: 'button' });
+        btn.textContent = t('review.agentPatchRetry');
+        btn.addEventListener('click', function () {
+            if (btn.disabled) return;
+            btn.disabled = true;
+            Promise.resolve(retryFn()).finally(function () {
+                btn.disabled = false;
+            });
+        });
+        row.appendChild(btn);
+        return btn;
+    }
+
+    async function saveAfterPatch() {
+        var host = getAgentHost();
+        var saveFn = host.saveReview || host.saveReviewToDisk;
+        if (typeof saveFn !== 'function') {
+            return { ok: false, message: 'saveReview' };
+        }
+        return saveFn();
+    }
+
+    async function applyOpsAndSave(ops, explain) {
+        if (isOffline()) {
+            appendSystemLine(tx('review.agentPatchOffline'), 'ss-agent-msg-warn');
+            return { ok: false, offline: true };
+        }
+        var host = getAgentHost();
+        if (typeof host.applyReviewPatch !== 'function') {
+            appendSystemLine(tx('review.agentPatchSaveFailed', { message: 'applyReviewPatch' }), 'ss-agent-msg-error');
+            return { ok: false };
+        }
+        var results = await host.applyReviewPatch(ops);
+        var unknown = (results || []).filter(function (row) { return row && row.unknown; });
+        unknown.forEach(function (row) {
+            appendSystemLine(tx('review.agentPatchUnknown', { op: row.op || '' }));
+        });
+        var unsupported = (results || []).filter(function (row) { return row && row.unsupported; });
+        unsupported.forEach(function (row) {
+            appendSystemLine(row.reason || tx('review.agentPatchUnknown', { op: row.op || '' }));
+        });
+        var applied = (results || []).filter(function (row) { return row && !row.skipped; });
+        if (!applied.length) {
+            return { ok: true, applied: 0, results: results };
+        }
+        var saved = await saveAfterPatch();
+        if (saved && saved.ok) {
+            appendSystemLine(confirmationLine(explain), 'ss-agent-msg-ok');
+            return { ok: true, applied: applied.length, saved: true, results: results };
+        }
+        var message = (saved && saved.message) || tx('review.agentPatchSaveFailed', { message: '' });
+        var failRow = appendSystemLine(
+            tx('review.agentPatchSaveFailed', { message: message }),
+            'ss-agent-msg-error'
+        );
+        attachRetry(failRow, function () { return retrySave(explain); });
+        return { ok: false, status: saved && saved.status, applied: applied.length, results: results };
+    }
+
+    async function retrySave(explain) {
+        if (isOffline()) {
+            appendSystemLine(tx('review.agentPatchOffline'), 'ss-agent-msg-warn');
+            return { ok: false, offline: true };
+        }
+        var saved = await saveAfterPatch();
+        if (saved && saved.ok) {
+            appendSystemLine(confirmationLine(explain), 'ss-agent-msg-ok');
+            return saved;
+        }
+        var message = (saved && saved.message) || '';
+        var failRow = appendSystemLine(
+            tx('review.agentPatchSaveFailed', { message: message }),
+            'ss-agent-msg-error'
+        );
+        attachRetry(failRow, function () { return retrySave(explain); });
+        return saved;
+    }
+
+    function renderPlanCard(plan) {
+        var log = root.document.getElementById('ss-agent-log');
+        if (!log) return null;
+        var ops = Array.isArray(plan.ops) ? plan.ops : [];
+        var rationale = Array.isArray(plan.rationale) ? plan.rationale : [];
+        var card = el('div', 'ss-agent-plan ss-agent-msg ss-agent-msg-system');
+        var list = el('ul', 'ss-agent-plan-ops');
+        ops.forEach(function (op, index) {
+            var item = el('li', 'ss-agent-plan-op');
+            var label = el('label', 'ss-agent-plan-label');
+            var box = el('input', 'ss-agent-plan-check', { type: 'checkbox' });
+            box.checked = true;
+            box.setAttribute('data-op-index', String(index));
+            var caption = el('span', 'ss-agent-plan-caption');
+            var reason = rationale[index] ? ' — ' + String(rationale[index]) : '';
+            caption.textContent = describeOp(op) + reason;
+            label.appendChild(box);
+            label.appendChild(caption);
+            item.appendChild(label);
+            list.appendChild(item);
+        });
+        card.appendChild(list);
+        var actions = el('div', 'ss-agent-plan-actions');
+        var applyBtn = el('button', 'ss-agent-plan-apply', { type: 'button' });
+        applyBtn.textContent = t('review.agentPlanApply');
+        var cancelBtn = el('button', 'ss-agent-plan-cancel', { type: 'button' });
+        cancelBtn.textContent = t('review.agentPlanCancel');
+        applyBtn.addEventListener('click', function () {
+            if (applyBtn.disabled) return;
+            applyBtn.disabled = true;
+            cancelBtn.disabled = true;
+            var selected = [];
+            var checks = card.querySelectorAll('.ss-agent-plan-check');
+            checks.forEach(function (check) {
+                if (check.checked) {
+                    var idx = Number(check.getAttribute('data-op-index'));
+                    if (ops[idx]) selected.push(ops[idx]);
+                }
+            });
+            Promise.resolve(applyOpsAndSave(selected, tx('review.agentPlanApplied', {
+                applied: selected.length,
+                total: ops.length,
+            }))).then(function () {
+                var summary = tx('review.agentPlanApplied', {
+                    applied: selected.length,
+                    total: ops.length,
+                });
+                appendMessage('user', summary);
+                state.history.push({ role: 'user', content: summary });
+            }).finally(function () {
+                applyBtn.disabled = false;
+                cancelBtn.disabled = false;
+            });
+        });
+        cancelBtn.addEventListener('click', function () {
+            if (card.parentNode) card.parentNode.removeChild(card);
+        });
+        actions.appendChild(applyBtn);
+        actions.appendChild(cancelBtn);
+        card.appendChild(actions);
+        log.appendChild(card);
+        if (typeof log.scrollTop === 'number') {
+            log.scrollTop = log.scrollHeight || 0;
+        }
+        return card;
+    }
+
+    async function ingestToolResult(name, result, seen) {
+        if (result == null) return;
+        var payload = result;
+        if (typeof payload === 'string') {
+            try { payload = JSON.parse(payload); } catch (_err) { payload = { error: payload }; }
+        }
+        if (typeof payload !== 'object') return;
+        var fp = fingerprintToolResult(name, payload);
+        if (seen && seen.has(fp)) return;
+        if (seen) seen.add(fp);
+        if (payload.error) {
+            appendSystemLine(String(payload.error), 'ss-agent-msg-error');
+            return;
+        }
+        if (payload.unsupported) {
+            appendSystemLine(String(payload.reason || payload.unsupported), 'ss-agent-msg-warn');
+            return;
+        }
+        if (payload.type === 'review_plan') {
+            renderPlanCard(payload);
+            return;
+        }
+        if (payload.type === 'review_patch') {
+            await applyOpsAndSave(payload.ops || [], payload.explain || '');
+        }
     }
 
     function isOffline() {
@@ -455,6 +667,10 @@
         } else {
             appendMessage('system', message);
         }
+        if (!state.patchOfflineAnnounced) {
+            state.patchOfflineAnnounced = true;
+            appendSystemLine(tx('review.agentPatchOffline'), 'ss-agent-msg-warn');
+        }
     }
 
     function showPanelError(message) {
@@ -481,14 +697,17 @@
                 while ((idx = buffer.indexOf('\n\n')) !== -1) {
                     var block = buffer.slice(0, idx);
                     buffer = buffer.slice(idx + 2);
-                    if (block.trim()) onEvent(parseSseBlock(block));
+                    if (block.trim()) await onEvent(parseSseBlock(block));
                 }
             }
-            if (buffer.trim()) onEvent(parseSseBlock(buffer));
+            if (buffer.trim()) await onEvent(parseSseBlock(buffer));
             return;
         }
         var text = typeof response.text === 'function' ? await response.text() : '';
-        parseSseStream(text).forEach(onEvent);
+        var events = parseSseStream(text);
+        for (var i = 0; i < events.length; i += 1) {
+            await onEvent(events[i]);
+        }
     }
 
     function canSend(text) {
@@ -508,6 +727,7 @@
         var assistantRow = appendMessage('assistant', '');
         var assembled = '';
         var errored = false;
+        var seenToolResults = new Set();
         try {
             var response = await root.fetch(STREAM_URL, {
                 method: 'POST',
@@ -532,7 +752,7 @@
                 state.streaming = false;
                 return true;
             }
-            await consumeSse(response, function (evt) {
+            await consumeSse(response, async function (evt) {
                 if (!evt) return;
                 if (evt.event === 'token') {
                     assembled += (evt.data && evt.data.text) || '';
@@ -541,6 +761,12 @@
                     applyToolCall(
                         evt.data && evt.data.name,
                         evt.data && (evt.data.input != null ? evt.data.input : evt.data.arguments)
+                    );
+                } else if (evt.event === 'tool_result') {
+                    await ingestToolResult(
+                        evt.data && evt.data.name,
+                        evt.data && evt.data.result,
+                        seenToolResults
                     );
                 } else if (evt.event === 'done') {
                     if (evt.data && evt.data.response_id) {
@@ -747,6 +973,9 @@
         parseSseBlock: parseSseBlock,
         parseSseStream: parseSseStream,
         applyToolCall: applyToolCall,
+        ingestToolResult: ingestToolResult,
+        applyOpsAndSave: applyOpsAndSave,
+        renderPlanCard: renderPlanCard,
         placeBesidePlayer: placeBesidePlayer,
         clampToViewport: clampToViewport,
         rectsOverlap: rectsOverlap,

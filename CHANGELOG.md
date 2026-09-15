@@ -76,6 +76,14 @@
   `category_override`. Auth is unchanged: empty API key + signed-in xAI account
   bearer is enough. `merge_findings` / `unmerge_finding` return
   `{"unsupported": true}` until the panel grows a patch-callable merge.
+- **Added: the 『s』 panel applies agent review patches and plans.** A
+  `review_patch` in `tool_result` updates the finding card through the existing
+  verdict/severity/notes setters, marks the report modified, and saves with the
+  same `Zapisz recenzję` path (`resetGeneration` included). A `review_plan`
+  renders per-op checkboxes with Apply/Cancel; Apply posts “Zastosowano N z M”
+  into the chat. Offline `file://` reports announce that patches cannot be saved
+  and never apply silently. Save 409/network failures show a Retry instead of
+  looping. Merge ops stay unsupported. Cut `w2-02-review-panel`.
 
 - **Internal: refresh runtime and development dependencies.** Updated the lockfile
   to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.

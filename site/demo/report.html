@@ -1810,8 +1810,7 @@ body.is-resizing * {
     position: absolute;
     top: 0;
     left: 0;
-    pointer-events: auto;
-    cursor: default;
+    pointer-events: none;
     border-radius: var(--radius-md);
 }
 
@@ -1819,46 +1818,6 @@ body.is-resizing * {
     pointer-events: auto;
     cursor: crosshair;
     touch-action: none;
-}
-
-.lightbox-annotation-svg.selecting {
-    pointer-events: auto;
-    cursor: default;
-    touch-action: none;
-}
-
-.lightbox-annotation-svg .annotation-selected {
-    outline: none;
-}
-
-.lightbox-annotation-svg .annotation-selection-box {
-    pointer-events: none;
-}
-
-.lightbox-annotation-svg .annotation-handle {
-    fill: var(--ss-accent);
-    stroke: var(--surface-primary);
-    stroke-width: 0.003;
-    cursor: nwse-resize;
-}
-
-.lightbox-annotation-svg .annotation-handle-start,
-.lightbox-annotation-svg .annotation-handle-end {
-    cursor: grab;
-}
-
-.lightbox-annotation-svg .annotation-handle-nw,
-.lightbox-annotation-svg .annotation-handle-se {
-    cursor: nwse-resize;
-}
-
-.lightbox-annotation-svg .annotation-handle-ne,
-.lightbox-annotation-svg .annotation-handle-sw {
-    cursor: nesw-resize;
-}
-
-.lightbox-annotation-svg .annotation-handle-size {
-    cursor: nwse-resize;
 }
 
 .lightbox-toolbar {
@@ -1925,7 +1884,6 @@ body.is-resizing * {
 }
 
 .lightbox-toolbar .undo-btn,
-.lightbox-toolbar .delete-btn,
 .lightbox-toolbar .clear-btn {
     padding: var(--space-xs) var(--space-sm);
     background: var(--surface-elevated);
@@ -1935,16 +1893,8 @@ body.is-resizing * {
     cursor: pointer;
     font-size: var(--fs-md);}
 
-.lightbox-toolbar .delete-btn,
 .lightbox-toolbar .clear-btn {
     color: var(--color-high);
-}
-
-.lightbox-toolbar .stroke-width-input,
-.lightbox-toolbar .font-size-input {
-    width: 72px;
-    accent-color: var(--ss-accent);
-    cursor: pointer;
 }
 
 .lightbox-toolbar .done-btn {
@@ -2158,7 +2108,6 @@ body.is-resizing * {
 .header-tabs .tab-btn:focus-visible,
 .lang-toggle button:focus-visible,
 .lightbox-toolbar .tool-btn:focus-visible,
-.lightbox-toolbar .delete-btn:focus-visible,
 .lightbox-close:focus-visible,
 .sidebar-resizer:focus-visible {
     outline: 2px solid var(--ss-accent);
@@ -2873,209 +2822,6 @@ footer::after {
 .finding-title .index::before { content: "["; opacity: 0.45; }
 .finding-title .index::after  { content: "]"; opacity: 0.45; }
 
-/* Floating agent chat — docked beside the player, never over it.
-   Reads screenscribe-theme.css tokens only; no literal theme colors. */
-
-.ss-agent-root {
-    position: fixed;
-    z-index: 8000;
-    display: flex;
-    flex-direction: column;
-    pointer-events: none;
-}
-
-html.ss-agent-sheet .app-container {
-    right: var(--ss-agent-sheet-width, 360px);
-}
-
-.ss-agent-root.ss-agent-sheet {
-    left: auto;
-    right: 0;
-    top: var(--header-height);
-    width: var(--ss-agent-sheet-width, 360px);
-    height: calc(100% - var(--header-height));
-}
-
-.ss-agent-root.ss-agent-sheet .ss-agent-header {
-    cursor: default;
-}
-
-.ss-agent-root > * {
-    pointer-events: auto;
-}
-
-.ss-agent-fab {
-    width: 56px;
-    height: 56px;
-    border-radius: var(--radius-full);
-    border: 1px solid var(--border-accent);
-    background: var(--surface-elevated);
-    color: var(--text-primary);
-    box-shadow: var(--shadow-lg);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    font-family: var(--font-mono);
-    font-size: var(--fs-xl);
-    font-weight: 500;
-    letter-spacing: 0;
-    line-height: 1;
-}
-
-.ss-agent-fab:hover,
-.ss-agent-fab:focus-visible {
-    background: var(--surface-hover);
-    box-shadow: var(--shadow-glow);
-    outline: none;
-}
-
-.ss-agent-logo {
-    font-family: var(--font-mono);
-    color: var(--ss-accent-hi);
-    text-transform: lowercase;
-}
-
-.ss-agent-expanded .ss-agent-fab {
-    position: absolute;
-    right: var(--space-sm);
-    top: var(--space-sm);
-    width: 32px;
-    height: 32px;
-    font-size: var(--fs-md);
-    z-index: 2;
-}
-
-.ss-agent-panel {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    height: 100%;
-    background: var(--surface-card);
-    color: var(--text-primary);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-lg);
-    overflow: hidden;
-}
-
-.ss-agent-header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    padding: var(--space-sm) var(--space-md);
-    padding-right: 48px;
-    background: var(--surface-elevated);
-    border-bottom: 1px solid var(--border-default);
-    cursor: grab;
-    user-select: none;
-}
-
-.ss-agent-title {
-    margin: 0;
-    font-family: var(--font-mono);
-    font-size: var(--fs-sm);
-    font-weight: 500;
-    color: var(--text-secondary);
-    text-transform: lowercase;
-}
-
-.ss-agent-log {
-    flex: 1 1 auto;
-    overflow: auto;
-    padding: var(--space-sm) var(--space-md);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-    background: var(--surface-sunken);
-}
-
-.ss-agent-empty,
-.ss-agent-offline {
-    margin: 0;
-    font-size: var(--fs-sm);
-    color: var(--text-muted);
-}
-
-.ss-agent-offline {
-    padding: var(--space-sm) var(--space-md);
-    background: var(--decision-surface);
-    border-bottom: 1px solid var(--border-default);
-    color: var(--text-secondary);
-}
-
-.ss-agent-msg {
-    padding: var(--space-xs) var(--space-sm);
-    border-radius: var(--radius-sm);
-    font-size: var(--fs-sm);
-    line-height: 1.45;
-    white-space: pre-wrap;
-    user-select: text;
-}
-
-.ss-agent-msg-user {
-    align-self: flex-end;
-    background: var(--surface-hover);
-    color: var(--text-primary);
-}
-
-.ss-agent-msg-assistant {
-    align-self: flex-start;
-    background: var(--surface-elevated);
-    color: var(--text-primary);
-}
-
-.ss-agent-msg-error,
-.ss-agent-msg-system {
-    align-self: stretch;
-    color: var(--color-error);
-    border: 1px solid var(--border-default);
-}
-
-.ss-agent-form {
-    display: flex;
-    gap: var(--space-sm);
-    padding: var(--space-sm);
-    border-top: 1px solid var(--border-default);
-    background: var(--surface-elevated);
-}
-
-.ss-agent-input {
-    flex: 1 1 auto;
-    resize: none;
-    min-height: 2.5rem;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
-    background: var(--surface-primary);
-    color: var(--text-primary);
-    font-family: var(--font-sans);
-    font-size: var(--fs-sm);
-    padding: var(--space-xs) var(--space-sm);
-}
-
-.ss-agent-send {
-    border: 1px solid var(--border-accent);
-    border-radius: var(--radius-sm);
-    background: var(--ss-accent);
-    color: var(--ss-accent-ink);
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-    padding: var(--space-xs) var(--space-sm);
-    cursor: pointer;
-}
-
-.ss-agent-send:hover,
-.ss-agent-send:focus-visible {
-    background: var(--ss-accent-hi);
-}
-
-.finding.ss-agent-highlight,
-.annotation-container.ss-agent-highlight {
-    outline: 2px solid var(--ss-accent);
-    box-shadow: var(--shadow-glow);
-}
-
 </style>
 <!-- JSZip vendored + inlined (offline, no CDN) - see html_pro_assets/vendor/ -->
 <script>/*!
@@ -3423,16 +3169,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         <svg id="lightbox-svg" class="lightbox-annotation-svg"></svg>
     </div>
     <div id="lightbox-toolbar" class="lightbox-toolbar" style="display: none;" role="toolbar" aria-label="Annotation tools">
-        <button type="button" class="tool-btn" data-tool="select" data-i18n="toolSelect">Select</button>
         <button type="button" class="tool-btn" data-tool="pen" data-i18n="toolPen">Pen</button>
         <button type="button" class="tool-btn" data-tool="rect" data-i18n="toolRect">Rect</button>
         <button type="button" class="tool-btn" data-tool="arrow" data-i18n="toolArrow">Arrow</button>
         <button type="button" class="tool-btn" data-tool="text" data-i18n="toolText">Text</button>
         <input type="color" class="color-picker" value="#ffffff" data-default-token="--annotation-color-default">
-        <input type="range" class="stroke-width-input" min="0.002" max="0.03" step="0.001" value="0.008" data-i18n-title="propStroke" title="Stroke width">
-        <input type="range" class="font-size-input" min="0.012" max="0.18" step="0.002" value="0.036" hidden data-i18n-title="propFontSize" title="Font size">
         <button type="button" class="undo-btn" data-i18n="toolUndo">Undo</button>
-        <button type="button" class="delete-btn" data-i18n="toolDelete">Delete</button>
         <button type="button" class="clear-btn" data-i18n="toolClear">Clear</button>
         <button type="button" class="done-btn" data-action="close-lightbox" data-i18n="toolDone">Done</button>
     </div>
@@ -3512,10 +3254,6 @@ window.I18N_BUNDLE = {
             "toolRect": "Rect",
             "toolArrow": "Arrow",
             "toolText": "Text",
-            "toolSelect": "Select",
-            "toolDelete": "Delete",
-            "propStroke": "Stroke width",
-            "propFontSize": "Font size",
             "toolUndo": "Undo",
             "toolClear": "Clear",
             "toolDone": "Done",
@@ -3659,16 +3397,7 @@ window.I18N_BUNDLE = {
             "category_performance": "Performance",
             "category_accessibility": "Accessibility",
             "category_other": "Other",
-            "category_unknown": "Unknown",
-            "agentTitle": "screenscribe agent",
-            "agentToggle": "Open chat",
-            "agentCollapse": "Collapse chat",
-            "agentPlaceholder": "Ask about this recording…",
-            "agentSend": "Send",
-            "agentOffline": "Run `screenscribe serve` to chat about this report.",
-            "agentEmpty": "Ask anything about this recording.",
-            "agentLogo": "s",
-            "agentStreaming": "Thinking…"
+            "category_unknown": "Unknown"
         },
         "analyze": {
             "tab_capture": "Mark",
@@ -3780,10 +3509,6 @@ window.I18N_BUNDLE = {
             "toolRect": "Prostokąt",
             "toolArrow": "Strzałka",
             "toolText": "Tekst",
-            "toolSelect": "Zaznacz",
-            "toolDelete": "Usuń",
-            "propStroke": "Grubość kreski",
-            "propFontSize": "Rozmiar czcionki",
             "toolUndo": "Cofnij",
             "toolClear": "Wyczyść",
             "toolDone": "Gotowe",
@@ -3927,16 +3652,7 @@ window.I18N_BUNDLE = {
             "category_performance": "Wydajność",
             "category_accessibility": "Dostępność",
             "category_other": "Inne",
-            "category_unknown": "Nieznane",
-            "agentTitle": "agent screenscribe",
-            "agentToggle": "Otwórz czat",
-            "agentCollapse": "Zwiń czat",
-            "agentPlaceholder": "Pytaj o to nagranie…",
-            "agentSend": "Wyślij",
-            "agentOffline": "Uruchom `screenscribe serve`, aby porozmawiać o tym raporcie.",
-            "agentEmpty": "Zapytaj o to nagranie.",
-            "agentLogo": "s",
-            "agentStreaming": "Myślę…"
+            "category_unknown": "Nieznane"
         },
         "analyze": {
             "tab_capture": "Oznaczanie",
@@ -4989,7 +4705,7 @@ function snapshotFindingReview(state) {
         severity: source.severity || null,
         notes: source.notes || '',
         annotations: Array.isArray(source.annotations)
-            ? ensureAnnotationsHaveIds(source.annotations.map((annotation) => cloneAnnotation(annotation)))
+            ? source.annotations.map((annotation) => ({ ...annotation }))
             : [],
     };
 }
@@ -7956,50 +7672,6 @@ function seekToTimestamp(seconds) {
     });
 }
 
-function showAgentFrame(input) {
-    const payload = input && typeof input === 'object' ? input : {};
-    const findingId = payload.finding_id != null ? String(payload.finding_id) : '';
-    const timestamp = Number(payload.timestamp);
-    document.querySelectorAll('.ss-agent-highlight').forEach((node) => {
-        node.classList.remove('ss-agent-highlight');
-    });
-    let target = null;
-    if (findingId) {
-        target = document.querySelector(`.finding[data-finding-id="${findingId}"]`);
-    }
-    if (!target && Number.isFinite(timestamp)) {
-        const metas = document.querySelectorAll('.finding .finding-meta[data-timestamp]');
-        let bestDelta = Infinity;
-        metas.forEach((meta) => {
-            const value = Number(meta.dataset.timestamp);
-            if (!Number.isFinite(value)) return;
-            const delta = Math.abs(value - timestamp);
-            const article = meta.closest('.finding');
-            if (article && delta < bestDelta) {
-                bestDelta = delta;
-                target = article;
-            }
-        });
-    }
-    if (target) {
-        activateTab('findings');
-        target.classList.add('ss-agent-highlight');
-        const thumb = target.querySelector('.annotation-container');
-        if (thumb) thumb.classList.add('ss-agent-highlight');
-        if (typeof target.scrollIntoView === 'function') {
-            target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-    }
-    if (Number.isFinite(timestamp)) {
-        seekToTimestamp(timestamp);
-    }
-}
-
-window.__screenscribeAgentHost = {
-    seek: seekToTimestamp,
-    showFrame: showAgentFrame,
-};
-
 function exportTodoList() {
     const originalFindings = getOriginalFindingsList();
     const videoName = document.body.dataset.videoName || 'report';
@@ -9355,289 +9027,6 @@ function getActualImageRect(img) {
     };
 }
 
-const ANNOTATION_HANDLE_SIZE = 0.018;
-const ANNOTATION_HIT_SLOP = 0.02;
-
-function newAnnotationId() {
-    try {
-        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-            return crypto.randomUUID();
-        }
-    } catch (error) {
-        console.debug('newAnnotationId: crypto.randomUUID failed', error);
-    }
-    return `ann-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-}
-
-function ensureAnnotationId(ann) {
-    if (!ann || typeof ann !== 'object') return ann;
-    if (!ann.id) ann.id = newAnnotationId();
-    return ann;
-}
-
-function ensureAnnotationsHaveIds(annotations) {
-    if (!Array.isArray(annotations)) return [];
-    annotations.forEach(ensureAnnotationId);
-    return annotations;
-}
-
-function cloneAnnotation(ann) {
-    if (!ann || typeof ann !== 'object') return ann;
-    const copy = { ...ann };
-    if (Array.isArray(ann.points)) {
-        copy.points = ann.points.map((p) => ({ x: p.x, y: p.y }));
-    }
-    return copy;
-}
-
-function estimateTextWidth(ann) {
-    const fontSize = ann.fontSizeRel || 0.036;
-    const chars = (ann.text || '').length || 1;
-    return Math.max(fontSize, chars * fontSize * 0.55);
-}
-
-function annotationBounds(ann) {
-    if (!ann) return null;
-    if (ann.type === 'rect') return normalizeRect(ann);
-    if (ann.type === 'text') {
-        const fontSize = ann.fontSizeRel || 0.036;
-        return {
-            x: ann.x || 0,
-            y: ann.y || 0,
-            width: estimateTextWidth(ann),
-            height: fontSize * 1.25,
-        };
-    }
-    if (ann.type === 'arrow') {
-        const x = Math.min(ann.startX || 0, ann.endX || 0);
-        const y = Math.min(ann.startY || 0, ann.endY || 0);
-        return {
-            x,
-            y,
-            width: Math.abs((ann.endX || 0) - (ann.startX || 0)),
-            height: Math.abs((ann.endY || 0) - (ann.startY || 0)),
-        };
-    }
-    if (ann.type === 'pen' && Array.isArray(ann.points) && ann.points.length) {
-        let minX = Infinity;
-        let minY = Infinity;
-        let maxX = -Infinity;
-        let maxY = -Infinity;
-        ann.points.forEach((p) => {
-            minX = Math.min(minX, p.x);
-            minY = Math.min(minY, p.y);
-            maxX = Math.max(maxX, p.x);
-            maxY = Math.max(maxY, p.y);
-        });
-        return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
-    }
-    return null;
-}
-
-function annotationHandles(ann) {
-    if (!ann) return [];
-    if (ann.type === 'rect') {
-        const r = normalizeRect(ann);
-        return [
-            { id: 'nw', x: r.x, y: r.y },
-            { id: 'ne', x: r.x + r.width, y: r.y },
-            { id: 'se', x: r.x + r.width, y: r.y + r.height },
-            { id: 'sw', x: r.x, y: r.y + r.height },
-        ];
-    }
-    if (ann.type === 'arrow') {
-        return [
-            { id: 'start', x: ann.startX, y: ann.startY },
-            { id: 'end', x: ann.endX, y: ann.endY },
-        ];
-    }
-    if (ann.type === 'text') {
-        const fontSize = ann.fontSizeRel || 0.036;
-        return [{ id: 'size', x: (ann.x || 0) + estimateTextWidth(ann), y: (ann.y || 0) + fontSize }];
-    }
-    return [];
-}
-
-function distToSegment(px, py, x1, y1, x2, y2) {
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const len2 = dx * dx + dy * dy;
-    if (!len2) return Math.hypot(px - x1, py - y1);
-    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2));
-    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
-}
-
-function hitTestHandle(ann, x, y) {
-    const half = ANNOTATION_HANDLE_SIZE;
-    for (const handle of annotationHandles(ann)) {
-        if (Math.abs(x - handle.x) <= half && Math.abs(y - handle.y) <= half) {
-            return handle.id;
-        }
-    }
-    return null;
-}
-
-function hitTestAnnotation(ann, x, y) {
-    if (!ann) return false;
-    const slop = ANNOTATION_HIT_SLOP + (ann.strokeWidthRel || 0);
-    if (ann.type === 'rect') {
-        const r = normalizeRect(ann);
-        return x >= r.x - slop && x <= r.x + r.width + slop
-            && y >= r.y - slop && y <= r.y + r.height + slop;
-    }
-    if (ann.type === 'text') {
-        const bounds = annotationBounds(ann);
-        return bounds
-            && x >= bounds.x - slop && x <= bounds.x + bounds.width + slop
-            && y >= bounds.y - slop && y <= bounds.y + bounds.height + slop;
-    }
-    if (ann.type === 'arrow') {
-        return distToSegment(x, y, ann.startX, ann.startY, ann.endX, ann.endY) <= slop;
-    }
-    if (ann.type === 'pen' && Array.isArray(ann.points) && ann.points.length) {
-        if (ann.points.length === 1) {
-            return Math.hypot(x - ann.points[0].x, y - ann.points[0].y) <= slop;
-        }
-        for (let i = 1; i < ann.points.length; i += 1) {
-            const a = ann.points[i - 1];
-            const b = ann.points[i];
-            if (distToSegment(x, y, a.x, a.y, b.x, b.y) <= slop) return true;
-        }
-        return false;
-    }
-    return false;
-}
-
-function hitTestTopAnnotation(annotations, x, y) {
-    const list = Array.isArray(annotations) ? annotations : [];
-    for (let i = list.length - 1; i >= 0; i -= 1) {
-        if (hitTestAnnotation(list[i], x, y)) return list[i];
-    }
-    return null;
-}
-
-function moveAnnotationBy(ann, dx, dy) {
-    if (!ann) return ann;
-    if (ann.type === 'rect' || ann.type === 'text') {
-        ann.x = (ann.x || 0) + dx;
-        ann.y = (ann.y || 0) + dy;
-        return ann;
-    }
-    if (ann.type === 'arrow') {
-        ann.startX = (ann.startX || 0) + dx;
-        ann.startY = (ann.startY || 0) + dy;
-        ann.endX = (ann.endX || 0) + dx;
-        ann.endY = (ann.endY || 0) + dy;
-        return ann;
-    }
-    if (ann.type === 'pen' && Array.isArray(ann.points)) {
-        ann.points.forEach((p) => {
-            p.x += dx;
-            p.y += dy;
-        });
-    }
-    return ann;
-}
-
-function resizeAnnotationHandle(ann, handle, x, y) {
-    if (!ann || !handle) return ann;
-    if (ann.type === 'rect') {
-        const r = normalizeRect(ann);
-        let left = r.x;
-        let top = r.y;
-        let right = r.x + r.width;
-        let bottom = r.y + r.height;
-        if (handle === 'nw') { left = x; top = y; }
-        else if (handle === 'ne') { right = x; top = y; }
-        else if (handle === 'se') { right = x; bottom = y; }
-        else if (handle === 'sw') { left = x; bottom = y; }
-        const next = normalizeRect({ x: left, y: top, width: right - left, height: bottom - top });
-        ann.x = next.x;
-        ann.y = next.y;
-        ann.width = Math.max(0.008, next.width);
-        ann.height = Math.max(0.008, next.height);
-        return ann;
-    }
-    if (ann.type === 'arrow') {
-        if (handle === 'start') {
-            ann.startX = x;
-            ann.startY = y;
-        } else if (handle === 'end') {
-            ann.endX = x;
-            ann.endY = y;
-        }
-        return ann;
-    }
-    if (ann.type === 'text' && handle === 'size') {
-        const next = y - (ann.y || 0);
-        ann.fontSizeRel = Math.max(0.012, Math.min(0.2, next));
-    }
-    return ann;
-}
-
-function applyAnnotationProperties(ann, props) {
-    if (!ann || !props) return ann;
-    if (props.color != null) ann.color = props.color;
-    if (props.strokeWidthRel != null && ann.type !== 'text') {
-        ann.strokeWidthRel = props.strokeWidthRel;
-    }
-    if (props.fontSizeRel != null && ann.type === 'text') {
-        ann.fontSizeRel = props.fontSizeRel;
-    }
-    return ann;
-}
-
-function appendSelectionChrome(group, ann) {
-    if (!group || !ann) return;
-    const bounds = annotationBounds(ann);
-    if (bounds) {
-        const box = document.createElementNS(SVG_NS, 'rect');
-        box.setAttribute('x', String(bounds.x));
-        box.setAttribute('y', String(bounds.y));
-        box.setAttribute('width', String(Math.max(bounds.width, 0.004)));
-        box.setAttribute('height', String(Math.max(bounds.height, 0.004)));
-        box.setAttribute('fill', 'none');
-        box.setAttribute('stroke', ann.color || '#ffffff');
-        box.setAttribute('stroke-width', '0.004');
-        box.setAttribute('stroke-dasharray', '0.012 0.008');
-        box.setAttribute('pointer-events', 'none');
-        box.classList.add('annotation-selection-box');
-        group.appendChild(box);
-    }
-    annotationHandles(ann).forEach((handle) => {
-        const el = document.createElementNS(SVG_NS, 'rect');
-        const size = ANNOTATION_HANDLE_SIZE;
-        el.setAttribute('x', String(handle.x - size / 2));
-        el.setAttribute('y', String(handle.y - size / 2));
-        el.setAttribute('width', String(size));
-        el.setAttribute('height', String(size));
-        el.setAttribute('data-handle', handle.id);
-        el.classList.add('annotation-handle');
-        el.classList.add(`annotation-handle-${handle.id}`);
-        group.appendChild(el);
-    });
-}
-
-function overlayLayoutFromImage(img) {
-    if (!img || typeof img.getBoundingClientRect !== 'function') return null;
-    const imgRect = getActualImageRect(img);
-    const parent = img.parentElement;
-    const containerRect = parent && typeof parent.getBoundingClientRect === 'function'
-        ? parent.getBoundingClientRect()
-        : imgRect;
-    const baseWidth = img.naturalWidth || img.width || 1920;
-    const baseHeight = img.naturalHeight || img.height || 1080;
-    return {
-        imgRect,
-        offsetX: imgRect.left - containerRect.left,
-        offsetY: imgRect.top - containerRect.top,
-        scaleX: baseWidth ? imgRect.width / baseWidth : 1,
-        scaleY: baseHeight ? imgRect.height / baseHeight : 1,
-        baseWidth,
-        baseHeight,
-    };
-}
-
 function normalizeRect(ann) {
     const x1 = ann.x;
     const y1 = ann.y;
@@ -9765,7 +9154,7 @@ function createAnnotationElement(ann) {
     return null;
 }
 
-function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight = 1, options = {}) {
+function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight = 1) {
     if (!svg || !renderWidth || !renderHeight) return;
     while (svg.firstChild) {
         svg.firstChild.remove();
@@ -9775,23 +9164,11 @@ function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight 
     // 'meet' would preserve aspect ratio causing position drift on resize
     svg.setAttribute('preserveAspectRatio', 'none');
 
-    const selectedId = options && options.selectedId;
-    const showHandles = Boolean(options && options.showHandles);
     const group = document.createElementNS(SVG_NS, 'g');
-    let selectedAnn = null;
     (annotations || []).forEach(ann => {
         const el = createAnnotationElement(ann);
-        if (!el) return;
-        if (ann && ann.id) el.setAttribute('data-ann-id', ann.id);
-        if (selectedId && ann && ann.id === selectedId) {
-            el.classList.add('annotation-selected');
-            selectedAnn = ann;
-        }
-        group.appendChild(el);
+        if (el) group.appendChild(el);
     });
-    if (showHandles && selectedAnn) {
-        appendSelectionChrome(group, selectedAnn);
-    }
     svg.appendChild(group);
 }
 
@@ -9949,13 +9326,8 @@ class LightboxAnnotationTool {
         this.currentPath = [];
         this.draftEl = null;
         this.textDraft = null;
-        this.selectedId = null;
-        this.dragMode = null;
-        this.dragHandle = null;
-        this.dragOrigin = null;
-        this.dragSnapshot = null;
-        this.baseWidth = (img && (img.naturalWidth || img.width)) || 1920;
-        this.baseHeight = (img && (img.naturalHeight || img.height)) || 1080;
+        this.baseWidth = img.naturalWidth || img.width || 1920;
+        this.baseHeight = img.naturalHeight || img.height || 1080;
         this.resizeObserver = null;
         this.boundHandlers = [];
 
@@ -9966,92 +9338,48 @@ class LightboxAnnotationTool {
         this.syncOverlaySize();
         this.bindEvents();
         this.loadAnnotations();
-        this.render();
-        this.setTool('select');
-        if (typeof requestAnimationFrame === 'function') {
-            requestAnimationFrame(() => this.syncOverlaySize());
-        }
+        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
+        // Don't auto-select tool - user must click toolbar to start drawing
+        // This prevents accidental annotations when just viewing
     }
 
     bindEvents() {
-        if (this.toolbar && this.toolbar.querySelectorAll) {
-            this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
-                const handler = (e) => {
-                    e.stopPropagation();
-                    this.selectTool(btn.dataset.tool);
-                };
-                btn.addEventListener('click', handler);
-                this.boundHandlers.push({ target: btn, event: 'click', handler });
-            });
-        }
-
-        const colorPicker = this.toolbar && this.toolbar.querySelector
-            ? this.toolbar.querySelector('.color-picker')
-            : null;
-        if (colorPicker) {
-            colorPicker.value = this.color;
-            const colorClick = (e) => e.stopPropagation();
-            const colorInput = (e) => {
-                this.color = e.target.value;
-                this.applyColorToActiveDraft();
-            };
-            colorPicker.addEventListener('click', colorClick);
-            colorPicker.addEventListener('input', colorInput);
-            this.boundHandlers.push({ target: colorPicker, event: 'click', handler: colorClick });
-            this.boundHandlers.push({ target: colorPicker, event: 'input', handler: colorInput });
-        }
-
-        const strokeInput = this.toolbar && this.toolbar.querySelector
-            ? this.toolbar.querySelector('.stroke-width-input')
-            : null;
-        if (strokeInput) {
-            strokeInput.value = String(this.strokeWidth);
-            const strokeHandler = (e) => {
+        // Tool selection
+        this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
+            const handler = (e) => {
                 e.stopPropagation();
-                this.strokeWidth = Number(e.target.value) || this.strokeWidth;
-                this.applyPropertiesToSelected({ strokeWidthRel: this.strokeWidth });
+                this.selectTool(btn.dataset.tool);
             };
-            strokeInput.addEventListener('input', strokeHandler);
-            this.boundHandlers.push({ target: strokeInput, event: 'input', handler: strokeHandler });
-        }
+            btn.addEventListener('click', handler);
+            this.boundHandlers.push({ target: btn, event: 'click', handler });
+        });
 
-        const fontInput = this.toolbar && this.toolbar.querySelector
-            ? this.toolbar.querySelector('.font-size-input')
-            : null;
-        if (fontInput) {
-            const fontHandler = (e) => {
-                e.stopPropagation();
-                this.applyPropertiesToSelected({ fontSizeRel: Number(e.target.value) });
-            };
-            fontInput.addEventListener('input', fontHandler);
-            this.boundHandlers.push({ target: fontInput, event: 'input', handler: fontHandler });
-        }
+        // Color picker
+        const colorPicker = this.toolbar.querySelector('.color-picker');
+        // Keep the picker's swatch in sync with the token-derived default so the
+        // HTML literal mirror and the logical default never diverge.
+        if (colorPicker) colorPicker.value = this.color;
+        const colorClick = (e) => e.stopPropagation();
+        // One colour source of truth (this.color) for ALL annotation types.
+        // Recolour any in-progress draft live so the picker affects the
+        // annotation being placed identically for shapes and text.
+        const colorInput = (e) => { this.color = e.target.value; this.applyColorToActiveDraft(); };
+        colorPicker.addEventListener('click', colorClick);
+        colorPicker.addEventListener('input', colorInput);
+        this.boundHandlers.push({ target: colorPicker, event: 'click', handler: colorClick });
+        this.boundHandlers.push({ target: colorPicker, event: 'input', handler: colorInput });
 
-        const undoBtn = this.toolbar && this.toolbar.querySelector
-            ? this.toolbar.querySelector('.undo-btn')
-            : null;
-        const clearBtn = this.toolbar && this.toolbar.querySelector
-            ? this.toolbar.querySelector('.clear-btn')
-            : null;
-        const deleteBtn = this.toolbar && this.toolbar.querySelector
-            ? this.toolbar.querySelector('.delete-btn')
-            : null;
-        if (undoBtn) {
-            const undoHandler = (e) => { e.stopPropagation(); this.undo(); };
-            undoBtn.addEventListener('click', undoHandler);
-            this.boundHandlers.push({ target: undoBtn, event: 'click', handler: undoHandler });
-        }
-        if (clearBtn) {
-            const clearHandler = (e) => { e.stopPropagation(); this.clear(); };
-            clearBtn.addEventListener('click', clearHandler);
-            this.boundHandlers.push({ target: clearBtn, event: 'click', handler: clearHandler });
-        }
-        if (deleteBtn) {
-            const deleteHandler = (e) => { e.stopPropagation(); this.deleteSelected(); };
-            deleteBtn.addEventListener('click', deleteHandler);
-            this.boundHandlers.push({ target: deleteBtn, event: 'click', handler: deleteHandler });
-        }
+        // Undo/Clear
+        const undoBtn = this.toolbar.querySelector('.undo-btn');
+        const clearBtn = this.toolbar.querySelector('.clear-btn');
+        const undoHandler = (e) => { e.stopPropagation(); this.undo(); };
+        const clearHandler = (e) => { e.stopPropagation(); this.clear(); };
+        undoBtn.addEventListener('click', undoHandler);
+        clearBtn.addEventListener('click', clearHandler);
+        this.boundHandlers.push({ target: undoBtn, event: 'click', handler: undoHandler });
+        this.boundHandlers.push({ target: clearBtn, event: 'click', handler: clearHandler });
 
+        // Drawing events (pointer)
         const start = (e) => this.startDraw(e);
         const move = (e) => this.draw(e);
         const end = (e) => this.endDraw(e);
@@ -10062,94 +9390,52 @@ class LightboxAnnotationTool {
         this.boundHandlers.push({ target: this.svg, event: 'pointermove', handler: move });
         this.boundHandlers.push({ target: window, event: 'pointerup', handler: end });
 
-        const keyHandler = (e) => this.onKeyDown(e);
-        document.addEventListener('keydown', keyHandler);
-        this.boundHandlers.push({ target: document, event: 'keydown', handler: keyHandler });
-
-        const onViewportChange = () => {
-            this.syncOverlaySize();
-            this.render();
-        };
-        window.addEventListener('scroll', onViewportChange, true);
-        window.addEventListener('resize', onViewportChange);
-        this.boundHandlers.push({ target: window, event: 'scroll', handler: onViewportChange, options: true });
-        this.boundHandlers.push({ target: window, event: 'resize', handler: onViewportChange });
-        const overlayHost = this.img && this.img.parentElement;
-        if (overlayHost && overlayHost.addEventListener) {
-            overlayHost.addEventListener('scroll', onViewportChange);
-            this.boundHandlers.push({ target: overlayHost, event: 'scroll', handler: onViewportChange });
-        }
-
+        // Resize observer to keep overlay in sync with image size
         this.resizeObserver = new ResizeObserver(() => {
             this.syncOverlaySize();
-            this.render();
+            // Always render with normalized coordinates (1, 1) - CSS transform handles scaling
+            renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
         });
-        if (this.img) this.resizeObserver.observe(this.img);
-    }
-
-    setTool(tool) {
-        this.tool = tool || null;
-        if (this.toolbar && this.toolbar.querySelectorAll) {
-            this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.tool === this.tool);
-            });
-        }
-        if (this.svg && this.svg.classList) {
-            const drawing = this.tool !== null && this.tool !== 'select';
-            this.svg.classList.toggle('drawing', drawing);
-            this.svg.classList.toggle('selecting', this.tool === 'select' || this.tool === null);
-        }
+        this.resizeObserver.observe(this.img);
     }
 
     selectTool(tool) {
-        this.setTool(this.tool === tool ? null : tool);
-    }
-
-    render() {
-        if (!this.svg) return;
-        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1, {
-            selectedId: this.selectedId,
-            showHandles: Boolean(this.selectedId),
+        this.tool = this.tool === tool ? null : tool;
+        this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tool === this.tool);
         });
-    }
-
-    selectedAnnotation() {
-        if (!this.selectedId) return null;
-        return this.annotations.find((ann) => ann.id === this.selectedId) || null;
+        this.svg.classList.toggle('drawing', this.tool !== null);
     }
 
     syncOverlaySize() {
-        if (!this.img || !this.svg || typeof this.img.getBoundingClientRect !== 'function') return;
-        const layout = overlayLayoutFromImage(this.img);
-        if (!layout || !layout.imgRect || !layout.imgRect.width) return;
-        this.baseWidth = layout.baseWidth;
-        this.baseHeight = layout.baseHeight;
-        this.svg.style.width = `${layout.baseWidth}px`;
-        this.svg.style.height = `${layout.baseHeight}px`;
-        this.svg.style.left = `${layout.offsetX}px`;
-        this.svg.style.top = `${layout.offsetY}px`;
+        // Use actual image rect to account for object-fit: contain
+        const imgRect = getActualImageRect(this.img);
+        const containerRect = this.img.parentElement.getBoundingClientRect();
+        const offsetX = imgRect.left - containerRect.left;
+        const offsetY = imgRect.top - containerRect.top;
+        // Position SVG over the actual visible image area
+        // viewBox is set by renderAnnotationsToSvg to 0 0 1 1 (normalized coordinates)
+        this.svg.style.width = `${this.baseWidth}px`;
+        this.svg.style.height = `${this.baseHeight}px`;
+        this.svg.style.left = `${offsetX}px`;
+        this.svg.style.top = `${offsetY}px`;
+        const scaleX = imgRect.width / this.baseWidth;
+        const scaleY = imgRect.height / this.baseHeight;
         this.svg.style.transformOrigin = 'top left';
-        this.svg.style.transform = `scale(${layout.scaleX}, ${layout.scaleY})`;
+        this.svg.style.transform = `scale(${scaleX}, ${scaleY})`;
     }
 
     getPosPct(e) {
-        // Re-read the live image box on every pointer sample. Caching it at
-        // pointerdown (or only on ResizeObserver) is what drifted annotations
-        // after lightbox scroll / player layout change.
-        this.syncOverlaySize();
+        // Use actual image rect to account for object-fit: contain
         const rect = getActualImageRect(this.img);
+        // Clamp to 0-1 range to prevent out-of-bounds annotations
         const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
         const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
         return { x, y, w: rect.width, h: rect.height };
     }
 
     startDraw(e) {
-        const drawing = this.tool && this.tool !== 'select';
-        if (!drawing) {
-            if (e && e.stopPropagation) e.stopPropagation();
-            this.beginSelectOrDrag(e);
-            return;
-        }
+        if (!this.tool) return;
         e.stopPropagation();
         const pos = this.getPosPct(e);
         this.startX = pos.x;
@@ -10202,143 +9488,7 @@ class LightboxAnnotationTool {
         }
     }
 
-    beginSelectOrDrag(e) {
-        if (this.textDraft) return;
-        const pos = this.getPosPct(e);
-        const current = this.selectedAnnotation();
-        if (current) {
-            const handle = hitTestHandle(current, pos.x, pos.y);
-            if (handle) {
-                this.dragMode = 'resize';
-                this.dragHandle = handle;
-                this.dragOrigin = pos;
-                this.dragSnapshot = cloneAnnotation(current);
-                this.isDrawing = true;
-                if (this.svg && e && e.pointerId && this.svg.setPointerCapture) {
-                    this.svg.setPointerCapture(e.pointerId);
-                }
-                return;
-            }
-        }
-        const hit = this.selectAt(pos.x, pos.y);
-        if (hit) {
-            this.dragMode = 'move';
-            this.dragOrigin = pos;
-            this.dragSnapshot = cloneAnnotation(hit);
-            this.isDrawing = true;
-            if (this.svg && e && e.pointerId && this.svg.setPointerCapture) {
-                this.svg.setPointerCapture(e.pointerId);
-            }
-            return;
-        }
-        this.dragMode = null;
-        this.dragHandle = null;
-        this.dragSnapshot = null;
-        this.updatePropertyControls();
-        this.render();
-    }
-
-    selectAt(x, y) {
-        const hit = hitTestTopAnnotation(this.annotations, x, y);
-        this.selectedId = hit ? hit.id : null;
-        this.updatePropertyControls();
-        this.render();
-        return hit || null;
-    }
-
-    moveSelected(dx, dy) {
-        const ann = this.selectedAnnotation();
-        if (!ann) return null;
-        moveAnnotationBy(ann, dx, dy);
-        this.render();
-        return ann;
-    }
-
-    resizeSelected(handle, x, y) {
-        const ann = this.selectedAnnotation();
-        if (!ann) return null;
-        resizeAnnotationHandle(ann, handle, x, y);
-        this.render();
-        return ann;
-    }
-
-    deleteSelected() {
-        if (!this.selectedId) return false;
-        const before = this.annotations.length;
-        this.annotations = this.annotations.filter((ann) => ann.id !== this.selectedId);
-        const removed = this.annotations.length !== before;
-        this.selectedId = null;
-        this.dragMode = null;
-        this.updatePropertyControls();
-        this.render();
-        if (removed) this.saveAnnotations();
-        return removed;
-    }
-
-    applyPropertiesToSelected(props) {
-        const ann = this.selectedAnnotation();
-        if (!ann) return null;
-        applyAnnotationProperties(ann, props);
-        if (props && props.color != null) this.color = props.color;
-        if (props && props.strokeWidthRel != null) this.strokeWidth = props.strokeWidthRel;
-        this.render();
-        this.saveAnnotations();
-        return ann;
-    }
-
-    updatePropertyControls() {
-        if (!this.toolbar || !this.toolbar.querySelector) return;
-        const ann = this.selectedAnnotation();
-        const fontInput = this.toolbar.querySelector('.font-size-input');
-        const strokeInput = this.toolbar.querySelector('.stroke-width-input');
-        const picker = this.toolbar.querySelector('.color-picker');
-        if (fontInput) {
-            fontInput.hidden = !(ann && ann.type === 'text');
-            if (ann && ann.type === 'text') {
-                fontInput.value = String(ann.fontSizeRel || 0.036);
-            }
-        }
-        if (strokeInput) {
-            strokeInput.hidden = Boolean(ann && ann.type === 'text');
-            if (ann && ann.strokeWidthRel != null) {
-                strokeInput.value = String(ann.strokeWidthRel);
-            } else {
-                strokeInput.value = String(this.strokeWidth);
-            }
-        }
-        if (picker && ann && ann.color) picker.value = ann.color;
-    }
-
-    onKeyDown(e) {
-        if (!this.selectedId || this.textDraft) return;
-        const target = e.target;
-        const tag = target && target.tagName ? String(target.tagName).toUpperCase() : '';
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || (target && target.isContentEditable)) return;
-        if (e.key === 'Delete' || e.key === 'Backspace') {
-            e.preventDefault();
-            this.deleteSelected();
-        }
-    }
-
     draw(e) {
-        if (this.dragMode === 'move' || this.dragMode === 'resize') {
-            if (e && e.stopPropagation) e.stopPropagation();
-            const pos = this.getPosPct(e);
-            const ann = this.selectedAnnotation();
-            if (!ann || !this.dragSnapshot) return;
-            const restored = cloneAnnotation(this.dragSnapshot);
-            Object.keys(ann).forEach((key) => {
-                if (!(key in restored)) delete ann[key];
-            });
-            Object.assign(ann, restored);
-            if (this.dragMode === 'move') {
-                moveAnnotationBy(ann, pos.x - this.dragOrigin.x, pos.y - this.dragOrigin.y);
-            } else {
-                resizeAnnotationHandle(ann, this.dragHandle, pos.x, pos.y);
-            }
-            this.render();
-            return;
-        }
         if (!this.isDrawing || !this.tool || !this.draftEl) return;
         e.stopPropagation();
         const pos = this.getPosPct(e);
@@ -10399,23 +9549,7 @@ class LightboxAnnotationTool {
     }
 
     endDraw(e) {
-        if (this.dragMode) {
-            if (e) {
-                if (e.stopPropagation) e.stopPropagation();
-                if (e.pointerId && this.svg && this.svg.releasePointerCapture) {
-                    this.svg.releasePointerCapture(e.pointerId);
-                }
-            }
-            this.dragMode = null;
-            this.dragHandle = null;
-            this.dragSnapshot = null;
-            this.dragOrigin = null;
-            this.isDrawing = false;
-            this.saveAnnotations();
-            this.render();
-            return;
-        }
-        if (!this.isDrawing || !this.tool || this.tool === 'select') return;
+        if (!this.isDrawing || !this.tool) return;
         if (e) {
             e.stopPropagation();
             if (e.pointerId) {
@@ -10428,18 +9562,18 @@ class LightboxAnnotationTool {
 
         if (this.tool === 'pen' && this.currentPath.length > 1) {
             const normPoints = this.currentPath.map(p => ({ x: p.x, y: p.y }));
-            this.annotations.push(ensureAnnotationId({
+            this.annotations.push({
                 type: 'pen',
                 points: normPoints,
                 color: this.color,
                 strokeWidthRel
-            }));
+            });
         } else if (this.tool === 'rect') {
             const w = pos.x - this.startX;
             const h = pos.y - this.startY;
             // Minimum size: 1% of image dimension (coordinates are normalized 0-1)
             if (Math.abs(w) > 0.01 && Math.abs(h) > 0.01) {
-                this.annotations.push(ensureAnnotationId({
+                this.annotations.push({
                     type: 'rect',
                     x: this.startX,
                     y: this.startY,
@@ -10447,14 +9581,14 @@ class LightboxAnnotationTool {
                     height: h,
                     color: this.color,
                     strokeWidthRel
-                }));
+                });
             }
         } else if (this.tool === 'arrow') {
             const dx = pos.x - this.startX;
             const dy = pos.y - this.startY;
             // Minimum length: 2% of image diagonal (coordinates are normalized 0-1)
             if (Math.sqrt(dx*dx + dy*dy) > 0.02) {
-                this.annotations.push(ensureAnnotationId({
+                this.annotations.push({
                     type: 'arrow',
                     startX: this.startX,
                     startY: this.startY,
@@ -10462,7 +9596,7 @@ class LightboxAnnotationTool {
                     endY: pos.y,
                     color: this.color,
                     strokeWidthRel
-                }));
+                });
             }
         }
 
@@ -10472,22 +9606,17 @@ class LightboxAnnotationTool {
             this.draftEl.parentNode.removeChild(this.draftEl);
         }
         this.draftEl = null;
-        this.render();
+        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
     }
 
     undo() {
-        const removed = this.annotations.pop();
-        if (removed && removed.id === this.selectedId) this.selectedId = null;
-        this.updatePropertyControls();
-        this.render();
+        this.annotations.pop();
+        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
     }
 
     clear() {
         this.annotations = [];
-        this.selectedId = null;
-        this.updatePropertyControls();
-        this.render();
-        this.saveAnnotations();
+        renderAnnotationsToSvg(this.svg, [], 1, 1);
     }
 
     // Open a non-blocking inline text draft at the clicked position. The draft
@@ -10590,16 +9719,16 @@ class LightboxAnnotationTool {
         }
         const text = (value || '').trim();
         if (text) {
-            this.annotations.push(ensureAnnotationId({
+            this.annotations.push({
                 type: 'text',
                 x: draft.pos.x,
                 y: draft.pos.y,
                 text,
                 color: this.color,
                 fontSizeRel: 0.036,
-            }));
+            });
         }
-        this.render();
+        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
     }
 
     cancelTextDraft() {
@@ -10618,12 +9747,7 @@ class LightboxAnnotationTool {
     applyColorToActiveDraft() {
         if (this.textDraft && this.textDraft.el && typeof this.textDraft.el.setAttribute === 'function') {
             this.textDraft.el.setAttribute('fill', this.color);
-            if (this.textDraft.input && this.textDraft.input.style) {
-                this.textDraft.input.style.color = this.color;
-            }
-            return;
         }
-        this.applyPropertiesToSelected({ color: this.color });
     }
 
     saveAnnotations() {
@@ -10631,7 +9755,7 @@ class LightboxAnnotationTool {
         if (!reportState.findings[this.findingId]) {
             reportState.findings[this.findingId] = createDefaultFindingState();
         }
-        reportState.findings[this.findingId].annotations = this.annotations.map((ann) => cloneAnnotation(ann));
+        reportState.findings[this.findingId].annotations = [...this.annotations];
         reportState.modified = true;
         scheduleSharedStateSync();
     }
@@ -10640,7 +9764,7 @@ class LightboxAnnotationTool {
         if (!this.findingId) return;
         const state = reportState.findings[this.findingId];
         if (state && state.annotations) {
-            this.annotations = ensureAnnotationsHaveIds(state.annotations.map((ann) => cloneAnnotation(ann)));
+            this.annotations = [...state.annotations];
         }
     }
 
@@ -10649,10 +9773,8 @@ class LightboxAnnotationTool {
         if (this.resizeObserver) {
             this.resizeObserver.disconnect();
         }
-        this.boundHandlers.forEach(({ target, event, handler, options }) => {
-            if (target && target.removeEventListener) {
-                target.removeEventListener(event, handler, options);
-            }
+        this.boundHandlers.forEach(({ target, event, handler }) => {
+            target.removeEventListener(event, handler);
         });
         this.boundHandlers = [];
         if (this.svg) {
@@ -10660,7 +9782,6 @@ class LightboxAnnotationTool {
                 this.svg.firstChild.remove();
             }
             this.svg.classList.remove('drawing');
-            this.svg.classList.remove('selecting');
         }
     }
 }
@@ -10709,23 +9830,27 @@ class AnnotationPreview {
     }
 
     syncSvgSize() {
-        if (!this.img || !this.svg) return;
-        const layout = overlayLayoutFromImage(this.img);
-        if (!layout || !layout.imgRect || !layout.imgRect.width) return;
-        this.baseWidth = layout.baseWidth;
-        this.baseHeight = layout.baseHeight;
-        this.svg.style.width = `${layout.baseWidth}px`;
-        this.svg.style.height = `${layout.baseHeight}px`;
-        this.svg.style.left = `${layout.offsetX}px`;
-        this.svg.style.top = `${layout.offsetY}px`;
+        // Use actual image rect to account for object-fit: contain
+        const imgRect = getActualImageRect(this.img);
+        const containerRect = this.img.parentElement.getBoundingClientRect();
+        const offsetX = imgRect.left - containerRect.left;
+        const offsetY = imgRect.top - containerRect.top;
+        // Position SVG over the actual visible image area
+        // viewBox is set by render() to 0 0 1 1 (normalized coordinates)
+        this.svg.style.width = `${this.baseWidth}px`;
+        this.svg.style.height = `${this.baseHeight}px`;
+        this.svg.style.left = `${offsetX}px`;
+        this.svg.style.top = `${offsetY}px`;
+        const scaleX = imgRect.width / this.baseWidth;
+        const scaleY = imgRect.height / this.baseHeight;
         this.svg.style.transformOrigin = 'top left';
-        this.svg.style.transform = `scale(${layout.scaleX}, ${layout.scaleY})`;
+        this.svg.style.transform = `scale(${scaleX}, ${scaleY})`;
     }
 
     loadAnnotations() {
         const review = reportState.findings[this.findingId];
         if (review && review.annotations && review.annotations.length > 0) {
-            this.annotations = ensureAnnotationsHaveIds(review.annotations.map((ann) => cloneAnnotation(ann)));
+            this.annotations = [...review.annotations];
             this.container.classList.add('has-annotations');
         } else {
             this.annotations = [];
@@ -10800,789 +9925,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initVoiceNotes();
     window.addEventListener('beforeunload', () => stopVoiceNoteCapture());
 });
-
-</script>
-<script>
-// Floating Screenscribe agent chat for the HTML review report.
-// Separate from review_app.js so W1-01/W1-05 can merge with one player hook.
-// SSE contract (w1-04): token / tool_call / tool_result / done / error.
-(function (root) {
-    'use strict';
-
-    var STORAGE_KEY = 'screenscribe:agent-panel';
-    var STREAM_URL = '/api/agent/chat/stream';
-    var PANEL_WIDTH = 360;
-    var PANEL_HEIGHT = 480;
-    var FAB_SIZE = 56;
-    var GAP = 16;
-    var VIEW_MARGIN = 8;
-    var SHEET_CLASS = 'ss-agent-sheet';
-
-    var state = {
-        collapsed: true,
-        left: null,
-        top: null,
-        sheet: false,
-        history: [],
-        previousResponseId: null,
-        streaming: false,
-        drag: null,
-        playerObserver: null,
-    };
-
-    function tx(key, args) {
-        var fn = typeof t === 'function' ? t : root.t;
-        if (typeof fn === 'function') {
-            return fn(key, args);
-        }
-        return key;
-    }
-
-    function storageKey() {
-        var loc = root.location || {};
-        return STORAGE_KEY + ':' + String(loc.origin || '') + String(loc.pathname || '');
-    }
-
-    function persist() {
-        try {
-            root.localStorage.setItem(storageKey(), JSON.stringify({
-                collapsed: state.collapsed,
-                left: state.sheet ? null : state.left,
-                top: state.sheet ? null : state.top,
-            }));
-        } catch (_err) { /* private-mode storage: position is session-only */ }
-    }
-
-    function restore() {
-        try {
-            var raw = root.localStorage.getItem(storageKey());
-            if (!raw) return;
-            var saved = JSON.parse(raw);
-            if (saved && typeof saved === 'object') {
-                if (typeof saved.collapsed === 'boolean') state.collapsed = saved.collapsed;
-                if (Number.isFinite(saved.left)) state.left = saved.left;
-                if (Number.isFinite(saved.top)) state.top = saved.top;
-            }
-        } catch (_err) { /* ignore corrupt cache */ }
-    }
-
-    function viewportSize() {
-        var doc = root.document;
-        var el = doc && doc.documentElement;
-        return {
-            width: (root.innerWidth || (el && el.clientWidth) || 1280),
-            height: (root.innerHeight || (el && el.clientHeight) || 720),
-        };
-    }
-
-    function clampToViewport(left, top, width, height, vw, vh) {
-        var maxL = Math.max(VIEW_MARGIN, vw - width - VIEW_MARGIN);
-        var maxT = Math.max(VIEW_MARGIN, vh - height - VIEW_MARGIN);
-        return {
-            left: Math.min(Math.max(VIEW_MARGIN, left), maxL),
-            top: Math.min(Math.max(VIEW_MARGIN, top), maxT),
-        };
-    }
-
-    function rectsOverlap(a, b) {
-        if (!a || !b) return false;
-        return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-    }
-
-    function boxFromRect(rect) {
-        if (!rect) return null;
-        var left = Number(rect.left) || 0;
-        var top = Number(rect.top) || 0;
-        var width = Number(rect.width);
-        var height = Number(rect.height);
-        var right = Number.isFinite(Number(rect.right)) ? Number(rect.right) : left + (Number.isFinite(width) ? width : 0);
-        var bottom = Number.isFinite(Number(rect.bottom)) ? Number(rect.bottom) : top + (Number.isFinite(height) ? height : 0);
-        return {
-            left: left,
-            top: top,
-            right: right,
-            bottom: bottom,
-            width: right - left,
-            height: bottom - top,
-        };
-    }
-
-    function unionBoxes(a, b) {
-        if (!a) return b || null;
-        if (!b) return a;
-        var left = Math.min(a.left, b.left);
-        var top = Math.min(a.top, b.top);
-        var right = Math.max(a.right, b.right);
-        var bottom = Math.max(a.bottom, b.bottom);
-        return {
-            left: left,
-            top: top,
-            right: right,
-            bottom: bottom,
-            width: right - left,
-            height: bottom - top,
-        };
-    }
-
-    function nodeBox(node) {
-        if (!node || typeof node.getBoundingClientRect !== 'function') return null;
-        var box = boxFromRect(node.getBoundingClientRect());
-        if (!box || (box.width <= 0 && box.height <= 0)) return null;
-        return box;
-    }
-
-    function panelBoxAt(left, top, width, height) {
-        return {
-            left: left,
-            top: top,
-            right: left + width,
-            bottom: top + height,
-            width: width,
-            height: height,
-        };
-    }
-
-    function positionClear(left, top, width, height, obstacle, viewport) {
-        var vw = viewport.width;
-        var vh = viewport.height;
-        var placed = clampToViewport(left, top, width, height, vw, vh);
-        var box = panelBoxAt(placed.left, placed.top, width, height);
-        if (box.left < VIEW_MARGIN - 0.5 || box.top < VIEW_MARGIN - 0.5) return null;
-        if (box.right > vw - VIEW_MARGIN + 0.5 || box.bottom > vh - VIEW_MARGIN + 0.5) return null;
-        if (obstacle && rectsOverlap(box, obstacle)) return null;
-        return placed;
-    }
-
-    function placeBesidePlayer(playerRect, viewport, panelSize) {
-        var w = panelSize.width;
-        var h = panelSize.height;
-        var vw = viewport.width;
-        var vh = viewport.height;
-        var obstacle = boxFromRect(playerRect) || playerRect;
-        var candidates = [
-            { left: obstacle.right + GAP, top: obstacle.top },
-            { left: obstacle.left - GAP - w, top: obstacle.top },
-            { left: obstacle.left, top: obstacle.bottom + GAP },
-            { left: Math.max(VIEW_MARGIN, vw - w - GAP), top: obstacle.bottom + GAP },
-            { left: obstacle.right + GAP, top: VIEW_MARGIN },
-            { left: VIEW_MARGIN, top: obstacle.bottom + GAP },
-            { left: obstacle.left, top: Math.max(VIEW_MARGIN, obstacle.top - GAP - h) },
-        ];
-        for (var i = 0; i < candidates.length; i += 1) {
-            var hit = positionClear(candidates[i].left, candidates[i].top, w, h, obstacle, viewport);
-            if (hit) {
-                return { left: hit.left, top: hit.top, sheet: false };
-            }
-        }
-        var docked = clampToViewport(vw - w - VIEW_MARGIN, VIEW_MARGIN, w, h, vw, vh);
-        return { left: docked.left, top: docked.top, sheet: true };
-    }
-
-    function parseSseBlock(block) {
-        var eventName = 'message';
-        var dataLines = [];
-        var lines = String(block || '').split(/\r?\n/);
-        for (var i = 0; i < lines.length; i += 1) {
-            var line = lines[i];
-            if (!line || line.charAt(0) === ':') continue;
-            if (line.indexOf('event:') === 0) {
-                eventName = line.slice(6).trim();
-            } else if (line.indexOf('data:') === 0) {
-                dataLines.push(line.slice(5).replace(/^\s/, ''));
-            }
-        }
-        var raw = dataLines.join('\n');
-        var data = raw;
-        if (raw) {
-            try { data = JSON.parse(raw); } catch (_err) { data = raw; }
-        } else {
-            data = {};
-        }
-        return { event: eventName, data: data };
-    }
-
-    function parseSseStream(text) {
-        return String(text || '')
-            .split(/\r?\n\r?\n/)
-            .filter(function (chunk) { return chunk.trim().length > 0; })
-            .map(parseSseBlock);
-    }
-
-    function normalizeToolInput(input) {
-        if (input == null) return {};
-        if (typeof input === 'string') {
-            try { return JSON.parse(input); } catch (_err) { return {}; }
-        }
-        if (typeof input === 'object') return input;
-        return {};
-    }
-
-    function applyToolCall(name, input, host) {
-        var target = host || root.__screenscribeAgentHost || {};
-        var payload = normalizeToolInput(input);
-        if (name === 'seek') {
-            var timestamp = Number(payload.timestamp != null ? payload.timestamp : payload.time);
-            if (Number.isFinite(timestamp) && typeof target.seek === 'function') {
-                target.seek(timestamp);
-            }
-            return 'seek';
-        }
-        if (name === 'show_frame') {
-            if (typeof target.showFrame === 'function') {
-                target.showFrame(payload);
-            }
-            return 'show_frame';
-        }
-        return null;
-    }
-
-    function isOffline() {
-        try {
-            if (root.location && root.location.protocol === 'file:') return true;
-        } catch (_err) { /* ignore */ }
-        return false;
-    }
-
-    function el(tag, className, attrs) {
-        var node = root.document.createElement(tag);
-        if (className) node.className = className;
-        if (attrs) {
-            Object.keys(attrs).forEach(function (key) {
-                var value = attrs[key];
-                if (key === 'id') node.id = value;
-                else if (key === 'hidden') node.hidden = Boolean(value);
-                else if (key === 'placeholder') node.placeholder = value;
-                else if (typeof node.setAttribute === 'function') node.setAttribute(key, value);
-                else node[key] = value;
-            });
-        }
-        return node;
-    }
-
-    function getRoot() {
-        return root.document.getElementById('ss-agent-root');
-    }
-
-    function playerRect() {
-        var doc = root.document;
-        var box = nodeBox(doc.getElementById('videoPlayer'));
-        box = unionBoxes(box, nodeBox(doc.getElementById('videoControls')));
-        box = unionBoxes(box, nodeBox(doc.querySelector('.video-controls-pro')));
-        if (!box) {
-            box = nodeBox(doc.querySelector('.video-container'))
-                || nodeBox(doc.querySelector('.main-column'))
-                || nodeBox(doc.querySelector('.video-panel'));
-        }
-        if (box) return box;
-        return { left: 16, top: 96, right: 640, bottom: 480, width: 624, height: 384 };
-    }
-
-    function protectedRect() {
-        return playerRect();
-    }
-
-    function resolveExpandedPlacement(obstacle, viewport, panelSize, savedLeft, savedTop) {
-        var w = panelSize.width;
-        var h = panelSize.height;
-        if (Number.isFinite(savedLeft) && Number.isFinite(savedTop)) {
-            var kept = positionClear(savedLeft, savedTop, w, h, obstacle, viewport);
-            if (kept) {
-                return { left: kept.left, top: kept.top, sheet: false };
-            }
-        }
-        return placeBesidePlayer(obstacle, viewport, panelSize);
-    }
-
-    function setSheetMode(rootEl, enabled) {
-        var doc = root.document;
-        var htmlEl = doc && doc.documentElement;
-        state.sheet = Boolean(enabled);
-        if (rootEl) {
-            if (state.sheet) rootEl.classList.add(SHEET_CLASS);
-            else rootEl.classList.remove(SHEET_CLASS);
-        }
-        if (htmlEl && htmlEl.classList) {
-            if (state.sheet) htmlEl.classList.add(SHEET_CLASS);
-            else htmlEl.classList.remove(SHEET_CLASS);
-        }
-        if (htmlEl && htmlEl.style) {
-            htmlEl.style.setProperty('--ss-agent-sheet-width', PANEL_WIDTH + 'px');
-        }
-    }
-
-    function defaultExpandedPosition() {
-        var view = viewportSize();
-        return placeBesidePlayer(protectedRect(), view, { width: PANEL_WIDTH, height: PANEL_HEIGHT });
-    }
-
-    function applyDomState() {
-        var rootEl = getRoot();
-        if (!rootEl) return;
-        var collapsed = state.collapsed;
-        if (collapsed) {
-            rootEl.classList.add('ss-agent-collapsed');
-            rootEl.classList.remove('ss-agent-expanded');
-        } else {
-            rootEl.classList.add('ss-agent-expanded');
-            rootEl.classList.remove('ss-agent-collapsed');
-        }
-        var fab = root.document.getElementById('ss-agent-fab');
-        if (fab) {
-            fab.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-            fab.setAttribute('aria-label', collapsed ? tx('review.agentToggle') : tx('review.agentCollapse'));
-        }
-        var panel = root.document.getElementById('ss-agent-panel');
-        var view = viewportSize();
-        if (collapsed) {
-            setSheetMode(rootEl, false);
-            var fabPos = clampToViewport(
-                view.width - FAB_SIZE - GAP,
-                view.height - FAB_SIZE - GAP,
-                FAB_SIZE,
-                FAB_SIZE,
-                view.width,
-                view.height
-            );
-            rootEl.style.left = fabPos.left + 'px';
-            rootEl.style.top = fabPos.top + 'px';
-            rootEl.style.right = 'auto';
-            rootEl.style.width = FAB_SIZE + 'px';
-            rootEl.style.height = FAB_SIZE + 'px';
-            if (panel) panel.hidden = true;
-            return;
-        }
-        var obstacle = protectedRect();
-        var probe = obstacle;
-        if (state.sheet) {
-            probe = unionBoxes(obstacle, {
-                left: obstacle.right,
-                top: obstacle.top,
-                right: Math.min(view.width, obstacle.right + PANEL_WIDTH + GAP),
-                bottom: obstacle.bottom,
-                width: 0,
-                height: 0,
-            }) || obstacle;
-        }
-        var savedLeft = state.drag ? state.left : (state.sheet ? null : state.left);
-        var savedTop = state.drag ? state.top : (state.sheet ? null : state.top);
-        if (state.drag && Number.isFinite(state.left) && Number.isFinite(state.top)) {
-            var dragged = positionClear(state.left, state.top, PANEL_WIDTH, PANEL_HEIGHT, obstacle, view);
-            if (dragged) {
-                state.left = dragged.left;
-                state.top = dragged.top;
-                state.sheet = false;
-            } else {
-                var placedDrag = placeBesidePlayer(obstacle, view, { width: PANEL_WIDTH, height: PANEL_HEIGHT });
-                state.left = placedDrag.left;
-                state.top = placedDrag.top;
-                state.sheet = Boolean(placedDrag.sheet);
-            }
-        } else {
-            var placed = resolveExpandedPlacement(
-                probe,
-                view,
-                { width: PANEL_WIDTH, height: PANEL_HEIGHT },
-                savedLeft,
-                savedTop
-            );
-            state.left = placed.left;
-            state.top = placed.top;
-            state.sheet = Boolean(placed.sheet);
-        }
-        setSheetMode(rootEl, state.sheet);
-        if (state.sheet) {
-            rootEl.style.left = 'auto';
-            rootEl.style.right = '0px';
-            rootEl.style.top = '';
-            rootEl.style.width = PANEL_WIDTH + 'px';
-            rootEl.style.height = '';
-        } else {
-            rootEl.style.right = 'auto';
-            rootEl.style.left = state.left + 'px';
-            rootEl.style.top = state.top + 'px';
-            rootEl.style.width = PANEL_WIDTH + 'px';
-            rootEl.style.height = PANEL_HEIGHT + 'px';
-        }
-        if (panel) panel.hidden = false;
-    }
-
-    function setCollapsed(next) {
-        state.collapsed = Boolean(next);
-        if (state.collapsed) {
-            state.sheet = false;
-        }
-        applyDomState();
-        persist();
-    }
-
-    function relayout() {
-        if (state.drag) return;
-        applyDomState();
-        if (!state.collapsed) persist();
-    }
-
-    function toggle() {
-        setCollapsed(!state.collapsed);
-    }
-
-    function appendMessage(role, text) {
-        var log = root.document.getElementById('ss-agent-log');
-        if (!log) return null;
-        var row = el('div', 'ss-agent-msg ss-agent-msg-' + role);
-        row.textContent = text;
-        log.appendChild(row);
-        if (typeof log.scrollTop === 'number') {
-            log.scrollTop = log.scrollHeight || 0;
-        }
-        return row;
-    }
-
-    function paintAssistantError(row, message) {
-        var text = message || tx('review.agentEmpty');
-        if (row) {
-            row.textContent = text;
-            row.className = 'ss-agent-msg ss-agent-msg-error';
-            return row;
-        }
-        return appendMessage('error', text);
-    }
-
-    function removeEmptyAssistant(row) {
-        if (!row) return;
-        var text = String(row.textContent || '');
-        if (text) return;
-        if (row.parentNode && typeof row.parentNode.removeChild === 'function') {
-            row.parentNode.removeChild(row);
-        }
-    }
-
-    function showOfflineNotice() {
-        var notice = root.document.getElementById('ss-agent-offline');
-        var message = tx('review.agentOffline');
-        if (notice) {
-            notice.hidden = false;
-            notice.textContent = message;
-        } else {
-            appendMessage('system', message);
-        }
-    }
-
-    function showPanelError(message) {
-        var text = message || tx('review.agentEmpty');
-        appendMessage('error', text);
-        var notice = root.document.getElementById('ss-agent-offline');
-        if (notice && /screenscribe serve/i.test(String(text))) {
-            notice.hidden = false;
-            notice.textContent = text;
-        }
-    }
-
-    async function consumeSse(response, onEvent) {
-        var body = response && response.body;
-        if (body && typeof body.getReader === 'function') {
-            var reader = body.getReader();
-            var decoder = new TextDecoder();
-            var buffer = '';
-            while (true) {
-                var chunk = await reader.read();
-                if (chunk.done) break;
-                buffer += decoder.decode(chunk.value, { stream: true });
-                var idx;
-                while ((idx = buffer.indexOf('\n\n')) !== -1) {
-                    var block = buffer.slice(0, idx);
-                    buffer = buffer.slice(idx + 2);
-                    if (block.trim()) onEvent(parseSseBlock(block));
-                }
-            }
-            if (buffer.trim()) onEvent(parseSseBlock(buffer));
-            return;
-        }
-        var text = typeof response.text === 'function' ? await response.text() : '';
-        parseSseStream(text).forEach(onEvent);
-    }
-
-    function canSend(text) {
-        return Boolean(String(text || '').trim()) && !state.streaming;
-    }
-
-    async function send(text) {
-        var message = String(text || '').trim();
-        if (!message || state.streaming) return false;
-        appendMessage('user', message);
-        state.history.push({ role: 'user', content: message });
-        if (isOffline()) {
-            showOfflineNotice();
-            return true;
-        }
-        state.streaming = true;
-        var assistantRow = appendMessage('assistant', '');
-        var assembled = '';
-        var errored = false;
-        try {
-            var response = await root.fetch(STREAM_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Accept: 'text/event-stream',
-                },
-                body: JSON.stringify({
-                    message: message,
-                    history: state.history.slice(0, -1),
-                    previous_response_id: state.previousResponseId,
-                }),
-            });
-            if (!response || !response.ok) {
-                var fallback = tx('review.agentOffline');
-                paintAssistantError(assistantRow, fallback);
-                var notice = root.document.getElementById('ss-agent-offline');
-                if (notice && /screenscribe serve/i.test(String(fallback))) {
-                    notice.hidden = false;
-                    notice.textContent = fallback;
-                }
-                state.streaming = false;
-                return true;
-            }
-            await consumeSse(response, function (evt) {
-                if (!evt) return;
-                if (evt.event === 'token') {
-                    assembled += (evt.data && evt.data.text) || '';
-                    if (assistantRow) assistantRow.textContent = assembled;
-                } else if (evt.event === 'tool_call') {
-                    applyToolCall(
-                        evt.data && evt.data.name,
-                        evt.data && (evt.data.input != null ? evt.data.input : evt.data.arguments)
-                    );
-                } else if (evt.event === 'done') {
-                    if (evt.data && evt.data.response_id) {
-                        state.previousResponseId = evt.data.response_id;
-                    }
-                } else if (evt.event === 'error') {
-                    errored = true;
-                    paintAssistantError(
-                        assistantRow,
-                        (evt.data && evt.data.message) || tx('review.agentOffline')
-                    );
-                }
-            });
-            if (assembled) {
-                state.history.push({ role: 'assistant', content: assembled });
-            } else if (!errored) {
-                removeEmptyAssistant(assistantRow);
-            }
-        } catch (_err) {
-            showOfflineNotice();
-            if (assistantRow && !assembled) {
-                paintAssistantError(assistantRow, tx('review.agentOffline'));
-            }
-        }
-        state.streaming = false;
-        return true;
-    }
-
-    function startDrag(event) {
-        if (state.collapsed || state.sheet) return;
-        var point = event.touches ? event.touches[0] : event;
-        state.drag = {
-            startX: point.clientX,
-            startY: point.clientY,
-            origLeft: state.left,
-            origTop: state.top,
-        };
-        if (event.preventDefault) event.preventDefault();
-    }
-
-    function moveDrag(event) {
-        if (!state.drag) return;
-        var point = event.touches ? event.touches[0] : event;
-        var view = viewportSize();
-        var next = clampToViewport(
-            state.drag.origLeft + (point.clientX - state.drag.startX),
-            state.drag.origTop + (point.clientY - state.drag.startY),
-            PANEL_WIDTH,
-            PANEL_HEIGHT,
-            view.width,
-            view.height
-        );
-        state.left = next.left;
-        state.top = next.top;
-        applyDomState();
-    }
-
-    function endDrag() {
-        if (!state.drag) return;
-        state.drag = null;
-        persist();
-    }
-
-    function isComposerIme(event) {
-        return Boolean(event && (event.isComposing || event.keyCode === 229));
-    }
-
-    function isComposerEnter(event) {
-        if (!event) return false;
-        return event.key === 'Enter' || event.keyCode === 13;
-    }
-
-    function bindComposer(form, input) {
-        form.addEventListener('submit', function (event) {
-            if (event && event.preventDefault) event.preventDefault();
-            var value = input.value;
-            if (!canSend(value)) return;
-            input.value = '';
-            send(value);
-        });
-        input.addEventListener('keydown', function (event) {
-            if (!isComposerEnter(event)) return;
-            if (event.shiftKey) return;
-            if (isComposerIme(event)) return;
-            if (event.preventDefault) event.preventDefault();
-            if (typeof form.requestSubmit === 'function') {
-                form.requestSubmit();
-            } else if (typeof form.dispatchEvent === 'function') {
-                form.dispatchEvent({ type: 'submit', preventDefault: function () {} });
-            } else {
-                form.submit();
-            }
-        });
-    }
-
-    function buildDom() {
-        var doc = root.document;
-        if (getRoot()) return;
-        var rootEl = el('div', 'ss-agent-root ss-agent-collapsed', { id: 'ss-agent-root' });
-        var fab = el('button', 'ss-agent-fab', {
-            id: 'ss-agent-fab',
-            type: 'button',
-            'aria-expanded': 'false',
-            'data-i18n-attr': 'aria-label:agentToggle',
-        });
-        fab.setAttribute('aria-label', tx('review.agentToggle'));
-        var logo = el('span', 'ss-agent-logo', { 'data-i18n': 'agentLogo' });
-        logo.textContent = t('review.agentLogo');
-        fab.appendChild(logo);
-        fab.addEventListener('click', function () { toggle(); });
-
-        var panel = el('section', 'ss-agent-panel', {
-            id: 'ss-agent-panel',
-            hidden: 'hidden',
-            'aria-label': tx('review.agentTitle'),
-            'data-i18n-attr': 'aria-label:agentTitle',
-        });
-        var header = el('header', 'ss-agent-header', { id: 'ss-agent-header' });
-        var title = el('h2', 'ss-agent-title', { 'data-i18n': 'agentTitle' });
-        title.textContent = t('review.agentTitle');
-        header.appendChild(title);
-        header.addEventListener('mousedown', startDrag);
-        header.addEventListener('touchstart', startDrag);
-
-        var log = el('div', 'ss-agent-log', { id: 'ss-agent-log' });
-        var empty = el('p', 'ss-agent-empty', { 'data-i18n': 'agentEmpty' });
-        empty.textContent = t('review.agentEmpty');
-        log.appendChild(empty);
-
-        var offline = el('p', 'ss-agent-offline', { id: 'ss-agent-offline', hidden: 'hidden' });
-        offline.textContent = t('review.agentOffline');
-
-        var form = el('form', 'ss-agent-form', { id: 'ss-agent-form' });
-        var input = el('textarea', 'ss-agent-input', {
-            id: 'ss-agent-input',
-            rows: '2',
-            'data-i18n': 'agentPlaceholder',
-        });
-        input.placeholder = tx('review.agentPlaceholder');
-        var sendBtn = el('button', 'ss-agent-send', { type: 'submit', 'data-i18n': 'agentSend' });
-        sendBtn.textContent = t('review.agentSend');
-        form.appendChild(input);
-        form.appendChild(sendBtn);
-        bindComposer(form, input);
-
-        panel.appendChild(header);
-        panel.appendChild(offline);
-        panel.appendChild(log);
-        panel.appendChild(form);
-        rootEl.appendChild(fab);
-        rootEl.appendChild(panel);
-        (doc.body || doc.documentElement).appendChild(rootEl);
-
-        doc.addEventListener('mousemove', moveDrag);
-        doc.addEventListener('mouseup', endDrag);
-        doc.addEventListener('touchmove', moveDrag);
-        doc.addEventListener('touchend', endDrag);
-        bindLayoutListeners();
-    }
-
-    function observePlayer(node) {
-        if (!node || !state.playerObserver || typeof state.playerObserver.observe !== 'function') return;
-        try {
-            state.playerObserver.observe(node);
-        } catch (_err) { /* ignore unobservable nodes in tests */ }
-    }
-
-    function bindLayoutListeners() {
-        var doc = root.document;
-        if (root.addEventListener) {
-            root.addEventListener('resize', function () { relayout(); });
-        }
-        var video = doc.getElementById('videoPlayer');
-        if (video && typeof video.addEventListener === 'function') {
-            video.addEventListener('loadedmetadata', function () { relayout(); });
-        }
-        if (typeof root.ResizeObserver === 'function' && !state.playerObserver) {
-            state.playerObserver = new root.ResizeObserver(function () { relayout(); });
-            observePlayer(video);
-            observePlayer(doc.getElementById('videoControls'));
-            observePlayer(doc.querySelector('.video-controls-pro'));
-            observePlayer(doc.querySelector('.video-container'));
-            observePlayer(doc.querySelector('.video-panel'));
-        }
-    }
-
-    function init() {
-        restore();
-        buildDom();
-        applyDomState();
-        if (isOffline()) {
-            showOfflineNotice();
-        }
-        if (typeof applyTranslations === 'function') {
-            applyTranslations(getRoot());
-        }
-    }
-
-    var api = {
-        STORAGE_KEY: STORAGE_KEY,
-        STREAM_URL: STREAM_URL,
-        PANEL_WIDTH: PANEL_WIDTH,
-        PANEL_HEIGHT: PANEL_HEIGHT,
-        parseSseBlock: parseSseBlock,
-        parseSseStream: parseSseStream,
-        applyToolCall: applyToolCall,
-        placeBesidePlayer: placeBesidePlayer,
-        clampToViewport: clampToViewport,
-        rectsOverlap: rectsOverlap,
-        protectedRect: protectedRect,
-        resolveExpandedPlacement: resolveExpandedPlacement,
-        applyDomState: applyDomState,
-        relayout: relayout,
-        persist: persist,
-        restore: restore,
-        setCollapsed: setCollapsed,
-        toggle: toggle,
-        isOffline: isOffline,
-        send: send,
-        init: init,
-        getState: function () { return state; },
-    };
-    root.ScreenScribeAgentPanel = api;
-
-    if (!root.__screenscribeAgentPanelSkipInit && root.document) {
-        if (root.document.readyState === 'loading' && root.document.addEventListener) {
-            root.document.addEventListener('DOMContentLoaded', function () { init(); });
-        } else {
-            init();
-        }
-    }
-})(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
 
