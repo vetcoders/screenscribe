@@ -14,12 +14,19 @@ repos:
       - id: ruff-format
 
   # Bandit - security linter
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.7.10
+  # Local (not the remote PyCQA/bandit repo): runs the same bandit as
+  # `make verify`. The remote hook's pbr-based build shells out to
+  # `git describe` using the GIT_DIR git exports for hook installs, which
+  # hits our non-PEP440 tag `v0.1.19-pypi-recovery-1` and raises
+  # InvalidVersion, breaking hook install from inside a git hook.
+  - repo: local
     hooks:
       - id: bandit
-        args: [-c, pyproject.toml]
-        additional_dependencies: ["bandit[toml]"]
+        name: bandit
+        entry: uv run bandit -c pyproject.toml
+        language: system
+        types: [python]
+        require_serial: true
 
   # Semgrep - static analysis against the local pinned ruleset (semgrep.yml).
   # Deliberately not `--config auto`: that pulls ~3000 registry rules over the
