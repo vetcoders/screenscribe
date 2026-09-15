@@ -1176,6 +1176,7 @@ function restoreUIFromState() {
             // value into notes once, then ignore it.
             textarea.value = state.notes || state.actionItems || '';
         }
+        paintReviewerOverrides(article, state);
     });
     updateReviewMeta();
 }
@@ -2405,6 +2406,9 @@ function buildReviewData() {
                 verdict: normalizeVerdict(review.verdict),
                 severity_override: review.severity || null,
                 notes: review.notes || '',
+                action_items: review.actionItems || review.action_items || '',
+                summary_override: review.summary_override || '',
+                category_override: review.category_override || '',
                 annotations: annotations,
                 reviewer: reportState.reviewer,
                 reviewed_at: new Date().toISOString()
@@ -2632,6 +2636,7 @@ async function saveReviewToDisk() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(buildReviewData()),
         });
+        const status = response.status;
         await fetchJsonOrThrow(response, 'Failed to save review to disk.');
         showNotification(t('review.reviewSaved'));
 
@@ -2641,10 +2646,17 @@ async function saveReviewToDisk() {
         } catch (e) {}
         reportState.modified = false;
         persistSharedState();
+        return { ok: true, status };
 
     } catch (error) {
         if (DEBUG) console.error('Save to disk failed:', error);
         showNotification(t('review.saveFailed', { message: error.message }));
+        const statusMatch = String(error && error.message || '').match(/HTTP (\d+)/);
+        return {
+            ok: false,
+            status: statusMatch ? Number(statusMatch[1]) : 0,
+            message: error && error.message ? error.message : String(error),
+        };
     }
 }
 
@@ -3141,9 +3153,244 @@ function showAgentFrame(input) {
     }
 }
 
+function ensureFindingReviewState(findingId) {
+    const id = normId(findingId);
+    if (!id) return '';
+    if (!reportState.findings[id]) {
+        reportState.findings[id] = createDefaultFindingState();
+    }
+    return id;
+}
+
+function findingArticle(findingId) {
+    const id = normId(findingId);
+    if (!id) return null;
+    return document.querySelector(`.finding[data-finding-id="${id}"]`);
+}
+
+function actionItemsText(value) {
+    if (Array.isArray(value)) {
+        return value.map((item) => String(item || '').trim()).filter(Boolean).join('\n');
+    }
+    return value == null ? '' : String(value);
+}
+
+function paintReviewerOverrides(article, state) {
+    if (!article || !state) return;
+    const summary = String(state.summary_override || '');
+    const category = String(state.category_override || '');
+    const actions = actionItemsText(state.actionItems || state.action_items);
+    let box = article.querySelector('.ss-reviewer-overrides');
+    if (!summary && !category && !actions) {
+        if (box && box.parentNode) box.parentNode.removeChild(box);
+        return;
+    }
+    if (!box) {
+        box = document.createElement('div');
+        box.className = 'ss-reviewer-overrides';
+        const review = article.querySelector('.human-review');
+        if (review) review.insertBefore(box, review.firstChild);
+        else article.appendChild(box);
+    }
+    while (box.firstChild) box.removeChild(box.firstChild);
+    const heading = document.createElement('strong');
+    heading.className = 'ss-reviewer-overrides-label';
+    heading.textContent = t('review.agentOverrideLabel');
+    box.appendChild(heading);
+    const addLine = (labelKey, value, className) => {
+        if (!value) return;
+        const line = document.createElement('p');
+        line.className = className;
+        const label = document.createElement('span');
+        label.textContent = t(labelKey) + ': ';
+        line.appendChild(label);
+        const valueNode = document.createElement('span');
+        valueNode.textContent = value;
+        line.appendChild(valueNode);
+        box.appendChild(line);
+    };
+    addLine('review.agentOverrideSummary', summary, 'ss-reviewer-override-summary');
+    addLine('review.agentOverrideCategory', category, 'ss-reviewer-override-category');
+    addLine('review.agentOverrideActions', actions, 'ss-reviewer-override-actions');
+
+    const summaryEl = article.querySelector('.finding-summary');
+    if (summaryEl && summary) {
+        let override = summaryEl.querySelector('.ss-summary-override');
+        if (!override) {
+            override = document.createElement('span');
+            override.className = 'ss-summary-override';
+            summaryEl.appendChild(override);
+        }
+        override.textContent = ' ' + summary;
+    }
+}
+
+function paintFindingReview(findingId) {
+    const id = ensureFindingReviewState(findingId);
+    const article = findingArticle(id);
+    if (!article) return null;
+    const state = reportState.findings[id];
+    const verdict = normalizeVerdict(state.verdict);
+    article.dataset.verdict = verdict === 'none' ? '' : verdict;
+    article.querySelectorAll(`input[name="verdict-${id}"]`).forEach((radio) => {
+        radio.checked = radio.value === verdict;
+    });
+    const select = article.querySelector('.severity-select');
+    if (select) {
+        select.value = state.severity && state.severity !== 'none' ? state.severity : '';
+    }
+    const textarea = article.querySelector('.notes textarea');
+    if (textarea) {
+        textarea.value = state.notes || '';
+    }
+    paintReviewerOverrides(article, state);
+    return article;
+}
+
+function applyVerdictOp(op) {
+    const id = ensureFindingReviewState(op.finding_id);
+    const verdict = normalizeVerdict(op.verdict);
+    reportState.findings[id].verdict = verdict;
+    const article = paintFindingReview(id);
+    if (article && (verdict === 'accepted' || verdict === 'rejected')) {
+        flashReviewFeedback(article, verdict);
+    }
+    return { op: 'set_verdict', findingId: id, reversible: false };
+}
+
+function applySeverityOp(op) {
+    const id = ensureFindingReviewState(op.finding_id);
+    const raw = String(op.severity || '').toLowerCase();
+    const allowed = { critical: true, high: true, medium: true, low: true, none: true };
+    const severity = allowed[raw] ? raw : '';
+    reportState.findings[id].severity = !severity || severity === 'none' ? null : severity;
+    paintFindingReview(id);
+    return { op: 'set_severity', findingId: id, reversible: false };
+}
+
+function applyEditFindingOp(op) {
+    const id = ensureFindingReviewState(op.finding_id);
+    const fields = op.fields && typeof op.fields === 'object' ? op.fields : {};
+    const state = reportState.findings[id];
+    if (fields.notes != null) state.notes = String(fields.notes);
+    if (fields.action_items != null) state.actionItems = actionItemsText(fields.action_items);
+    if (fields.summary_override != null) state.summary_override = String(fields.summary_override);
+    if (fields.category_override != null) state.category_override = String(fields.category_override);
+    paintFindingReview(id);
+    return { op: 'edit_finding', findingId: id, reversible: false };
+}
+
+async function addFindingFromPatch(op) {
+    const timestamp = Number(op.timestamp);
+    const summary = String(op.summary || '');
+    const severity = String(op.severity || '');
+    const category = String(op.category || '');
+    if (Number.isFinite(timestamp)) {
+        seekToTimestamp(timestamp);
+    }
+    let captured = null;
+    if (
+        !isStaticDemo()
+        && window.player
+        && typeof window.player.captureCurrentFrame === 'function'
+    ) {
+        try {
+            if (typeof window.player.seekTo === 'function' && Number.isFinite(timestamp)) {
+                window.player.seekTo(timestamp, false);
+            }
+            captured = await window.player.captureCurrentFrame();
+        } catch (_error) {
+            captured = null;
+        }
+    }
+    if (captured && captured.frameBase64) {
+        const frame = {
+            timestamp: Number.isFinite(captured.timestamp) ? captured.timestamp : timestamp,
+            frameBase64: captured.frameBase64,
+            frameDataUrl: captured.frameDataUrl,
+        };
+        const markerId = await markManualFrame(frame, '', summary);
+        if (markerId) {
+            const stored = reportState.manualFrames.find(
+                (entry) => String(entry.marker_id) === String(markerId)
+            );
+            if (stored) {
+                stored.notes = summary;
+                stored.category = category;
+                if (severity) stored.severity = severity === 'none' ? 'none' : severity;
+            }
+            renderManualFrames();
+            return { op: 'add_finding', markerId, captured: true, reversible: false };
+        }
+    }
+    const markerId = `agent-${String(Number.isFinite(timestamp) ? timestamp : 0)}-${Date.now()}`;
+    upsertManualFrame({
+        marker_id: markerId,
+        timestamp: Number.isFinite(timestamp) ? timestamp : 0,
+        timestamp_formatted: formatPreciseTime(Number.isFinite(timestamp) ? timestamp : 0),
+        transcript: '',
+        notes: summary,
+        category,
+        severity: severity === 'none' ? 'none' : severity,
+        frameDataUrl: '',
+        result: { summary, severity, category },
+    });
+    renderManualFrames();
+    return { op: 'add_finding', markerId, captured: false, reversible: false };
+}
+
+async function applyOneReviewOp(op) {
+    if (!op || typeof op !== 'object') {
+        return { skipped: true, unknown: true, op: '' };
+    }
+    const kind = String(op.op || '');
+    if (kind === 'set_verdict') return applyVerdictOp(op);
+    if (kind === 'set_severity') return applySeverityOp(op);
+    if (kind === 'edit_finding') return applyEditFindingOp(op);
+    if (kind === 'add_finding') return addFindingFromPatch(op);
+    if (kind === 'merge_findings' || kind === 'unmerge_finding') {
+        return {
+            skipped: true,
+            unsupported: true,
+            op: kind,
+            reason: 'merge/unmerge is a client-only fold (mergeFindings / unmergeFindingGroup). Apply it from the report merge controls.',
+        };
+    }
+    return { skipped: true, unknown: true, op: kind };
+}
+
+async function applyReviewPatch(ops) {
+    const list = Array.isArray(ops) ? ops : [];
+    const results = [];
+    for (const op of list) {
+        results.push(await applyOneReviewOp(op));
+    }
+    const applied = results.filter((row) => !row.skipped);
+    if (applied.length) {
+        reportState.modified = true;
+        scheduleSharedStateSync();
+        updateReviewMeta();
+        const lastId = applied.map((row) => row.findingId).filter(Boolean).pop();
+        if (lastId) {
+            const article = findingArticle(lastId);
+            if (article) {
+                activateTab('findings');
+                article.classList.add('ss-agent-highlight');
+                if (typeof article.scrollIntoView === 'function') {
+                    article.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+            }
+        }
+    }
+    return results;
+}
+
 window.__screenscribeAgentHost = {
     seek: seekToTimestamp,
     showFrame: showAgentFrame,
+    applyReviewPatch,
+    saveReview: saveReviewToDisk,
+    addFindingFromPatch,
 };
 
 function exportTodoList() {

@@ -470,6 +470,8 @@ def test_review_app_exposes_player_hook() -> None:
     assert "window.__screenscribeAgentHost" in source
     assert "showAgentFrame" in source
     assert "seek: seekToTimestamp" in source
+    assert "applyReviewPatch" in source
+    assert "saveReview: saveReviewToDisk" in source
 
 
 def test_rendered_report_includes_agent_panel_assets() -> None:
@@ -733,3 +735,203 @@ def test_geometry_docks_sheet_when_no_clear_spot() -> None:
         )
     )
     assert "geometry-sheet:ok" in output
+
+
+def test_review_patch_applies_and_saves_once() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = ScreenScribeAgentPanel;
+            const applied = [];
+            const saves = [];
+            window.__screenscribeAgentHost = {
+                applyReviewPatch(ops) {
+                    applied.push(ops);
+                    return ops.map((op) => ({ op: op.op, findingId: String(op.finding_id || ''), skipped: false }));
+                },
+                async saveReview() {
+                    saves.push(1);
+                    return { ok: true, status: 200 };
+                },
+            };
+            const stream = [
+                'event: token',
+                'data: {"text":"ok"}',
+                '',
+                'event: tool_result',
+                'data: {"name":"set_severity","result":{"type":"review_patch","ops":[{"op":"set_severity","finding_id":"3","severity":"high"}],"explain":"Set finding 3 severity override to high."}}',
+                '',
+                'event: tool_result',
+                'data: {"name":"set_severity","result":{"type":"review_patch","ops":[{"op":"set_severity","finding_id":"3","severity":"high"}],"explain":"Set finding 3 severity override to high."}}',
+                '',
+                'event: done',
+                'data: {}',
+                '',
+            ].join('\\n');
+            fetch = async () => ({ ok: true, text: async () => stream });
+            window.fetch = fetch;
+            api.init();
+            await api.send('zmień finding 3 na high');
+            if (applied.length !== 1) throw new Error('expected one apply after SSE dedupe, got ' + applied.length);
+            if (applied[0][0].severity !== 'high') throw new Error('severity');
+            if (saves.length !== 1) throw new Error('save once, got ' + saves.length);
+            const log = document.getElementById('ss-agent-log');
+            const text = (log.children || []).map((n) => n.textContent).join('|');
+            if (!/applied: Set finding 3/.test(text) && !/zastosowano: Set finding 3/.test(text)) {
+                throw new Error('confirmation missing: ' + text);
+            }
+            if (!/Reset/.test(text) && !/Resetuj/.test(text)) {
+                throw new Error('undo hint missing: ' + text);
+            }
+            process.stdout.write('patch-save:ok');
+            """
+        )
+    )
+    assert "patch-save:ok" in output
+
+
+def test_review_patch_save_409_shows_retry_not_silent() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = ScreenScribeAgentPanel;
+            let saveCalls = 0;
+            window.__screenscribeAgentHost = {
+                applyReviewPatch(ops) {
+                    return ops.map((op) => ({ op: op.op, findingId: '3' }));
+                },
+                async saveReview() {
+                    saveCalls += 1;
+                    return { ok: false, status: 409, message: 'Review reset invalidated this save. (HTTP 409)' };
+                },
+            };
+            api.init();
+            await api.ingestToolResult('edit_finding', {
+                type: 'review_patch',
+                ops: [{ op: 'edit_finding', finding_id: '3', fields: { notes: 'sprawdzić na Safari' } }],
+                explain: 'Edit finding 3 text fields.',
+            }, new Set());
+            if (saveCalls !== 1) throw new Error('first save once, got ' + saveCalls);
+            const log = document.getElementById('ss-agent-log');
+            const fail = (log.children || []).find((n) => String(n.className).includes('ss-agent-msg-error'));
+            if (!fail) throw new Error('failure line missing');
+            if (!/not saved|nie zapisano/.test(fail.textContent)) throw new Error('fail copy: ' + fail.textContent);
+            const retry = fail.querySelector('button') || fail.children.find((n) => n.tagName === 'BUTTON');
+            if (!retry) throw new Error('retry button missing');
+            retry.click();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            if (saveCalls !== 2) throw new Error('retry must save again, got ' + saveCalls);
+            process.stdout.write('patch-409:ok');
+            """
+        )
+    )
+    assert "patch-409:ok" in output
+
+
+def test_review_plan_card_apply_selected_ops() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = ScreenScribeAgentPanel;
+            const applied = [];
+            window.__screenscribeAgentHost = {
+                applyReviewPatch(ops) {
+                    applied.push(ops.slice());
+                    return ops.map((op) => ({ op: op.op, findingId: String(op.finding_id || '') }));
+                },
+                async saveReview() { return { ok: true, status: 200 }; },
+            };
+            api.init();
+            const card = api.renderPlanCard({
+                type: 'review_plan',
+                ops: [
+                    { op: 'set_severity', finding_id: '3', severity: 'high' },
+                    { op: 'edit_finding', finding_id: '3', fields: { notes: 'n' } },
+                    { op: 'set_verdict', finding_id: '1', verdict: 'accepted' },
+                ],
+                rationale: ['raise severity', 'note', 'accept'],
+            });
+            if (!card) throw new Error('plan card missing');
+            const checks = card.querySelectorAll('.ss-agent-plan-check');
+            if (checks.length !== 3) throw new Error('checkboxes: ' + checks.length);
+            if (!checks.every((c) => c.checked)) throw new Error('all on');
+            checks[2].checked = false;
+            const apply = card.querySelector('.ss-agent-plan-apply');
+            apply.click();
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            if (applied.length !== 1) throw new Error('apply once, got ' + applied.length);
+            if (applied[0].length !== 2) throw new Error('selected 2, got ' + applied[0].length);
+            const log = document.getElementById('ss-agent-log');
+            const user = (log.children || []).find((n) => String(n.className).includes('ss-agent-msg-user'));
+            if (!user || !/2/.test(user.textContent) || !/3/.test(user.textContent)) {
+                throw new Error('summary message: ' + (user && user.textContent));
+            }
+            const hist = api.getState().history;
+            if (!hist.some((m) => m.role === 'user' && /2/.test(m.content))) {
+                throw new Error('history missing plan summary');
+            }
+            process.stdout.write('plan:ok');
+            """
+        )
+    )
+    assert "plan:ok" in output
+
+
+def test_review_patch_offline_blocks_apply() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            location.protocol = 'file:';
+            window.location.protocol = 'file:';
+            const api = ScreenScribeAgentPanel;
+            let applied = 0;
+            window.__screenscribeAgentHost = {
+                applyReviewPatch() { applied += 1; return []; },
+                async saveReview() { applied += 10; return { ok: true }; },
+            };
+            api.init();
+            const notice = document.getElementById('ss-agent-offline');
+            if (notice.hidden) throw new Error('offline notice hidden');
+            const log = document.getElementById('ss-agent-log');
+            const before = (log.children || []).map((n) => n.textContent).join('|');
+            if (!/cannot save agent edits|nie zapisze poprawek/.test(before)) {
+                throw new Error('preemptive patch-offline copy missing: ' + before);
+            }
+            await api.ingestToolResult('set_severity', {
+                type: 'review_patch',
+                ops: [{ op: 'set_severity', finding_id: '3', severity: 'high' }],
+                explain: 'nope',
+            }, new Set());
+            if (applied !== 0) throw new Error('must not apply or save offline, got ' + applied);
+            process.stdout.write('patch-offline:ok');
+            """
+        )
+    )
+    assert "patch-offline:ok" in output
+
+
+def test_review_tool_error_and_unsupported_are_system_lines() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = ScreenScribeAgentPanel;
+            let applied = 0;
+            window.__screenscribeAgentHost = {
+                applyReviewPatch() { applied += 1; return []; },
+            };
+            api.init();
+            await api.ingestToolResult('set_verdict', { error: 'Unknown finding_id: 999' }, new Set());
+            await api.ingestToolResult('merge_findings', {
+                unsupported: true,
+                reason: 'merge/unmerge is a client-only fold',
+            }, new Set());
+            if (applied !== 0) throw new Error('errors must not apply');
+            const log = document.getElementById('ss-agent-log');
+            const text = (log.children || []).map((n) => n.textContent).join('|');
+            if (!/Unknown finding_id: 999/.test(text)) throw new Error('error line: ' + text);
+            if (!/client-only fold/.test(text)) throw new Error('unsupported line: ' + text);
+            process.stdout.write('patch-errors:ok');
+            """
+        )
+    )
+    assert "patch-errors:ok" in output

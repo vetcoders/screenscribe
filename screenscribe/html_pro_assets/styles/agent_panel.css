@@ -151,11 +151,91 @@ html.ss-agent-sheet .app-container {
     color: var(--text-primary);
 }
 
-.ss-agent-msg-error,
-.ss-agent-msg-system {
+.ss-agent-msg-error {
     align-self: stretch;
     color: var(--color-error);
     border: 1px solid var(--border-default);
+}
+
+.ss-agent-msg-system {
+    align-self: stretch;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-default);
+    background: var(--surface-elevated);
+}
+
+.ss-agent-msg-ok {
+    color: var(--color-success);
+}
+
+.ss-agent-msg-warn {
+    color: var(--text-secondary);
+}
+
+.ss-agent-retry,
+.ss-agent-plan-apply,
+.ss-agent-plan-cancel {
+    border: 1px solid var(--border-accent);
+    border-radius: var(--radius-sm);
+    background: var(--ss-accent);
+    color: var(--ss-accent-ink);
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    padding: var(--space-xs) var(--space-sm);
+    cursor: pointer;
+    margin-left: var(--space-sm);
+}
+
+.ss-agent-plan-cancel {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+}
+
+.ss-agent-plan {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.ss-agent-plan-ops {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.ss-agent-plan-label {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-xs);
+    cursor: pointer;
+}
+
+.ss-agent-plan-actions {
+    display: flex;
+    gap: var(--space-sm);
+}
+
+.ss-reviewer-overrides {
+    margin: 0 0 var(--space-sm);
+    padding: var(--space-sm);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--decision-surface);
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);
+}
+
+.ss-reviewer-overrides-label {
+    display: block;
+    margin-bottom: var(--space-xs);
+    color: var(--text-primary);
+}
+
+.ss-reviewer-overrides p {
+    margin: 0;
 }
 
 .ss-agent-form {

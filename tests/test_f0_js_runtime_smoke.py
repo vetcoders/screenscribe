@@ -181,7 +181,8 @@ def test_f0_review_app_loads_without_referenceerror() -> None:
         """
         for (const name of [
             'buildTodoMarkdown', 'buildReviewData', 'handleChangeEvent',
-            'normalizeVerdict', 'unmergeFindings', 'resetReview'
+            'normalizeVerdict', 'unmergeFindings', 'resetReview',
+            'applyReviewPatch'
         ]) {
             if (typeof eval(name) !== 'function') {
                 console.error('missing top-level function: ' + name);
@@ -1995,4 +1996,179 @@ def test_f0_manual_frame_note_patch_rejection_does_not_desync() -> None:
             process.exitCode = 1;
         }
         """
+    )
+
+
+def _finding_card_stubs() -> str:
+    return textwrap.dedent(
+        """
+        {
+        showNotification = () => {};
+        flashReviewFeedback = () => {};
+        activateTab = () => {};
+        scheduleSharedStateSync = () => {};
+        updateReviewMeta = () => {};
+        renderManualFrames = () => {};
+        const radios = [
+            { value: 'accepted', checked: false },
+            { value: 'rejected', checked: false },
+        ];
+        const select = { value: '' };
+        const textarea = { value: '' };
+        const overrideBox = {
+            className: '',
+            firstChild: null,
+            children: [],
+            parentNode: null,
+            querySelector() { return null; },
+            appendChild(child) { this.children.push(child); this.firstChild = this.firstChild || child; return child; },
+            removeChild(child) {
+                this.children = this.children.filter((c) => c !== child);
+                this.firstChild = this.children[0] || null;
+                return child;
+            },
+        };
+        const humanReview = {
+            firstChild: null,
+            insertBefore(node) { this.firstChild = node; return node; },
+        };
+        const summaryEl = {
+            querySelector() { return null; },
+            appendChild() {},
+        };
+        const article = {
+            dataset: { findingId: '3', verdict: '' },
+            classList: { add() {}, remove() {} },
+            querySelector(sel) {
+                if (sel === '.severity-select') return select;
+                if (sel === '.notes textarea') return textarea;
+                if (sel === '.ss-reviewer-overrides') return overrideBox.firstChild ? overrideBox : null;
+                if (sel === '.human-review') return humanReview;
+                if (sel === '.finding-summary') return summaryEl;
+                return null;
+            },
+            querySelectorAll(sel) { return String(sel).includes('verdict') ? radios : []; },
+            appendChild() {},
+            scrollIntoView() {},
+        };
+        document.querySelector = (sel) => String(sel).includes('data-finding-id') ? article : null;
+        document.querySelectorAll = (sel) => sel === '.finding' ? [article] : [];
+        document.createElement = (tag) => {
+            const node = {
+                tagName: String(tag).toUpperCase(),
+                className: '',
+                textContent: '',
+                children: [],
+                firstChild: null,
+                appendChild(child) { this.children.push(child); this.firstChild = this.firstChild || child; return child; },
+                removeChild(child) {
+                    this.children = this.children.filter((c) => c !== child);
+                    this.firstChild = this.children[0] || null;
+                    return child;
+                },
+            };
+            return node;
+        };
+        reportState.findings = { '3': createDefaultFindingState() };
+        window.__screenscribeHostArticle = article;
+        window.__screenscribeHostSelect = select;
+        window.__screenscribeHostTextarea = textarea;
+        window.__screenscribeHostRadios = radios;
+        }
+        """
+    )
+
+
+def test_f0_apply_review_patch_ops_paint_card() -> None:
+    """applyReviewPatch writes verdict/severity/notes/overrides onto reportState and the card."""
+    _run_review_app_smoke(
+        _finding_card_stubs()
+        + textwrap.dedent(
+            """
+            const article = window.__screenscribeHostArticle;
+            const select = window.__screenscribeHostSelect;
+            const textarea = window.__screenscribeHostTextarea;
+            const radios = window.__screenscribeHostRadios;
+
+            await applyReviewPatch([
+                { op: 'set_verdict', finding_id: '3', verdict: 'accepted' },
+                { op: 'set_severity', finding_id: '3', severity: 'high' },
+                { op: 'edit_finding', finding_id: '3', fields: {
+                    notes: 'sprawdzić na Safari',
+                    action_items: 'otworzyć Safari',
+                    summary_override: 'Safari clip',
+                    category_override: 'ui',
+                }},
+                { op: 'nope_unknown', finding_id: '3' },
+            ]);
+
+            const state = reportState.findings['3'];
+            if (state.verdict !== 'accepted') {
+                console.error('verdict: ' + state.verdict); process.exitCode = 1;
+            }
+            if (state.severity !== 'high') {
+                console.error('severity: ' + state.severity); process.exitCode = 1;
+            }
+            if (state.notes !== 'sprawdzić na Safari') {
+                console.error('notes: ' + state.notes); process.exitCode = 1;
+            }
+            if (state.actionItems !== 'otworzyć Safari') {
+                console.error('actionItems: ' + state.actionItems); process.exitCode = 1;
+            }
+            if (state.summary_override !== 'Safari clip') {
+                console.error('summary_override'); process.exitCode = 1;
+            }
+            if (article.dataset.verdict !== 'accepted') {
+                console.error('dom verdict: ' + article.dataset.verdict); process.exitCode = 1;
+            }
+            if (select.value !== 'high') {
+                console.error('dom severity: ' + select.value); process.exitCode = 1;
+            }
+            if (textarea.value !== 'sprawdzić na Safari') {
+                console.error('dom notes: ' + textarea.value); process.exitCode = 1;
+            }
+            if (!radios[0].checked) {
+                console.error('accepted radio not checked'); process.exitCode = 1;
+            }
+            const payload = buildReviewData();
+            const finding = (payload.findings || []).find((f) => String(f.id) === '3');
+            if (finding && finding.human_review) {
+                if (finding.human_review.severity_override !== 'high') {
+                    console.error('save payload severity'); process.exitCode = 1;
+                }
+                if (finding.human_review.summary_override !== 'Safari clip') {
+                    console.error('save payload summary_override'); process.exitCode = 1;
+                }
+            }
+            if (!reportState.modified) {
+                console.error('report should be marked modified'); process.exitCode = 1;
+            }
+            """
+        )
+    )
+
+
+def test_f0_apply_review_patch_add_finding_local_and_merge_unsupported() -> None:
+    _run_review_app_smoke(
+        _finding_card_stubs()
+        + textwrap.dedent(
+            """
+            const results = await applyReviewPatch([
+                { op: 'add_finding', timestamp: 12.5, summary: 'Safari overlay', severity: 'high', category: 'bug' },
+                { op: 'merge_findings', survivor_id: '3', member_ids: ['1'] },
+            ]);
+            const add = results.find((row) => row.op === 'add_finding');
+            const merge = results.find((row) => row.op === 'merge_findings' || row.unsupported);
+            if (!add || !add.markerId) {
+                console.error('add_finding missing: ' + JSON.stringify(results)); process.exitCode = 1;
+            }
+            if (!merge || !merge.unsupported) {
+                console.error('merge should stay unsupported: ' + JSON.stringify(results)); process.exitCode = 1;
+            }
+            if (!reportState.manualFrames.some((f) => f.notes === 'Safari overlay')) {
+                console.error('manual frame not upserted: ' + JSON.stringify(reportState.manualFrames));
+                process.exitCode = 1;
+            }
+            """
+        )
     )

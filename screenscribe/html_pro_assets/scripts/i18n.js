@@ -180,7 +180,20 @@ window.I18N_BUNDLE = {
             "agentOffline": "Run `screenscribe serve` to chat about this report.",
             "agentEmpty": "Ask anything about this recording.",
             "agentLogo": "s",
-            "agentStreaming": "Thinking…"
+            "agentStreaming": "Thinking…",
+            "agentPatchApplied": "✔ applied: {{explain}}",
+            "agentPatchSaveFailed": "✖ not saved: {{message}}",
+            "agentPatchRetry": "Retry",
+            "agentPatchOffline": "This offline report cannot save agent edits. Run `screenscribe serve` first.",
+            "agentPlanApply": "Apply",
+            "agentPlanCancel": "Cancel",
+            "agentPlanApplied": "Applied {{applied}} of {{total}}",
+            "agentPatchUnknown": "ignored unknown op: {{op}}",
+            "agentPatchUndoHint": "no per-op undo — use Reset review",
+            "agentOverrideLabel": "Reviewer override",
+            "agentOverrideSummary": "Summary",
+            "agentOverrideCategory": "Category",
+            "agentOverrideActions": "Action items"
         },
         "analyze": {
             "tab_capture": "Mark",
@@ -448,7 +461,20 @@ window.I18N_BUNDLE = {
             "agentOffline": "Uruchom `screenscribe serve`, aby porozmawiać o tym raporcie.",
             "agentEmpty": "Zapytaj o to nagranie.",
             "agentLogo": "s",
-            "agentStreaming": "Myślę…"
+            "agentStreaming": "Myślę…",
+            "agentPatchApplied": "✔ zastosowano: {{explain}}",
+            "agentPatchSaveFailed": "✖ nie zapisano: {{message}}",
+            "agentPatchRetry": "Ponów",
+            "agentPatchOffline": "Raport offline nie zapisze poprawek agenta. Uruchom `screenscribe serve`.",
+            "agentPlanApply": "Zastosuj",
+            "agentPlanCancel": "Anuluj",
+            "agentPlanApplied": "Zastosowano {{applied}} z {{total}}",
+            "agentPatchUnknown": "zignorowano nieznaną operację: {{op}}",
+            "agentPatchUndoHint": "brak cofania per-op — użyj Resetuj recenzję",
+            "agentOverrideLabel": "Korekta recenzenta",
+            "agentOverrideSummary": "Podsumowanie",
+            "agentOverrideCategory": "Kategoria",
+            "agentOverrideActions": "Akcje"
         },
         "analyze": {
             "tab_capture": "Oznaczanie",
