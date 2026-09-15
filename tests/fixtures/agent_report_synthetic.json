@@ -1,0 +1,470 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "description": "Authored from scratch for report-agent tests; no source recording, real transcript, or provider response."
+  },
+  "video": "synthetic-calculator-demo.mov",
+  "generated_at": "2000-01-01T00:00:00Z",
+  "executive_summary": "Top priorities: improve the labels in this entirely fictional calculator.",
+  "transcript_segments": [
+    {
+      "id": 0,
+      "start": 4.0,
+      "end": 6.0,
+      "text": "Why does synthetic calculator control 0 need a clearer label?"
+    },
+    {
+      "id": 1,
+      "start": 9.0,
+      "end": 11.0,
+      "text": "Why does synthetic calculator control 1 need a clearer label?"
+    },
+    {
+      "id": 2,
+      "start": 14.0,
+      "end": 16.0,
+      "text": "Why does synthetic calculator control 2 need a clearer label?"
+    },
+    {
+      "id": 3,
+      "start": 19.0,
+      "end": 21.0,
+      "text": "Why does synthetic calculator control 3 need a clearer label?"
+    },
+    {
+      "id": 4,
+      "start": 24.0,
+      "end": 26.0,
+      "text": "Why does synthetic calculator control 4 need a clearer label?"
+    },
+    {
+      "id": 5,
+      "start": 29.0,
+      "end": 31.0,
+      "text": "Why does synthetic calculator control 5 need a clearer label?"
+    },
+    {
+      "id": 6,
+      "start": 34.0,
+      "end": 36.0,
+      "text": "Why does synthetic calculator control 6 need a clearer label?"
+    },
+    {
+      "id": 7,
+      "start": 39.0,
+      "end": 41.0,
+      "text": "Why does synthetic calculator control 7 need a clearer label?"
+    },
+    {
+      "id": 8,
+      "start": 44.0,
+      "end": 46.0,
+      "text": "Why does synthetic calculator control 8 need a clearer label?"
+    },
+    {
+      "id": 9,
+      "start": 49.0,
+      "end": 51.0,
+      "text": "Why does synthetic calculator control 9 need a clearer label?"
+    },
+    {
+      "id": 10,
+      "start": 54.0,
+      "end": 56.0,
+      "text": "Why does synthetic calculator control 10 need a clearer label?"
+    },
+    {
+      "id": 11,
+      "start": 59.0,
+      "end": 61.0,
+      "text": "Why does synthetic calculator control 11 need a clearer label?"
+    },
+    {
+      "id": 12,
+      "start": 64.0,
+      "end": 66.0,
+      "text": "Why does synthetic calculator control 12 need a clearer label?"
+    }
+  ],
+  "analysis_passes": {
+    "unified_analysis": {
+      "response_id": null,
+      "status": "synthetic"
+    }
+  },
+  "summary": {
+    "total_findings": 13,
+    "source": "synthetic"
+  },
+  "severity_breakdown": {
+    "high": 5,
+    "medium": 4,
+    "low": 4
+  },
+  "findings": [
+    {
+      "id": 0,
+      "category": "bug",
+      "timestamp_start": 4.0,
+      "timestamp_end": 6.0,
+      "timestamp_formatted": "00:04",
+      "text": "Synthetic observation 0: calculator control 0 has an unclear label.",
+      "context": "Invented calculator scenario 0; no recording or user session exists.",
+      "keywords": [
+        "synthetic",
+        "calculator"
+      ],
+      "screenshot": "synthetic_frame_00.png",
+      "unified_analysis": {
+        "summary": "Invented calculator control 0 needs a clearer label.",
+        "severity": "high",
+        "is_issue": true,
+        "sentiment": "negative",
+        "suggested_fix": "Use a descriptive label for synthetic control 0.",
+        "response_id": "resp_synthetic_00",
+        "ui_elements": [
+          "Synthetic calculator control 0"
+        ],
+        "detected_issues": [
+          "Invented label issue 0"
+        ]
+      }
+    },
+    {
+      "id": 1,
+      "category": "ui",
+      "timestamp_start": 9.0,
+      "timestamp_end": 11.0,
+      "timestamp_formatted": "00:09",
+      "text": "Synthetic observation 1: calculator control 1 has an unclear label.",
+      "context": "Invented calculator scenario 1; no recording or user session exists.",
+      "keywords": [
+        "synthetic",
+        "calculator"
+      ],
+      "screenshot": "synthetic_frame_01.png",
+      "unified_analysis": {
+        "summary": "Invented calculator control 1 needs a clearer label.",
+        "severity": "medium",
+        "is_issue": true,
+        "sentiment": "negative",
+        "suggested_fix": "Use a descriptive label for synthetic control 1.",
+        "response_id": "resp_synthetic_01",
+        "ui_elements": [
+          "Synthetic calculator control 1"
+        ],
+        "detected_issues": [
+          "Invented label issue 1"
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "category": "suggestion",
+      "timestamp_start": 14.0,
+      "timestamp_end": 16.0,
+      "timestamp_formatted": "00:14",
+      "text": "Synthetic observation 2: calculator control 2 has an unclear label.",
+      "context": "Invented calculator scenario 2; no recording or user session exists.",
+      "keywords": [
+        "synthetic",
+        "calculator"
+      ],
+      "screenshot": "synthetic_frame_02.png",
+      "unified_analysis": {
+        "summary": "Invented calculator control 2 needs a clearer label.",
+        "severity": "low",
+        "is_issue": true,
+        "sentiment": "negative",
+        "suggested_fix": "Use a descriptive label for synthetic control 2.",
+        "response_id": "resp_synthetic_02",
+        "ui_elements": [
+          "Synthetic calculator control 2"
+        ],
+        "detected_issues": [
+          "Invented label issue 2"
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "category": "bug",
+      "timestamp_start": 19.0,
+      "timestamp_end": 21.0,
+      "timestamp_formatted": "00:19",
+      "text": "Synthetic observation 3: calculator control 3 has an unclear label.",
+      "context": "Invented calculator scenario 3; no recording or user session exists.",
+      "keywords": [
+        "synthetic",
+        "calculator"
+      ],
+      "screenshot": "synthetic_frame_03.png",
+      "unified_analysis": {
+        "summary": "Invented calculator control 3 needs a clearer label.",
+        "severity": "high",
+        "is_issue": true,
+        "sentiment": "negative",
+        "suggested_fix": "Use a descriptive label for synthetic control 3.",
+        "response_id": "resp_synthetic_03",
+        "ui_elements": [
+          "Synthetic calculator control 3"
+        ],
+        "detected_issues": [
+          "Invented label issue 3"
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "category": "ui",
+      "timestamp_start": 24.0,
+      "timestamp_end": 26.0,
+      "timestamp_formatted": "00:24",
+      "text": "Synthetic observation 4: calculator control 4 has an unclear label.",
+      "context": "Invented calculator scenario 4; no recording or user session exists.",
+      "keywords": [
+        "synthetic",
+        "calculator"
+      ],
+      "screenshot": "synthetic_frame_04.png",
+      "unified_analysis": {
+        "summary": "Invented calculator control 4 needs a clearer label.",
+        "severity": "medium",
+        "is_issue": true,
+        "sentiment": "negative",
+        "suggested_fix": "Use a descriptive label for synthetic control 4.",
+        "response_id": "resp_synthetic_04",
+        "ui_elements": [
+          "Synthetic calculator control 4"
+        ],
+        "detected_issues": [
+          "Invented label issue 4"
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "category": "suggestion",
+      "timestamp_start": 29.0,
+      "timestamp_end": 31.0,
+      "timestamp_formatted": "00:29",
+      "text": "Synthetic observation 5: calculator control 5 has an unclear label.",
+      "context": "Invented calculator scenario 5; no recording or user session exists.",
+      "keywords": [
+        "synthetic",
+        "calculator"
+      ],
+      "screenshot": "synthetic_frame_05.png",
+      "unified_analysis": {
+        "summary": "Invented calculator control 5 needs a clearer label.",
+        "severity": "low",
+        "is_issue": true,
+        "sentiment": "negative",
+        "suggested_fix": "Use a descriptive label for synthetic control 5.",
+        "response_id": "resp_synthetic_05",
+        "ui_elements": [
+          "Synthetic calculator control 5"
+        ],
+        "detected_issues": [
+          "Invented label issue 5"
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "category": "bug",
+      "timestamp_start": 34.0,
+      "timestamp_end": 36.0,
+      "timestamp_formatted": "00:34",
+      "text": "Synthetic observation 6: calculator control 6 has an unclear label.",
+      "context": "Invented calculator scenario 6; no recording or user session exists.",
+      "keywords": [
+        "synthetic",
+        "calculator"
+      ],
+      "screenshot": "synthetic_frame_06.png",
+      "unified_analysis": {
+        "summary": "Invented calculator control 6 needs a clearer label.",
+        "severity": "high",
+        "is_issue": true,
+        "sentiment": "negative",
+        "suggested_fix": "Use a descriptive label for synthetic control 6.",
+        "response_id": "resp_synthetic_06",
+        "ui_elements": [
+          "Synthetic calculator control 6"
+        ],
+        "detected_issues": [
+          "Invented label issue 6"
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "category": "ui",
+      "timestamp_start": 39.0,
+      "timestamp_end": 41.0,
+      "timestamp_formatted": "00:39",
+      "text": "Synthetic observation 7: calculator control 7 has an unclear label.",
+      "context": "Invented calculator scenario 7; no recording or user session exists.",
+      "keywords": [
+        "synthetic",
+        "calculator"
+      ],
+      "screenshot": "synthetic_frame_07.png",
+      "unified_analysis": {
+        "summary": "Invented calculator control 7 needs a clearer label.",
+        "severity": "medium",
+        "is_issue": true,
+        "sentiment": "negative",
+        "suggested_fix": "Use a descriptive label for synthetic control 7.",
+        "response_id": "resp_synthetic_07",
+        "ui_elements": [
+          "Synthetic calculator control 7"
+        ],
+        "detected_issues": [
+          "Invented label issue 7"
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "category": "suggestion",
+      "timestamp_start": 44.0,
+      "timestamp_end": 46.0,
+      "timestamp_formatted": "00:44",
+      "text": "Synthetic observation 8: calculator control 8 has an unclear label.",
+      "context": "Invented calculator scenario 8; no recording or user session exists.",
+      "keywords": [
+        "synthetic",
+        "calculator"
+      ],
+      "screenshot": "synthetic_frame_08.png",
+      "unified_analysis": {
+        "summary": "Invented calculator control 8 needs a clearer label.",
+        "severity": "low",
+        "is_issue": true,
+        "sentiment": "negative",
+        "suggested_fix": "Use a descriptive label for synthetic control 8.",
+        "response_id": "resp_synthetic_08",
+        "ui_elements": [
+          "Synthetic calculator control 8"
+        ],
+        "detected_issues": [
+          "Invented label issue 8"
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "category": "bug",
+      "timestamp_start": 49.0,
+      "timestamp_end": 51.0,
+      "timestamp_formatted": "00:49",
+      "text": "Synthetic observation 9: calculator control 9 has an unclear label.",
+      "context": "Invented calculator scenario 9; no recording or user session exists.",
+      "keywords": [
+        "synthetic",
+        "calculator"
+      ],
+      "screenshot": "synthetic_frame_09.png",
+      "unified_analysis": {
+        "summary": "Invented calculator control 9 needs a clearer label.",
+        "severity": "high",
+        "is_issue": true,
+        "sentiment": "negative",
+        "suggested_fix": "Use a descriptive label for synthetic control 9.",
+        "response_id": "resp_synthetic_09",
+        "ui_elements": [
+          "Synthetic calculator control 9"
+        ],
+        "detected_issues": [
+          "Invented label issue 9"
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "category": "ui",
+      "timestamp_start": 54.0,
+      "timestamp_end": 56.0,
+      "timestamp_formatted": "00:54",
+      "text": "Synthetic observation 10: calculator control 10 has an unclear label.",
+      "context": "Invented calculator scenario 10; no recording or user session exists.",
+      "keywords": [
+        "synthetic",
+        "calculator"
+      ],
+      "screenshot": "synthetic_frame_10.png",
+      "unified_analysis": {
+        "summary": "Invented calculator control 10 needs a clearer label.",
+        "severity": "medium",
+        "is_issue": true,
+        "sentiment": "negative",
+        "suggested_fix": "Use a descriptive label for synthetic control 10.",
+        "response_id": "resp_synthetic_10",
+        "ui_elements": [
+          "Synthetic calculator control 10"
+        ],
+        "detected_issues": [
+          "Invented label issue 10"
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "category": "suggestion",
+      "timestamp_start": 59.0,
+      "timestamp_end": 61.0,
+      "timestamp_formatted": "00:59",
+      "text": "Synthetic observation 11: calculator control 11 has an unclear label.",
+      "context": "Invented calculator scenario 11; no recording or user session exists.",
+      "keywords": [
+        "synthetic",
+        "calculator"
+      ],
+      "screenshot": "synthetic_frame_11.png",
+      "unified_analysis": {
+        "summary": "Invented calculator control 11 needs a clearer label.",
+        "severity": "low",
+        "is_issue": true,
+        "sentiment": "negative",
+        "suggested_fix": "Use a descriptive label for synthetic control 11.",
+        "response_id": "resp_synthetic_11",
+        "ui_elements": [
+          "Synthetic calculator control 11"
+        ],
+        "detected_issues": [
+          "Invented label issue 11"
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "category": "bug",
+      "timestamp_start": 64.0,
+      "timestamp_end": 66.0,
+      "timestamp_formatted": "01:04",
+      "text": "Synthetic observation 12: calculator control 12 has an unclear label.",
+      "context": "Invented calculator scenario 12; no recording or user session exists.",
+      "keywords": [
+        "synthetic",
+        "calculator"
+      ],
+      "screenshot": "synthetic_frame_12.png",
+      "unified_analysis": {
+        "summary": "Invented calculator control 12 needs a clearer label.",
+        "severity": "high",
+        "is_issue": true,
+        "sentiment": "negative",
+        "suggested_fix": "Use a descriptive label for synthetic control 12.",
+        "response_id": "resp_synthetic_12",
+        "ui_elements": [
+          "Synthetic calculator control 12"
+        ],
+        "detected_issues": [
+          "Invented label issue 12"
+        ]
+      }
+    }
+  ]
+}
