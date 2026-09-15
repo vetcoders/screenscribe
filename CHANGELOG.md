@@ -47,6 +47,12 @@
   xAI is external unless `SCREENSCRIBE_AGENT_PRIMARY_TRUST=internal`. The JSON
   report now stores `analysis_passes.unified_analysis.response_id` so the next
   review can resume the last VLM pass for free.
+- **Added: floating screenscribe agent chat on the HTML review report.** A
+  collapsed 『s』 chip docks in the corner; expanding it places a draggable
+  panel beside the player (never over it) and streams `POST /api/agent/chat/stream`.
+  Offline file:// reports show "run `screenscribe serve`" instead of a console
+  error. Tool calls `seek` and `show_frame` jump the player and highlight the
+  matching finding. Cut `w1-05-agent-floating`.
 
 - **Internal: refresh runtime and development dependencies.** Updated the lockfile
   to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.
