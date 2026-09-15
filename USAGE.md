@@ -91,7 +91,7 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 | `--embed-video` | off | Embed the video as base64 in the HTML report (only for files < 50 MB). |
 | `--keywords-file`, `-k` | global file | Per-run keywords YAML. Keywords are always-on AI hints (never replace the LLM, safe when empty); overrides the global `~/.config/screenscribe/keywords.yaml`. |
 | `--resume` | off | Resume from a previous checkpoint if available. |
-| `--force` | off | Force reprocessing and overwrite the existing review instead of versioning. |
+| `--force` | off | Force reprocessing and overwrite the existing review instead of versioning. Only a screenscribe review folder (or a missing/empty one) can be overwritten; if the target is a file or a non-empty folder screenscribe does not own, `review` stops with an error and changes nothing. |
 | `--estimate` | off | Show a time estimate (from video duration) without processing. |
 | `--dry-run` | off | **Not free.** Still runs paid transcription (STT, unless `--local`) and LLM issue detection, then stops before writing reports. For a zero-cost preview use `--estimate` instead. |
 | `--skip-validation` | off | Skip the model-availability check (faster start, may fail mid-pipeline). |

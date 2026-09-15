@@ -278,7 +278,8 @@ report and opens the HTML report in your browser. Key options:
   semantic LLM detection still runs.
 - `--keywords-file` — per-run keywords file. Keywords are always-on AI hints
   (see [Keywords](#screenscribe-keywords) below); an empty or missing file is safe.
-- `--resume` / `--force` — resume from a checkpoint, or overwrite a prior review.
+- `--resume` / `--force` — resume from a checkpoint, or overwrite a prior screenscribe
+  review (never a folder screenscribe does not own).
 
 See [USAGE.md](https://github.com/vetcoders/screenscribe/blob/main/USAGE.md#screenscribe-review) for every flag.
 

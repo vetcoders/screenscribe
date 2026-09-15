@@ -45,7 +45,12 @@ from .checkpoint import (
     serialize_transcription,
     serialize_unified_finding,
 )
-from .cli_messages import _build_output_dir_error_message, _build_versions_exhausted_message
+from .cli_messages import (
+    _build_cache_clear_error_message,
+    _build_force_foreign_message,
+    _build_output_dir_error_message,
+    _build_versions_exhausted_message,
+)
 from .cli_paths import (
     OutputVersionsExhaustedError,
     _is_dir,
@@ -271,6 +276,11 @@ def run_review(
         effective_resume = resume
 
         if force:
+            # --force may overwrite only a free slot or screenscribe's own review
+            # folder. A foreign file/folder fails closed BEFORE anything is
+            # created, cleaned or written (per video, so batch mode too).
+            if classify_review_slot(base_output, video_stem) == "foreign":
+                _exit_output_dir_error(console, _build_force_foreign_message(base_output))
             video_output = base_output
         elif effective_resume and _has_valid_checkpoint(base_output, video, language):
             # C6.2b: --resume must continue in the directory that actually holds
@@ -374,7 +384,12 @@ def run_review(
         if force:
             cache_dir = video_output / ".screenscribe_cache"
             if cache_dir.exists():
-                shutil.rmtree(cache_dir)
+                try:
+                    shutil.rmtree(cache_dir)
+                except OSError as rmtree_error:
+                    _exit_output_dir_error(
+                        console, _build_cache_clear_error_message(cache_dir, rmtree_error)
+                    )
                 console.print(
                     "[yellow]Force mode:[/] Deleted existing checkpoint, starting fresh\n"
                 )

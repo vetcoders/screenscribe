@@ -826,3 +826,105 @@ def test_version_cap_exhausted_is_a_friendly_error(
     assert "Output Directory Error" in normalized
     assert "Too many existing versions of demo_review (limit 3)" in normalized
     assert not (tmp_path / "demo_review_4").exists()
+
+
+# --------------------------------------------------------------------------- #
+# --force: only screenscribe's own review folder (or a free slot).            #
+# --------------------------------------------------------------------------- #
+
+
+def _snapshot(folder: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(folder)): path.read_bytes()
+        for path in sorted(folder.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _panel_text(output: str) -> str:
+    """Collapse a Rich panel to plain words (drop borders, join wrapped lines)."""
+    borderless = "".join(" " if ch in "│╭╮╰╯─" else ch for ch in output)
+    return " ".join(borderless.split())
+
+
+def _assert_force_refused(result: object) -> None:
+    output = result.output  # type: ignore[attr-defined]
+    normalized = _panel_text(output)
+    assert result.exit_code == 1, output  # type: ignore[attr-defined]
+    assert "Traceback" not in output
+    assert "Output Directory Error" in normalized
+    assert "is not a screenscribe review folder" in normalized
+    assert "--force only overwrites a previous screenscribe review" in normalized
+
+
+def test_force_refuses_foreign_folder_and_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    foreign = tmp_path / "demo_review"
+    (foreign / "sub").mkdir(parents=True)
+    (foreign / "notes.txt").write_bytes(b"my notes")
+    (foreign / "sub" / "data.bin").write_bytes(b"\x00\x01")
+    before = _snapshot(foreign)
+
+    def _no_rmtree(*a: object, **kw: object) -> None:
+        raise AssertionError("--force must not delete anything in a foreign folder")
+
+    monkeypatch.setattr("screenscribe.review_pipeline.shutil.rmtree", _no_rmtree)
+
+    result = _run_default(runner, video_path, "--force")
+
+    _assert_force_refused(result)
+    assert _snapshot(foreign) == before
+    assert not (foreign / ".screenscribe_cache").exists()
+    assert not (tmp_path / "demo_review_2").exists()
+
+
+def test_force_refuses_foreign_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    blocker = tmp_path / "demo_review"
+    blocker.write_bytes(b"a file")
+
+    result = _run_default(runner, video_path, "--force")
+
+    _assert_force_refused(result)
+    assert blocker.read_bytes() == b"a file"
+
+
+def test_force_overwrites_own_complete_review(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A previous screenscribe review is still overwritten in place with --force."""
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    assert _run_default(runner, video_path).exit_code == 0  # type: ignore[attr-defined]
+    assert (tmp_path / "demo_review" / "demo_report.json").exists()
+
+    result = _run_default(runner, video_path, "--force")
+
+    assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
+    assert not (tmp_path / "demo_review_2").exists()
+    assert (tmp_path / "demo_review" / "demo_report.json").exists()
+
+
+def test_force_cache_clear_failure_is_a_friendly_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    own = tmp_path / "demo_review"
+    (own / ".screenscribe_cache").mkdir(parents=True)
+
+    def _locked(path: object, *a: object, **kw: object) -> None:
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr("screenscribe.review_pipeline.shutil.rmtree", _locked)
+
+    result = _run_default(runner, video_path, "--force")
+    output = result.output  # type: ignore[attr-defined]
+    normalized = _panel_text(output)
+
+    assert result.exit_code == 1, output  # type: ignore[attr-defined]
+    assert "Traceback" not in output
+    assert "Output Directory Error" in normalized
+    assert "Cannot clear the previous checkpoint cache" in normalized
+    assert "Reason: permission denied" in normalized
+    assert (own / ".screenscribe_cache").is_dir()

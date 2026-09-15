@@ -509,7 +509,10 @@ def review(
         bool,
         typer.Option(
             "--force",
-            help="Force reprocessing, ignore existing checkpoint",
+            help=(
+                "Force reprocessing: overwrite a previous screenscribe review and ignore its "
+                "checkpoint (never a folder screenscribe does not own)"
+            ),
         ),
     ] = False,
     estimate: Annotated[
@@ -582,7 +585,8 @@ def review(
 
     Output options:
     • --serve/--no-serve: Start HTTP server and open report in browser
-    • --force: Overwrite existing review instead of versioning
+    • --force: Overwrite a previous screenscribe review instead of versioning
+      (never a folder screenscribe does not own)
     • --resume: Continue from checkpoint if interrupted
 
     Examples:
