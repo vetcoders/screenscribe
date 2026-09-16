@@ -431,6 +431,16 @@ def test_build_llm_request_body_reasoning_effort() -> None:
     assert "reasoning" not in plain
 
 
+def test_build_llm_request_body_reasoning_effort_none() -> None:
+    from screenscribe.api_utils import build_llm_request_body
+
+    body = build_llm_request_body(
+        "m", "p", "https://api.example.com/v1/responses", reasoning_effort="none"
+    )
+
+    assert body["reasoning"] == {"summary": "auto", "effort": "none"}
+
+
 def test_extract_response_payload_error() -> None:
     from screenscribe.api_utils import extract_response_payload_error
 

@@ -55,6 +55,20 @@ def test_payload_skips_chaining_when_cross_provider() -> None:
     assert "previous_response_id" not in payload
 
 
+def test_payload_reasoning_effort_none_reaches_the_wire() -> None:
+    """Effort "none" is carried verbatim as reasoning.effort on Responses payloads."""
+    payload = _build_unified_payload(
+        endpoint="https://example.test/v1/responses",
+        model="m",
+        prompt="p",
+        screenshot_path=None,
+        previous_response_id=None,
+        stream=False,
+        reasoning_effort="none",
+    )
+    assert payload["reasoning"] == {"summary": "auto", "effort": "none"}
+
+
 def test_payload_default_is_same_provider() -> None:
     """Omitting same_provider preserves the historical chaining behavior."""
     payload = _build_unified_payload(

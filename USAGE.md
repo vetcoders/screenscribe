@@ -566,7 +566,7 @@ moving to a new provider.
 | `SCREENSCRIBE_STT_MODEL` | `whisper-1` | OpenAI-Whisper-compatible. |
 | `SCREENSCRIBE_LLM_MODEL` | `programmer` | LibraxisAI default — change to your provider's model (e.g. `gpt-4o`). |
 | `SCREENSCRIBE_VISION_MODEL` | `programmer` | LibraxisAI default — change to your provider's vision model. |
-| `SCREENSCRIBE_LLM_REASONING_EFFORT` | `medium` | Reasoning effort sent with all text-LLM Responses API calls (pre-filter, text-only analysis, summaries, merge): `minimal`, `low`, `medium`, or `high`. Not sent to Chat Completions endpoints or to the vision request. An invalid value warns and falls back to `medium`. Lower it to `low` if detection fails after the model reasons for a long time without answering. |
+| `SCREENSCRIBE_LLM_REASONING_EFFORT` | `medium` | Reasoning effort sent with all text-LLM Responses API calls (pre-filter, text-only analysis, summaries, merge): `none`, `minimal`, `low`, `medium`, or `high`. Not sent to Chat Completions endpoints or to the vision request. An invalid value warns and falls back to `medium`. Lower it to `low` if detection fails after the model reasons for a long time without answering; `none` turns reasoning off on providers that support it. |
 
 ### Processing options
 

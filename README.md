@@ -457,7 +457,7 @@ OpenAI or any compatible provider.
 export SCREENSCRIBE_STT_MODEL=whisper-1
 export SCREENSCRIBE_LLM_MODEL=gpt-4o          # provider-specific
 export SCREENSCRIBE_VISION_MODEL=gpt-4o       # provider-specific
-export SCREENSCRIBE_LLM_REASONING_EFFORT=medium  # minimal|low|medium|high for text-LLM calls
+export SCREENSCRIBE_LLM_REASONING_EFFORT=medium  # none|minimal|low|medium|high for text-LLM calls
 ```
 
 Defaults: STT `whisper-1`, LLM and vision `programmer` (the LibraxisAI
