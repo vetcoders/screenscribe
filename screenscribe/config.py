@@ -63,8 +63,10 @@ DEFAULT_VISION_MODEL = "programmer"
 # pre-filter, text-only unified analysis, executive summaries, LLM merge). Without an explicit effort, reasoning
 # models on long prompts can reason in a loop for many minutes, emit no answer
 # and end with ``response.failed``. "medium" keeps the "liberal" pre-filter's
-# recall while bounding the time spent reasoning.
-LLM_REASONING_EFFORTS = ("minimal", "low", "medium", "high")
+# recall while bounding the time spent reasoning. "none" turns reasoning off
+# entirely on providers that support it (OpenAI Responses, LibraxisAI); "off"
+# is NOT a valid value and is rejected by the API.
+LLM_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high")
 DEFAULT_LLM_REASONING_EFFORT = "medium"
 
 # Config file locations (checked in order)
@@ -113,7 +115,7 @@ class ScreenScribeConfig:
     llm_model: str = DEFAULT_LLM_MODEL
     vision_model: str = DEFAULT_VISION_MODEL
 
-    # Reasoning effort for text-LLM Responses API calls (minimal/low/medium/high).
+    # Reasoning effort for text-LLM Responses API calls (none/minimal/low/medium/high).
     llm_reasoning_effort: str = DEFAULT_LLM_REASONING_EFFORT
 
     # Optional STT fallback (opt-in). The user supplies a second provider
@@ -1004,8 +1006,9 @@ class ScreenScribeConfig:
             "",
             "# Reasoning effort for all text-LLM calls (pre-filter, text-only analysis,",
             "# summaries, merge):",
-            "# minimal | low | medium | high. Lower it (e.g. low) if detection fails after",
-            "# the model reasons for a long time without answering.",
+            "# none | minimal | low | medium | high. Lower it (e.g. low) if detection fails",
+            "# after the model reasons for a long time without answering; none turns",
+            "# reasoning off on providers that support it.",
             f"SCREENSCRIBE_LLM_REASONING_EFFORT={self.get_llm_reasoning_effort()}",
             "",
             sep,

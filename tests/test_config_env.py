@@ -850,6 +850,28 @@ class TestLlmReasoningEffort:
     def test_default_is_medium(self) -> None:
         assert ScreenScribeConfig().get_llm_reasoning_effort() == "medium"
 
+    def test_env_none_loads_without_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCREENSCRIBE_LLM_REASONING_EFFORT", "none")
+        config = ScreenScribeConfig()
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            config._load_from_env()
+
+        assert config.llm_reasoning_effort == "none"
+        assert config.get_llm_reasoning_effort() == "none"
+
+    def test_env_off_is_invalid_and_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # "off" is rejected by the Responses API (response.failed); only "none"
+        # disables reasoning, so "off" must keep warning and falling back.
+        monkeypatch.setenv("SCREENSCRIBE_LLM_REASONING_EFFORT", "off")
+        config = ScreenScribeConfig()
+
+        with pytest.warns(UserWarning, match="SCREENSCRIBE_LLM_REASONING_EFFORT"):
+            config._load_from_env()
+
+        assert config.llm_reasoning_effort == "medium"
+
     def test_env_override_is_normalized(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SCREENSCRIBE_LLM_REASONING_EFFORT", " LOW ")
         config = ScreenScribeConfig()

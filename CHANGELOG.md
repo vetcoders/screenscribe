@@ -2,6 +2,13 @@
 
 ## [0.1.20.dev0] - Unreleased
 
+- **Added: `SCREENSCRIBE_LLM_REASONING_EFFORT=none`.** `none` is now a legal
+  reasoning-effort value alongside `minimal|low|medium|high`; it turns
+  reasoning off on providers that support it (OpenAI Responses, LibraxisAI)
+  and is sent to the wire verbatim as `reasoning.effort = "none"`. `medium`
+  stays the default, and truly invalid values (e.g. `off`) still warn and
+  fall back to `medium`.
+
 - **Added: annotation objects in the HTML report editor can be selected, moved,
   resized, recoloured, and deleted.** Each annotation now has a stable `id`
   (legacy saves without one are migrated on load). The lightbox toolbar gains
