@@ -2,12 +2,25 @@
 
 ## [0.1.20.dev0] - Unreleased
 
+- **Changed: reasoning-effort default is now per provider preset; `minimal`
+  removed, `xhigh`/`max` added.** `SCREENSCRIBE_LLM_REASONING_EFFORT` accepts
+  `none|low|medium|high|xhigh|max`. `minimal` was never supported by any
+  provider (OpenAI rejects it with a 400, xAI silently aliases it to `low`), so
+  it is now simply invalid — it warns and falls back like any other unknown
+  value, with no deprecation shim. When no effort is configured, the default
+  is resolved from the provider preset: `low` for xAI (which rejects `none`
+  with a 400), `none` for LibraxisAI, OpenAI, and custom providers — restoring
+  the reasoning-off behavior `main` always shipped for those providers.
+  Invalid configured values fall back to that provider default instead of
+  blindly `medium`, and `config setup` writes the preset's default into the
+  generated `config.env` explicitly, so a fresh setup never starts with a
+  value its provider rejects. Configs that explicitly set an effort (e.g.
+  `medium`) behave exactly as before.
+
 - **Added: `SCREENSCRIBE_LLM_REASONING_EFFORT=none`.** `none` is now a legal
-  reasoning-effort value alongside `minimal|low|medium|high`; it turns
+  reasoning-effort value alongside `low|medium|high`; it turns
   reasoning off on providers that support it (OpenAI Responses, LibraxisAI)
-  and is sent to the wire verbatim as `reasoning.effort = "none"`. `medium`
-  stays the default, and truly invalid values (e.g. `off`) still warn and
-  fall back to `medium`.
+  and is sent to the wire verbatim as `reasoning.effort = "none"`.
 
 - **Added: annotation objects in the HTML report editor can be selected, moved,
   resized, recoloured, and deleted.** Each annotation now has a stable `id`
