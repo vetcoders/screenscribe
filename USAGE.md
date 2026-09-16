@@ -566,7 +566,7 @@ moving to a new provider.
 | `SCREENSCRIBE_STT_MODEL` | `whisper-1` | OpenAI-Whisper-compatible. |
 | `SCREENSCRIBE_LLM_MODEL` | `programmer` | LibraxisAI default — change to your provider's model (e.g. `gpt-4o`). |
 | `SCREENSCRIBE_VISION_MODEL` | `programmer` | LibraxisAI default — change to your provider's vision model. |
-| `SCREENSCRIBE_LLM_REASONING_EFFORT` | `medium` | Reasoning effort sent with all text-LLM Responses API calls (pre-filter, text-only analysis, summaries, merge): `minimal`, `low`, `medium`, or `high`. Not sent to Chat Completions endpoints or to the vision request. An invalid value warns and falls back to `medium`. Lower it to `low` if detection fails after the model reasons for a long time without answering. |
+| `SCREENSCRIBE_LLM_REASONING_EFFORT` | per provider | Reasoning effort sent with all text-LLM Responses API calls (pre-filter, text-only analysis, summaries, merge): `none`, `low`, `medium`, `high`, `xhigh`, or `max`. Not sent to Chat Completions endpoints or to the vision request. When unset, the default is resolved per provider preset: `low` for xAI (which rejects `none`), `none` for LibraxisAI, OpenAI, and custom providers. An invalid value warns and falls back to that provider default. Lower it to `low` if detection fails after the model reasons for a long time without answering; `none` turns reasoning off on providers that support it. |
 
 ### Processing options
 
@@ -891,8 +891,8 @@ once instead of re-running a long generation. Your transcript is saved; re-run
 with `--resume` to retry detection without re-transcribing.
 
 If the reason says the model spent its budget reasoning without producing an
-answer, set `SCREENSCRIBE_LLM_REASONING_EFFORT=low` (default `medium`) or switch
-`SCREENSCRIBE_LLM_MODEL`.
+answer, set `SCREENSCRIBE_LLM_REASONING_EFFORT=low` (default: `low` on xAI,
+`none` elsewhere) or switch `SCREENSCRIBE_LLM_MODEL`.
 
 ### No audio track
 

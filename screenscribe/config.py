@@ -62,10 +62,25 @@ DEFAULT_VISION_MODEL = "programmer"
 # Reasoning effort sent with every text-LLM Responses API request (semantic
 # pre-filter, text-only unified analysis, executive summaries, LLM merge). Without an explicit effort, reasoning
 # models on long prompts can reason in a loop for many minutes, emit no answer
-# and end with ``response.failed``. "medium" keeps the "liberal" pre-filter's
-# recall while bounding the time spent reasoning.
-LLM_REASONING_EFFORTS = ("minimal", "low", "medium", "high")
-DEFAULT_LLM_REASONING_EFFORT = "medium"
+# and end with ``response.failed``. "none" turns reasoning off entirely on
+# providers that support it (OpenAI Responses, LibraxisAI); "off" is NOT a
+# valid value and is rejected by the API. "minimal" was never supported by any
+# provider (OpenAI rejects it, xAI aliases it to "low") and is not a valid
+# value here either.
+LLM_REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
+# Last-resort fallback when no provider can be resolved; in practice
+# ``recognized_provider()`` always yields one of the presets below, so the
+# effective default comes from ``PROVIDER_DEFAULT_REASONING_EFFORTS``.
+DEFAULT_LLM_REASONING_EFFORT = "none"
+# Effective default when no effort is configured, resolved per provider preset:
+# xAI rejects "none" (400), so it starts at "low"; the others accept "none",
+# which restores the behavior main always shipped for them.
+PROVIDER_DEFAULT_REASONING_EFFORTS = {
+    "libraxis": "none",
+    "openai": "none",
+    "xai": "low",
+    "custom": "none",
+}
 
 # Config file locations (checked in order)
 # User config has priority - local .env is for development/examples only
@@ -113,8 +128,10 @@ class ScreenScribeConfig:
     llm_model: str = DEFAULT_LLM_MODEL
     vision_model: str = DEFAULT_VISION_MODEL
 
-    # Reasoning effort for text-LLM Responses API calls (minimal/low/medium/high).
-    llm_reasoning_effort: str = DEFAULT_LLM_REASONING_EFFORT
+    # Reasoning effort for text-LLM Responses API calls
+    # (none/low/medium/high/xhigh/max). Empty = not set: the effective default
+    # is resolved per provider preset (see PROVIDER_DEFAULT_REASONING_EFFORTS).
+    llm_reasoning_effort: str = ""
 
     # Optional STT fallback (opt-in). The user supplies a second provider
     # (e.g. their own OpenAI key + endpoint); it is tried ONLY when the primary
@@ -268,26 +285,36 @@ class ScreenScribeConfig:
         """Reasoning effort for text-LLM Responses calls; invalid values fall back.
 
         Loading already warns about an invalid configured value; this accessor
-        only guarantees a value the API accepts, even for a directly-built config.
+        only guarantees a value the API accepts, even for a directly-built
+        config. An unset effort resolves to the provider preset's default
+        (xAI cannot take "none", so it starts at "low").
         """
         effort = (self.llm_reasoning_effort or "").strip().lower()
-        return effort if effort in LLM_REASONING_EFFORTS else DEFAULT_LLM_REASONING_EFFORT
+        if effort in LLM_REASONING_EFFORTS:
+            return effort
+        return self._default_reasoning_effort()
 
-    @staticmethod
-    def _normalize_reasoning_effort(value: str) -> str:
+    def _default_reasoning_effort(self) -> str:
+        """Provider-resolved default effort for configs that set none."""
+        return PROVIDER_DEFAULT_REASONING_EFFORTS.get(
+            self.recognized_provider(), DEFAULT_LLM_REASONING_EFFORT
+        )
+
+    def _normalize_reasoning_effort(self, value: str) -> str:
         """Validate a configured reasoning effort; warn and use the default if invalid."""
         effort = value.strip().lower()
         if effort in LLM_REASONING_EFFORTS:
             return effort
         import warnings
 
+        fallback = self._default_reasoning_effort()
         warnings.warn(
             f"Invalid SCREENSCRIBE_LLM_REASONING_EFFORT={value!r}; expected one of "
-            f"{', '.join(LLM_REASONING_EFFORTS)}. Using {DEFAULT_LLM_REASONING_EFFORT!r}.",
+            f"{', '.join(LLM_REASONING_EFFORTS)}. Using {fallback!r}.",
             UserWarning,
             stacklevel=2,
         )
-        return DEFAULT_LLM_REASONING_EFFORT
+        return fallback
 
     def get_vision_api_key(self) -> str:
         """Get API key for Vision endpoint (explicit key, else account bearer)."""
@@ -1004,8 +1031,10 @@ class ScreenScribeConfig:
             "",
             "# Reasoning effort for all text-LLM calls (pre-filter, text-only analysis,",
             "# summaries, merge):",
-            "# minimal | low | medium | high. Lower it (e.g. low) if detection fails after",
-            "# the model reasons for a long time without answering.",
+            "# none | low | medium | high | xhigh | max. The default depends on the",
+            "# provider: low for xAI (which rejects none), none for the others. Lower it",
+            "# (e.g. low) if detection fails after the model reasons for a long time",
+            "# without answering; none turns reasoning off on providers that support it.",
             f"SCREENSCRIBE_LLM_REASONING_EFFORT={self.get_llm_reasoning_effort()}",
             "",
             sep,
