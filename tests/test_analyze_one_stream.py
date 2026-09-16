@@ -513,7 +513,9 @@ def test_server_error_after_reasoning_is_not_retried(
     # Vision request keeps the provider default; the text-only fallback bounds effort.
     assert "effort" not in image_attempts[0]["reasoning"]
     text_only = [p for p in payloads if "input_image" not in json.dumps(p)]
-    assert text_only and text_only[0]["reasoning"]["effort"] == "medium"
+    # No effort configured: the fixture's endpoints resolve to the "custom"
+    # provider, whose default is "none".
+    assert text_only and text_only[0]["reasoning"]["effort"] == "none"
 
 
 def test_incomplete_after_partial_text_fails_image_attempt_and_falls_back(

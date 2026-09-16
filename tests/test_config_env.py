@@ -845,10 +845,41 @@ def test_saved_config_is_owner_only(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 
 class TestLlmReasoningEffort:
-    """SCREENSCRIBE_LLM_REASONING_EFFORT: default medium, validated, persisted."""
+    """SCREENSCRIBE_LLM_REASONING_EFFORT: provider-resolved default, validated, persisted."""
 
-    def test_default_is_medium(self) -> None:
-        assert ScreenScribeConfig().get_llm_reasoning_effort() == "medium"
+    def test_unset_default_resolves_per_libraxis_endpoints(self) -> None:
+        # The bare default config targets LibraxisAI, which accepts "none".
+        assert ScreenScribeConfig().get_llm_reasoning_effort() == "none"
+
+    @pytest.mark.parametrize(
+        ("provider", "expected"),
+        [
+            ("libraxis", "none"),
+            ("openai", "none"),
+            ("xai", "low"),  # xAI rejects "none" with a 400
+            ("custom", "none"),
+        ],
+    )
+    def test_unset_default_resolves_per_provider_preset(self, provider: str, expected: str) -> None:
+        kwargs = {"custom_base": "https://api.example.com"} if provider == "custom" else {}
+        config = ScreenScribeConfig.provider_preset(provider, "test-key", **kwargs)
+
+        assert config.llm_reasoning_effort == ""
+        assert config.get_llm_reasoning_effort() == expected
+
+    def test_explicit_value_wins_over_provider_default(self) -> None:
+        config = ScreenScribeConfig.provider_preset("xai", "test-key")
+        config.llm_reasoning_effort = "high"
+
+        assert config.get_llm_reasoning_effort() == "high"
+
+    def test_explicit_medium_behaves_as_before(self) -> None:
+        # Configs that explicitly say "medium" are untouched by the per-provider
+        # default: the value stays valid and passes through verbatim.
+        config = ScreenScribeConfig.provider_preset("xai", "test-key")
+        config.llm_reasoning_effort = "medium"
+
+        assert config.get_llm_reasoning_effort() == "medium"
 
     def test_env_none_loads_without_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SCREENSCRIBE_LLM_REASONING_EFFORT", "none")
@@ -861,6 +892,30 @@ class TestLlmReasoningEffort:
         assert config.llm_reasoning_effort == "none"
         assert config.get_llm_reasoning_effort() == "none"
 
+    @pytest.mark.parametrize("effort", ["xhigh", "max"])
+    def test_env_xhigh_and_max_are_accepted(
+        self, monkeypatch: pytest.MonkeyPatch, effort: str
+    ) -> None:
+        monkeypatch.setenv("SCREENSCRIBE_LLM_REASONING_EFFORT", effort)
+        config = ScreenScribeConfig()
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            config._load_from_env()
+
+        assert config.get_llm_reasoning_effort() == effort
+
+    def test_env_minimal_is_invalid_and_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # No provider supports "minimal" (OpenAI 400s, xAI aliases it to "low"),
+        # so it is rejected like any other unknown value -- no deprecation shim.
+        monkeypatch.setenv("SCREENSCRIBE_LLM_REASONING_EFFORT", "minimal")
+        config = ScreenScribeConfig()
+
+        with pytest.warns(UserWarning, match="SCREENSCRIBE_LLM_REASONING_EFFORT"):
+            config._load_from_env()
+
+        assert config.llm_reasoning_effort == "none"
+
     def test_env_off_is_invalid_and_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # "off" is rejected by the Responses API (response.failed); only "none"
         # disables reasoning, so "off" must keep warning and falling back.
@@ -870,7 +925,7 @@ class TestLlmReasoningEffort:
         with pytest.warns(UserWarning, match="SCREENSCRIBE_LLM_REASONING_EFFORT"):
             config._load_from_env()
 
-        assert config.llm_reasoning_effort == "medium"
+        assert config.llm_reasoning_effort == "none"
 
     def test_env_override_is_normalized(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SCREENSCRIBE_LLM_REASONING_EFFORT", " LOW ")
@@ -889,7 +944,23 @@ class TestLlmReasoningEffort:
         with pytest.warns(UserWarning, match="SCREENSCRIBE_LLM_REASONING_EFFORT"):
             config._load_from_env()
 
-        assert config.llm_reasoning_effort == "medium"
+        assert config.llm_reasoning_effort == "none"
+
+    @pytest.mark.parametrize(
+        ("provider", "expected"),
+        [("xai", "low"), ("custom", "none")],
+    )
+    def test_invalid_value_falls_back_to_provider_default(
+        self, provider: str, expected: str
+    ) -> None:
+        kwargs = {"custom_base": "https://api.example.com"} if provider == "custom" else {}
+        config = ScreenScribeConfig.provider_preset(provider, "test-key", **kwargs)
+
+        with pytest.warns(UserWarning, match="SCREENSCRIBE_LLM_REASONING_EFFORT"):
+            config._set_from_key("SCREENSCRIBE_LLM_REASONING_EFFORT", "bogus")
+
+        assert config.llm_reasoning_effort == expected
+        assert config.get_llm_reasoning_effort() == expected
 
     def test_config_file_key(self) -> None:
         config = ScreenScribeConfig()
@@ -902,7 +973,7 @@ class TestLlmReasoningEffort:
 
     def test_direct_invalid_value_falls_back_at_use(self) -> None:
         assert ScreenScribeConfig(llm_reasoning_effort="bogus").get_llm_reasoning_effort() == (
-            "medium"
+            "none"
         )
 
     def test_saved_template_round_trips(
@@ -915,6 +986,23 @@ class TestLlmReasoningEffort:
         reloaded = ScreenScribeConfig()
         reloaded._load_from_file(path)
         assert reloaded.llm_reasoning_effort == "low"
+
+    @pytest.mark.parametrize(
+        ("provider", "expected"),
+        [("xai", "low"), ("custom", "none")],
+    )
+    def test_setup_writes_provider_default_explicitly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, expected: str
+    ) -> None:
+        # A fresh `config setup` must never start with a value its provider
+        # rejects: the preset's default is written into config.env explicitly.
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        kwargs = {"custom_base": "https://api.example.com"} if provider == "custom" else {}
+        config = ScreenScribeConfig.provider_preset(provider, "test-key", **kwargs)
+
+        path = config.save_default_config()
+
+        assert f"SCREENSCRIBE_LLM_REASONING_EFFORT={expected}" in path.read_text()
 
 
 class TestInvalidEndpointMessageRedaction:

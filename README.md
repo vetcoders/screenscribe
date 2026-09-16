@@ -457,14 +457,16 @@ OpenAI or any compatible provider.
 export SCREENSCRIBE_STT_MODEL=whisper-1
 export SCREENSCRIBE_LLM_MODEL=gpt-4o          # provider-specific
 export SCREENSCRIBE_VISION_MODEL=gpt-4o       # provider-specific
-export SCREENSCRIBE_LLM_REASONING_EFFORT=medium  # none|minimal|low|medium|high for text-LLM calls
+export SCREENSCRIBE_LLM_REASONING_EFFORT=none  # none|low|medium|high|xhigh|max for text-LLM calls
 ```
 
 Defaults: STT `whisper-1`, LLM and vision `programmer` (the LibraxisAI
 default — change these to your provider's model names, e.g. `gpt-4o`).
 All text-LLM Responses API calls (pre-filter, text-only analysis, summaries,
-merge) send reasoning effort `medium`; lower it to `low` if detection fails after the model
-reasons for a long time without answering.
+merge) send a reasoning effort; when unset, the default is resolved per
+provider preset — `low` for xAI (which rejects `none`), `none` for the others.
+Lower it to `low` if detection fails after the model reasons for a long time
+without answering.
 
 ### Processing options
 

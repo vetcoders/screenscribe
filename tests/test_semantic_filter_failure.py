@@ -786,7 +786,7 @@ def _recording_client(lines: list[str], bodies: list[dict[str, Any]], attempts: 
     return _Client
 
 
-def test_prefilter_sends_default_medium_reasoning_effort(
+def test_prefilter_sends_default_reasoning_effort(
     monkeypatch: pytest.MonkeyPatch,
     transcription: TranscriptionResult,
     config: ScreenScribeConfig,
@@ -799,7 +799,9 @@ def test_prefilter_sends_default_medium_reasoning_effort(
     result = semantic_prefilter(transcription, config)
 
     assert result.failed is False
-    assert bodies[0]["reasoning"] == {"summary": "auto", "effort": "medium"}
+    # No effort configured: the fixture's endpoints resolve to the "custom"
+    # provider, whose default is "none".
+    assert bodies[0]["reasoning"] == {"summary": "auto", "effort": "none"}
 
 
 def test_prefilter_uses_configured_reasoning_effort(
