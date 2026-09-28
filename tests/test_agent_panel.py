@@ -203,11 +203,19 @@ thumb.className = 'annotation-container';
 finding.appendChild(thumb);
 body.appendChild(finding);
 
+const docListeners = {};
 const documentRef = {
     body,
     documentElement: htmlEl,
     readyState: 'complete',
-    addEventListener() {},
+    addEventListener(type, fn) {
+        (docListeners[type] || (docListeners[type] = [])).push(fn);
+    },
+    dispatchEvent(event) {
+        const type = event && event.type;
+        (docListeners[type] || []).forEach((fn) => fn(event));
+        return true;
+    },
     getElementById(id) { return registry.get(id) || null; },
     querySelector(sel) {
         if (sel.startsWith('#')) return registry.get(sel.slice(1)) || query(body, sel, true);
@@ -652,7 +660,11 @@ def test_error_turn_reuses_assistant_bubble() -> None:
             if (msgs.length !== 2) throw new Error('expected user+error, got ' + msgs.length + ' ' + msgs.map((m) => m.className + ':' + m.textContent).join('|'));
             if (!String(msgs[0].className).includes('ss-agent-msg-user')) throw new Error('first should be user');
             if (!String(msgs[1].className).includes('ss-agent-msg-error')) throw new Error('error class: ' + msgs[1].className);
-            if (msgs[1].textContent !== 'egress deny: external provider blocked') throw new Error('error text: ' + msgs[1].textContent);
+            if (!msgs[1].textContent.includes('egress deny: external provider blocked')) throw new Error('error text: ' + msgs[1].textContent);
+            if (!msgs[1].querySelector('.ss-agent-retry')) throw new Error('retry control missing');
+            const input = document.getElementById('ss-agent-input');
+            if (!input || input.disabled) throw new Error('composer dead after error');
+            if (api.getState().streaming) throw new Error('streaming stuck after error');
             const emptyAssistant = msgs.filter((m) => String(m.className).includes('ss-agent-msg-assistant') && !String(m.textContent || '').trim());
             if (emptyAssistant.length) throw new Error('empty assistant bubble remained');
             process.stdout.write('error-bubble:ok');
@@ -1177,3 +1189,212 @@ def test_review_tool_error_and_unsupported_are_system_lines() -> None:
         )
     )
     assert "patch-errors:ok" in output
+
+
+def test_provider_error_is_retryable_and_composer_stays_live() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = ScreenScribeAgentPanel;
+            const bodies = [];
+            fetch = async (_url, opts) => {
+                bodies.push(JSON.parse(opts.body));
+                if (bodies.length === 1) {
+                    return {
+                        ok: true,
+                        text: async () => 'event: token\\ndata: {"text":"partial"}\\n\\nevent: error\\ndata: {"message":"provider exploded"}\\n\\n',
+                    };
+                }
+                return {
+                    ok: true,
+                    text: async () => 'event: token\\ndata: {"text":"recovered"}\\n\\nevent: done\\ndata: {"response_id":"resp_ok"}\\n\\n',
+                };
+            };
+            window.fetch = fetch;
+            api.init();
+            await api.whenThreadReady();
+            await api.send('What broke?');
+            const input = document.getElementById('ss-agent-input');
+            if (!input || input.disabled) throw new Error('dead input after provider error');
+            if (api.getState().streaming) throw new Error('streaming stuck');
+            const hist = api.getState().history;
+            if (hist.length !== 1 || hist[0].content !== 'What broke?') {
+                throw new Error('partial assistant was stored: ' + JSON.stringify(hist));
+            }
+            const log = document.getElementById('ss-agent-log');
+            const errorRow = (log.children || []).find((n) => String(n.className).includes('ss-agent-msg-error'));
+            if (!errorRow || !errorRow.textContent.includes('provider exploded')) {
+                throw new Error('error row missing');
+            }
+            const retry = errorRow.querySelector('.ss-agent-retry');
+            if (!retry) throw new Error('retry button missing');
+            retry.click();
+            await new Promise((resolve) => setTimeout(resolve, 40));
+            if (bodies.length !== 2) throw new Error('retry did not resend, got ' + bodies.length);
+            if (bodies[1].message !== 'What broke?') throw new Error('retry message: ' + bodies[1].message);
+            const users = (log.children || []).filter((n) => String(n.className).includes('ss-agent-msg-user'));
+            if (users.length !== 1) throw new Error('user bubble duplicated: ' + users.length);
+            if (api.getState().previousResponseId !== 'resp_ok') {
+                throw new Error('chain after retry: ' + api.getState().previousResponseId);
+            }
+            if (input.disabled) throw new Error('dead input after retry');
+            await api.send('third question');
+            if (bodies.length !== 3) throw new Error('composer did not accept a new question');
+            if (bodies[2].message !== 'third question') throw new Error('third message');
+            if (input.disabled || api.getState().streaming) throw new Error('composer dead after recovery');
+            process.stdout.write('retry-live:ok');
+            """
+        )
+    )
+    assert "retry-live:ok" in output
+
+
+def test_thread_restores_messages_and_chain_from_indexeddb() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            function later(fn) { setTimeout(fn, 0); }
+            function makeIdb() {
+                const stores = {};
+                let upgraded = false;
+                return {
+                    open() {
+                        const req = {};
+                        later(() => {
+                            const db = {
+                                objectStoreNames: {
+                                    contains(name) { return Object.prototype.hasOwnProperty.call(stores, name); },
+                                },
+                                createObjectStore(name) { stores[name] = new Map(); },
+                                transaction() {
+                                    return {
+                                        objectStore(name) {
+                                            const data = stores[name];
+                                            if (!data) throw new Error('missing store ' + name);
+                                            return {
+                                                get(key) {
+                                                    const result = {};
+                                                    later(() => {
+                                                        result.result = data.has(key) ? data.get(key) : undefined;
+                                                        if (result.onsuccess) result.onsuccess();
+                                                    });
+                                                    return result;
+                                                },
+                                                put(value, key) {
+                                                    data.set(key, JSON.parse(JSON.stringify(value)));
+                                                    const result = {};
+                                                    later(() => { if (result.onsuccess) result.onsuccess(); });
+                                                    return result;
+                                                },
+                                            };
+                                        },
+                                    };
+                                },
+                            };
+                            req.result = db;
+                            if (!upgraded && req.onupgradeneeded) req.onupgradeneeded();
+                            upgraded = true;
+                            if (req.onsuccess) req.onsuccess();
+                        });
+                        return req;
+                    },
+                };
+            }
+            window.indexedDB = makeIdb();
+            const api = ScreenScribeAgentPanel;
+            const bodies = [];
+            fetch = async (_url, opts) => {
+                bodies.push(JSON.parse(opts.body));
+                const n = bodies.length;
+                const text = n === 1 ? 'hello-reply' : 'again-reply';
+                const id = n === 1 ? 'resp_a' : 'resp_b';
+                return {
+                    ok: true,
+                    text: async () => 'event: token\\ndata: {"text":"' + text + '"}\\n\\nevent: done\\ndata: {"response_id":"' + id + '"}\\n\\n',
+                };
+            };
+            window.fetch = fetch;
+            api.init();
+            await api.whenThreadReady();
+            await api.send('hello');
+            await api.send('again');
+            if (bodies[1].previous_response_id !== 'resp_a') {
+                throw new Error('second turn did not chain: ' + bodies[1].previous_response_id);
+            }
+            if (api.getState().previousResponseId !== 'resp_b') {
+                throw new Error('live chain: ' + api.getState().previousResponseId);
+            }
+            if (api.getState().history.length !== 4) {
+                throw new Error('live history: ' + JSON.stringify(api.getState().history));
+            }
+            api.getState().history = [];
+            api.getState().previousResponseId = null;
+            const restored = await api.restoreThread();
+            if (!restored) throw new Error('restore returned false');
+            const after = api.getState();
+            if (after.previousResponseId !== 'resp_b') throw new Error('restored chain: ' + after.previousResponseId);
+            const contents = after.history.map((m) => m.role + ':' + m.content);
+            if (contents.join('|') !== 'user:hello|assistant:hello-reply|user:again|assistant:again-reply') {
+                throw new Error('restored messages: ' + contents.join('|'));
+            }
+            const log = document.getElementById('ss-agent-log');
+            const rendered = (log.children || []).map((n) => n.textContent).join('|');
+            if (!rendered.includes('hello') || !rendered.includes('again-reply')) {
+                throw new Error('dom after reload: ' + rendered);
+            }
+            process.stdout.write('thread-persist:ok');
+            """
+        )
+    )
+    assert "thread-persist:ok" in output
+
+
+def test_reference_event_inserts_quote_and_opens_panel() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = ScreenScribeAgentPanel;
+            api.init();
+            await api.whenThreadReady();
+            api.setCollapsed(true);
+            const input = document.getElementById('ss-agent-input');
+            input.value = 'draft';
+            document.dispatchEvent({
+                type: 'screenscribe:agent-insert-reference',
+                detail: {
+                    kind: 'reference',
+                    moment_id: '12',
+                    field: 'transcript',
+                    quote: 'sessions nie wchodzą',
+                    timestamp: '00:16',
+                },
+            });
+            const rootEl = document.getElementById('ss-agent-root');
+            if (rootEl.classList.contains('ss-agent-collapsed')) throw new Error('panel stayed closed');
+            if (!rootEl.classList.contains('ss-agent-expanded')) throw new Error('panel not expanded');
+            if (input.disabled) throw new Error('composer disabled');
+            const value = input.value;
+            if (!value.startsWith('draft')) throw new Error('draft lost: ' + value);
+            if (!value.includes('sessions nie wchodzą')) throw new Error('quote missing: ' + value);
+            if (!value.includes('moment=12') || !value.includes('t=00:16') || !value.includes('field=transcript')) {
+                throw new Error('marker missing: ' + value);
+            }
+            document.dispatchEvent({
+                type: 'screenscribe:agent-insert-reference',
+                detail: {
+                    kind: 'transcript-error',
+                    moment_id: null,
+                    field: 'subtitle',
+                    quote: 'zła linia',
+                    timestamp: null,
+                },
+            });
+            if (!input.value.includes('[transcript-error field=subtitle]')) {
+                throw new Error('transcript-error marker: ' + input.value);
+            }
+            if (!input.value.includes('> zła linia')) throw new Error('second quote missing');
+            process.stdout.write('reference:ok');
+            """
+        )
+    )
+    assert "reference:ok" in output

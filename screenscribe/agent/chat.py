@@ -298,6 +298,7 @@ async def stream_agent_chat(
     )
 
     last_error: str | None = None
+    emitted = False
     for provider in providers:
         emitted = False
         try:
@@ -321,6 +322,7 @@ async def stream_agent_chat(
             if emitted:
                 # Retrying a whole turn after any visible token/tool frame would
                 # splice two providers' answers into one SSE response.
+
                 yield format_sse("error", {"message": last_error})
                 return
 
@@ -859,6 +861,10 @@ def _anthropic_messages_from_input(items: list[Any]) -> list[dict[str, Any]]:
                 blocks.append({"type": "text", "text": content})
         if blocks:
             messages.append({"role": role, "content": blocks})
+    # Last history turn, not the current user message and not a tool result.
+    if len(messages) >= 2:
+        _attach_history_cache_control(messages[-2])
+
     if tool_results:
         messages.append({"role": "user", "content": tool_results})
     if not messages:
@@ -878,6 +884,20 @@ def _anthropic_base_url(messages_url: str) -> str:
             path = path[: -len(suffix)]
             break
     return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
+def _attach_history_cache_control(message: dict[str, Any]) -> None:
+    """Cache the last forwarded history turn (Anthropic ephemeral breakpoint)."""
+    control = {"type": "ephemeral", "ttl": "1h"}
+    content = message.get("content")
+    if isinstance(content, str):
+        message["content"] = [{"type": "text", "text": content, "cache_control": control}]
+        return
+    if isinstance(content, list) and content:
+        last = content[-1]
+        if isinstance(last, dict) and last.get("type") in {"text", "input_text"}:
+            last["cache_control"] = control
+
 
 
 def _no_provider_message(skipped: list[AgentProvider], config: ScreenScribeConfig) -> str:

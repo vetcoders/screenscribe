@@ -17,6 +17,7 @@ from screenscribe.agent.chat import (
     AgentProvider,
     FunctionCall,
     ProviderRound,
+    _anthropic_messages_from_input,
     apply_egress,
     build_providers,
     collect_agent_chat,
@@ -1136,6 +1137,230 @@ def test_chat_completions_endpoint_is_rejected_before_network(
     body = asyncio.run(_collect())
     assert called is False
     assert "requires a Responses API endpoint" in body
+
+
+def test_three_turns_with_tools_keep_the_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Three turns, including tool calls, must finish instead of dying on turn two.
+
+    In-process probe before the cap: turns 1 and 2 already returned ``done``.
+    This locks that survival and the response id handed to the next turn.
+    """
+    _drop_agent_env(monkeypatch)
+    script = [
+        [
+            ProviderRound(
+                text="",
+                response_id="resp_1a",
+                function_calls=[
+                    FunctionCall(name="get_report_summary", call_id="c1", arguments={})
+                ],
+            ),
+            ProviderRound(text="one", response_id="resp_1b", function_calls=[]),
+        ],
+        [ProviderRound(text="two", response_id="resp_2", function_calls=[])],
+        [
+            ProviderRound(
+                text="",
+                response_id="resp_3a",
+                function_calls=[
+                    FunctionCall(name="list_findings", call_id="c3", arguments={"severity": "high"})
+                ],
+            ),
+            ProviderRound(text="three", response_id="resp_3b", function_calls=[]),
+        ],
+    ]
+    seen: list[dict[str, Any]] = []
+    cursor = {"turn": 0, "step": 0}
+
+    async def fake_round(_provider: AgentProvider, payload: dict[str, Any]) -> ProviderRound:
+        seen.append(
+            {
+                "turn": cursor["turn"],
+                "previous": payload.get("previous_response_id"),
+                "roles": [
+                    item.get("role")
+                    for item in payload.get("input") or []
+                    if isinstance(item, dict)
+                ],
+            }
+        )
+        item = script[cursor["turn"]][cursor["step"]]
+        cursor["step"] += 1
+        return item
+
+    monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
+    config = _xai_config()
+    report = _load_fixture()
+
+    async def _run() -> list[str]:
+        history: list[dict[str, str]] = []
+        previous: str | None = None
+        bodies: list[str] = []
+        for index, message in enumerate(("q1", "q2", "q3")):
+            cursor["turn"] = index
+            cursor["step"] = 0
+            frames = [
+                frame
+                async for frame in stream_agent_chat(
+                    config=config,
+                    report=report,
+                    tools=ReportToolbelt(report),
+                    message=message,
+                    history=list(history),
+                    previous_response_id=previous,
+                )
+            ]
+            body = "".join(frames)
+            if "event: error" in body:
+                raise AssertionError(body)
+            response_ids = [
+                line.split('"response_id": "', 1)[1].split('"', 1)[0]
+                for line in body.splitlines()
+                if '"response_id": "' in line
+            ]
+            texts = [
+                line.split('"text": "', 1)[1].split('"', 1)[0]
+                for line in body.splitlines()
+                if '"text": "' in line
+            ]
+            previous = response_ids[-1]
+            history.append({"role": "user", "content": message})
+            history.append({"role": "assistant", "content": "".join(texts)})
+            bodies.append(body)
+        return bodies
+
+    bodies = asyncio.run(_run())
+    assert len(bodies) == 3
+    assert "event: tool_call" in bodies[0]
+    assert "resp_1b" in bodies[0]
+    assert "event: tool_call" in bodies[2]
+    assert "resp_3b" in bodies[2]
+    second = [item for item in seen if item["turn"] == 1]
+    third = [item for item in seen if item["turn"] == 2]
+    assert second and second[0]["previous"] == "resp_1b"
+    assert second[0]["roles"] == ["user", "assistant", "user"]
+    assert third and third[0]["previous"] == "resp_2"
+    assert "assistant" in third[0]["roles"]
+
+
+def test_forwarded_history_caps_at_20_and_keeps_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _drop_agent_env(monkeypatch)
+    seen: list[dict[str, Any]] = []
+
+    async def fake_round(_provider: AgentProvider, payload: dict[str, Any]) -> ProviderRound:
+        seen.append(payload)
+        return ProviderRound(text="ok", response_id="resp_cap", function_calls=[])
+
+    monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
+    history = [
+        {"role": "user" if index % 2 == 0 else "assistant", "content": f"m{index}"}
+        for index in range(30)
+    ]
+
+    async def _run() -> str:
+        return "".join(
+            [
+                frame
+                async for frame in stream_agent_chat(
+                    config=_xai_config(),
+                    report=_load_fixture(),
+                    tools=ReportToolbelt(_load_fixture()),
+                    message="now",
+                    history=history,
+                    previous_response_id="resp_chain",
+                )
+            ]
+        )
+
+    body = asyncio.run(_run())
+    assert "event: done" in body
+    assert "resp_cap" in body
+    payload = seen[0]
+    assert payload["previous_response_id"] == "resp_chain"
+    inputs = payload["input"]
+    assert len(inputs) == 21
+    texts = [item["content"][0]["text"] for item in inputs]
+    assert texts[0] == "m10"
+    assert texts[-2] == "m29"
+    assert texts[-1] == "now"
+    assert "m0" not in texts
+    assert "m9" not in texts
+
+
+def test_error_after_yield_emits_sse_error_without_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _drop_agent_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")  # pragma: allowlist secret
+    calls: list[str] = []
+    primary_rounds = {"n": 0}
+
+    async def fake_round(provider: AgentProvider, _payload: dict[str, Any]) -> ProviderRound:
+        calls.append(provider.name)
+        if provider.name != "primary":
+            return ProviderRound(text="fallback-ran", response_id="resp_fb", function_calls=[])
+        primary_rounds["n"] += 1
+        if primary_rounds["n"] == 1:
+            return ProviderRound(
+                text="partial",
+                response_id="resp_partial",
+                function_calls=[
+                    FunctionCall(name="get_report_summary", call_id="c1", arguments={})
+                ],
+            )
+        raise RuntimeError("connection reset by peer")
+
+    monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
+
+    async def _run() -> str:
+        return "".join(
+            [
+                frame
+                async for frame in stream_agent_chat(
+                    config=_xai_config(agent_egress="allow"),
+                    report=_load_fixture(),
+                    tools=ReportToolbelt(_load_fixture()),
+                    message="keep going",
+                )
+            ]
+        )
+
+    body = asyncio.run(_run())
+    assert "event: token" in body
+    assert "partial" in body
+    assert "event: error" in body
+    assert "connection reset by peer" in body
+    assert "fallback-ran" not in body
+    assert "event: done" not in body
+    assert calls == ["primary", "primary"]
+
+
+def test_anthropic_cache_control_marks_last_history_turn() -> None:
+    items = [
+        {
+            "role": "user" if index % 2 == 0 else "assistant",
+            "content": [{"type": "input_text", "text": f"m{index}"}],
+        }
+        for index in range(4)
+    ]
+    items.append({"role": "user", "content": [{"type": "input_text", "text": "now"}]})
+    messages = _anthropic_messages_from_input(items)
+    assert messages[-1] == {"role": "user", "content": "now"}
+    cached = messages[-2]["content"]
+    assert isinstance(cached, list)
+    assert cached[0]["text"] == "m3"
+    assert cached[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    solo = _anthropic_messages_from_input(
+        [{"role": "user", "content": [{"type": "input_text", "text": "only"}]}]
+    )
+    assert solo == [{"role": "user", "content": "only"}]
+    tool_only = _anthropic_messages_from_input(
+        [{"type": "function_call_output", "call_id": "c1", "output": "{}"}]
+    )
+    assert tool_only[0]["content"][0]["type"] == "tool_result"
+    assert "cache_control" not in tool_only[0]["content"][0]
 
 
 def test_config_file_loads_agent_egress(tmp_path: Path) -> None:

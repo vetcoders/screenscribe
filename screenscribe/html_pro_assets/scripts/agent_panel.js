@@ -25,6 +25,10 @@
         drag: null,
         playerObserver: null,
         patchOfflineAnnounced: false,
+        retryMessage: null,
+        retryRow: null,
+        threadReady: null,
+        referenceBound: false,
     };
 
     function tx(key, args) {
@@ -753,17 +757,248 @@
         }
     }
 
+    var THREAD_DB = 'screenscribe-agent';
+    var THREAD_STORE = 'threads';
+
+    function setComposerLive() {
+        var doc = root.document;
+        if (!doc) return;
+        var input = doc.getElementById('ss-agent-input');
+        var sendBtn = doc.querySelector('#ss-agent-form .ss-agent-send');
+        if (input) input.disabled = false;
+        if (sendBtn) sendBtn.disabled = false;
+    }
+
+    function openThreadDb() {
+        var factory = root.indexedDB;
+        if (!factory || typeof factory.open !== 'function') return Promise.resolve(null);
+        return new Promise(function (resolve) {
+            var req;
+            try {
+                req = factory.open(THREAD_DB, 1);
+            } catch (_err) {
+                resolve(null);
+                return;
+            }
+            req.onupgradeneeded = function () {
+                var db = req.result;
+                if (!db || typeof db.createObjectStore !== 'function') return;
+                var names = db.objectStoreNames;
+                if (names && typeof names.contains === 'function' && names.contains(THREAD_STORE)) return;
+                db.createObjectStore(THREAD_STORE);
+            };
+            req.onsuccess = function () { resolve(req.result || null); };
+            req.onerror = function () { resolve(null); };
+        });
+    }
+
+    function threadRecord() {
+        return {
+            messages: state.history.map(function (entry) {
+                return { role: entry.role, content: entry.content };
+            }),
+            previousResponseId: state.previousResponseId || null,
+        };
+    }
+
+    function withThreadStore(mode, fn) {
+        return openThreadDb().then(function (db) {
+            if (!db) return null;
+            try {
+                var tx = db.transaction(THREAD_STORE, mode);
+                return fn(tx.objectStore(THREAD_STORE));
+            } catch (_err) {
+                return null;
+            }
+        });
+    }
+
+    function persistThread() {
+        if (!root.indexedDB) return Promise.resolve(false);
+        var key = storageKey();
+        var record = threadRecord();
+        return withThreadStore('readwrite', function (store) {
+            return new Promise(function (resolve) {
+                var req;
+                try {
+                    req = store.put(record, key);
+                } catch (_err) {
+                    resolve(false);
+                    return;
+                }
+                req.onsuccess = function () { resolve(true); };
+                req.onerror = function () { resolve(false); };
+            });
+        }).then(function (saved) { return Boolean(saved); });
+    }
+
+    function readThread() {
+        if (!root.indexedDB) return Promise.resolve(null);
+        var key = storageKey();
+        return withThreadStore('readonly', function (store) {
+            return new Promise(function (resolve) {
+                var req;
+                try {
+                    req = store.get(key);
+                } catch (_err) {
+                    resolve(null);
+                    return;
+                }
+                req.onsuccess = function () { resolve(req.result || null); };
+                req.onerror = function () { resolve(null); };
+            });
+        });
+    }
+
+    function clearMessageRows() {
+        var log = root.document.getElementById('ss-agent-log');
+        if (!log || !log.children) return;
+        var doomed = [];
+        for (var i = 0; i < log.children.length; i += 1) doomed.push(log.children[i]);
+        doomed.forEach(function (child) {
+            if (!child || !child.classList) return;
+            if (!child.classList.contains('ss-agent-msg') && !child.classList.contains('ss-agent-plan')) return;
+            if (child.parentNode && typeof child.parentNode.removeChild === 'function') {
+                child.parentNode.removeChild(child);
+            }
+        });
+    }
+
+    function paintStoredMessages(messages) {
+        clearMessageRows();
+        var empty = root.document.querySelector('.ss-agent-empty');
+        if (empty) empty.hidden = !messages.length;
+        messages.forEach(function (entry) {
+            appendMessage(entry.role, entry.content);
+        });
+    }
+
+    function restoreThread() {
+        return readThread().then(function (record) {
+            if (!record || typeof record !== 'object') return false;
+            var messages = Array.isArray(record.messages) ? record.messages : [];
+            var restored = [];
+            messages.forEach(function (entry) {
+                if (!entry || (entry.role !== 'user' && entry.role !== 'assistant')) return;
+                if (typeof entry.content !== 'string' || !entry.content) return;
+                restored.push({ role: entry.role, content: entry.content });
+            });
+            var chain = record.previousResponseId;
+            if (!restored.length && typeof chain !== 'string') return false;
+            state.history = restored;
+            state.previousResponseId = typeof chain === 'string' && chain ? chain : null;
+            state.retryMessage = null;
+            state.retryRow = null;
+            paintStoredMessages(restored);
+            return true;
+        });
+    }
+
+    function formatReference(detail) {
+        var d = detail && typeof detail === 'object' ? detail : {};
+        var kind = d.kind === 'transcript-error' ? 'transcript-error' : 'reference';
+        var quote = String(d.quote == null ? '' : d.quote).slice(0, 2000);
+        var moment = d.moment_id == null ? '' : String(d.moment_id);
+        var field = d.field == null ? '' : String(d.field);
+        var timestamp = d.timestamp == null ? '' : String(d.timestamp);
+        var marker = kind;
+        if (moment) marker += ' moment=' + moment;
+        if (timestamp) marker += ' t=' + timestamp;
+        if (field) marker += ' field=' + field;
+        var head = '[' + marker + ']';
+        if (!quote) return head;
+        return head + '\n> ' + quote;
+    }
+
+    function insertReference(detail) {
+        setCollapsed(false);
+        var block = formatReference(detail);
+        var input = root.document.getElementById('ss-agent-input');
+        if (!input) return block;
+        var existing = String(input.value || '');
+        if (existing.trim()) input.value = existing.replace(/\s+$/, '') + '\n\n' + block;
+        else input.value = block;
+        input.disabled = false;
+        if (typeof input.focus === 'function') input.focus();
+        return block;
+    }
+
+    function bindReferenceListener() {
+        if (state.referenceBound) return;
+        var doc = root.document;
+        if (!doc || typeof doc.addEventListener !== 'function') return;
+        doc.addEventListener('screenscribe:agent-insert-reference', function (event) {
+            insertReference(event && event.detail);
+        });
+        state.referenceBound = true;
+    }
+
+    function disarmRetry() {
+        var row = state.retryRow;
+        state.retryMessage = null;
+        state.retryRow = null;
+        if (!row || typeof row.querySelector !== 'function') return;
+        var btn = row.querySelector('.ss-agent-retry');
+        if (btn && btn.parentNode && typeof btn.parentNode.removeChild === 'function') {
+            btn.parentNode.removeChild(btn);
+        }
+    }
+
+    function markRetryable(row, messageText, retryText) {
+        var painted = paintAssistantError(row, messageText) || row;
+        state.retryRow = painted;
+        state.retryMessage = retryText;
+        attachRetry(painted, function () { return retryTurn(retryText); });
+    }
+
+    function retryTurn(message) {
+        var row = state.retryRow;
+        state.retryRow = null;
+        state.retryMessage = null;
+        if (row && row.parentNode && typeof row.parentNode.removeChild === 'function') {
+            row.parentNode.removeChild(row);
+        }
+        return send(message, { retry: true });
+    }
+
+    async function readFailureMessage(response) {
+        var fallback = tx('review.agentPatchRetry');
+        if (!response || typeof response.text !== 'function') return fallback;
+        try {
+            var raw = await response.text();
+            if (!raw) return fallback;
+            try {
+                var parsed = JSON.parse(raw);
+                if (parsed && typeof parsed.detail === 'string' && parsed.detail) return parsed.detail;
+                if (parsed && typeof parsed.message === 'string' && parsed.message) return parsed.message;
+            } catch (_err) { /* body was not JSON */ }
+            return String(raw).slice(0, 500);
+        } catch (_err) {
+            return fallback;
+        }
+    }
+
     function canSend(text) {
         return Boolean(String(text || '').trim()) && !state.streaming;
     }
 
-    async function send(text) {
+    async function send(text, options) {
+        if (state.threadReady) {
+            try {
+                await state.threadReady;
+            } catch (_err) { /* restore is best-effort; never block the turn */ }
+        }
+        var retrying = Boolean(options && options.retry);
         var message = String(text || '').trim();
         if (!message || state.streaming) return false;
-        appendMessage('user', message);
-        state.history.push({ role: 'user', content: message });
+        if (!retrying) {
+            disarmRetry();
+            appendMessage('user', message);
+            state.history.push({ role: 'user', content: message });
+        }
         if (isOffline()) {
             showOfflineNotice();
+            await persistThread();
             return true;
         }
         state.streaming = true;
@@ -797,22 +1032,24 @@
                 }),
             });
             if (!response) {
+                errored = true;
                 showOfflineNotice();
                 paintAssistantError(assistantRow, tx('review.agentOffline'));
                 state.streaming = false;
                 return true;
             }
             if (!response.ok) {
-                var status = Number.isFinite(Number(response.status)) ? String(response.status) : '?';
-                paintAssistantError(assistantRow, tx('review.agentRequestFailed', { status: status }));
+                errored = true;
+                markRetryable(assistantRow, await readFailureMessage(response), message);
                 state.streaming = false;
+
                 return true;
             }
             await consumeSse(response, async function (evt) {
                 if (!evt) return;
                 if (evt.event === 'token') {
                     assembled += (evt.data && evt.data.text) || '';
-                    if (assistantRow) assistantRow.textContent = assembled;
+                    if (assistantRow && !errored) assistantRow.textContent = assembled;
                 } else if (evt.event === 'tool_call') {
                     applyToolCall(
                         evt.data && evt.data.name,
@@ -826,29 +1063,44 @@
                         message
                     );
                 } else if (evt.event === 'done') {
-                    acceptDoneCursor(evt.data, requestIdentity);
+                    if (!errored) {
+                        acceptDoneCursor(evt.data, requestIdentity);
+                    }
+
                 } else if (evt.event === 'error') {
                     errored = true;
                     clearResponseCursor();
-                    paintAssistantError(
+                    markRetryable(
+
                         assistantRow,
-                        (evt.data && evt.data.message) || tx('review.agentOffline')
+                        (evt.data && evt.data.message) || tx('review.agentPatchRetry'),
+                        message
                     );
                 }
             });
-            if (assembled) {
+            if (assembled && !errored) {
                 state.history.push({ role: 'assistant', content: assembled });
             } else if (!errored) {
                 removeEmptyAssistant(assistantRow);
             }
-        } catch (_err) {
+        } catch (err) {
+            errored = true;
             clearResponseCursor();
-            showOfflineNotice();
-            if (assistantRow && !assembled) {
-                paintAssistantError(assistantRow, tx('review.agentOffline'));
+            if (isOffline()) {
+                showOfflineNotice();
+                if (assistantRow && !assembled) {
+                    paintAssistantError(assistantRow, tx('review.agentOffline'));
+                }
+            } else {
+                var transportText = err && err.message ? String(err.message) : tx('review.agentPatchRetry');
+                markRetryable(assistantRow, transportText, message);
+
             }
+        } finally {
+            state.streaming = false;
+            setComposerLive();
+            await persistThread();
         }
-        state.streaming = false;
         return true;
     }
 
@@ -1025,12 +1277,14 @@
         restore();
         buildDom();
         applyDomState();
+        bindReferenceListener();
         if (isOffline()) {
             showOfflineNotice();
         }
         if (typeof applyTranslations === 'function') {
             applyTranslations(getRoot());
         }
+        state.threadReady = restoreThread();
     }
 
     var api = {
@@ -1059,6 +1313,10 @@
         send: send,
         init: init,
         getState: function () { return state; },
+        formatReference: formatReference,
+        insertReference: insertReference,
+        restoreThread: restoreThread,
+        whenThreadReady: function () { return state.threadReady || Promise.resolve(false); },
     };
     root.screenscribeAgentPanel = api;
 

@@ -8,6 +8,8 @@ from typing import Any
 _SEED_BUDGET_CHARS = 12_000
 _FINDING_CAP = 40
 _SEGMENT_CAP = 80
+# One history entry is one turn. Oldest entries are dropped; the chain id is not.
+_HISTORY_TURN_CAP = 20
 
 _SYSTEM = (
     "You are the Screenscribe review agent. You help an engineer continue a "
@@ -180,6 +182,8 @@ def _history_items(history: list[dict[str, str]] | None) -> list[dict[str, Any]]
                 "content": [{"type": "input_text", "text": content}],
             }
         )
+    if len(items) > _HISTORY_TURN_CAP:
+        return items[-_HISTORY_TURN_CAP:]
     return items
 
 
