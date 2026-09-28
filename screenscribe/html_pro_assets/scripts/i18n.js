@@ -215,7 +215,11 @@ window.I18N_BUNDLE = {
             "agentOverrideLabel": "Reviewer override",
             "agentOverrideSummary": "Summary",
             "agentOverrideCategory": "Category",
-            "agentOverrideActions": "Action items"
+            "agentOverrideActions": "Action items",
+            "selectionToolbar.addToChat": "Add to chat",
+            "selectionToolbar.reportTranscriptError": "Report transcript error",
+            "selectionToolbar.copy": "Copy",
+            "selectionToolbar.label": "Selection actions"
         },
         "analyze": {
             "tab_capture": "Mark",
@@ -518,7 +522,11 @@ window.I18N_BUNDLE = {
             "agentOverrideLabel": "Korekta recenzenta",
             "agentOverrideSummary": "Podsumowanie",
             "agentOverrideCategory": "Kategoria",
-            "agentOverrideActions": "Akcje"
+            "agentOverrideActions": "Akcje",
+            "selectionToolbar.addToChat": "Dodaj do czatu",
+            "selectionToolbar.reportTranscriptError": "Zgłoś błąd transkrypcji",
+            "selectionToolbar.copy": "Kopiuj",
+            "selectionToolbar.label": "Akcje zaznaczenia"
         },
         "analyze": {
             "tab_capture": "Oznaczanie",
