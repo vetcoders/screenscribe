@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ..work_item import VERDICT_VALUES
+from .corrections import CorrectionRejected, append_correction, validate_correction_fields
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,7 @@ WRITE_TOOL_NAMES = (
     "merge_findings",
     "unmerge_finding",
     "propose_review",
+    "correct_transcript",
 )
 TOOL_NAMES = READ_TOOL_NAMES + WRITE_TOOL_NAMES
 
@@ -293,6 +295,33 @@ def responses_tool_schemas(*, include_repo: bool) -> list[dict[str, Any]]:
             },
             required=["instruction", "ops"],
         ),
+        _function_tool(
+            "correct_transcript",
+            "Record a transcript-recognition correction. The original transcript "
+            "file is never rewritten; the correction is a ledger overlay. match is "
+            "a literal phrase, not a regex. scope is 'report' (this review only) "
+            "or 'global' (also roll into the user glossary).",
+            {
+                "match": {
+                    "type": "string",
+                    "description": "Literal phrase to replace, e.g. 'cloud'. Not a regex.",
+                },
+                "replacement": {
+                    "type": "string",
+                    "description": "Text to show instead, e.g. 'Claude'.",
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "report | global.",
+                    "enum": ["report", "global"],
+                },
+                "note": {
+                    "type": "string",
+                    "description": "Optional reason for the correction.",
+                },
+            },
+            required=["match", "replacement", "scope"],
+        ),
     ]
     if include_repo:
         tools.append(
@@ -336,10 +365,14 @@ class ReportToolbelt:
         *,
         output_dir: Path | None = None,
         repo_root: Path | None = None,
+        report_stem: str | None = None,
+        glossary_dir: Path | None = None,
     ) -> None:
         self.report = report
         self.output_dir = output_dir
         self.repo_root = repo_root.resolve() if repo_root is not None else None
+        self.report_stem = report_stem or ""
+        self.glossary_dir = glossary_dir
 
     def execute(self, name: str, arguments: dict[str, Any] | None) -> str:
         args = arguments if isinstance(arguments, dict) else {}
@@ -381,6 +414,13 @@ class ReportToolbelt:
                     args.get("instruction"),
                     args.get("ops"),
                     args.get("rationale"),
+                )
+            elif name == "correct_transcript":
+                result = self.correct_transcript(
+                    args.get("match"),
+                    args.get("replacement"),
+                    args.get("scope"),
+                    args.get("note"),
                 )
             else:
                 result = {"error": f"Unknown tool: {name}"}
@@ -584,6 +624,57 @@ class ReportToolbelt:
     def unmerge_finding(self, survivor_id: object = None) -> dict[str, Any]:
         _ = survivor_id
         return dict(_MERGE_STUB)
+
+    def correct_transcript(
+        self,
+        match: object,
+        replacement: object,
+        scope: object,
+        note: object = None,
+    ) -> dict[str, Any]:
+        """Validate a literal transcript correction and return a review_patch.
+
+        When this toolbelt has an output dir, the ledger entry is written
+        before the patch returns (``persisted: true``). The patch is still
+        the confirmation the panel renders. Transcript files are not modified.
+        """
+        try:
+            phrase, repl, scope_text, note_text, _source = validate_correction_fields(
+                match, replacement, scope, note, "agent"
+            )
+        except CorrectionRejected as exc:
+            return {"error": str(exc)}
+        op: dict[str, Any] = {
+            "op": "correct_transcript",
+            "match": phrase,
+            "replacement": repl,
+            "scope": scope_text,
+            "note": note_text,
+            "persisted": False,
+        }
+        explain = f"Transcript correction: {phrase!r} → {repl!r} (scope {scope_text})."
+        if self.output_dir is None:
+            return _review_patch([op], explain)
+        try:
+            entry = append_correction(
+                self.output_dir,
+                match=phrase,
+                replacement=repl,
+                scope=scope_text,
+                note=note_text,
+                source="agent",
+                report_stem=self.report_stem,
+                glossary_dir=self.glossary_dir,
+            )
+        except CorrectionRejected as exc:
+            return {"error": str(exc)}
+        except OSError as exc:
+            reason = exc.strerror or "os error"
+            return {"error": f"could not write corrections ledger: {reason}"}
+        op["persisted"] = True
+        op["id"] = entry["id"]
+        op["entry"] = dict(entry)
+        return _review_patch([op], explain)
 
     def propose_review(
         self,

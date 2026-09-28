@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__
+from .agent import corrections as transcript_corrections
 from .agent.chat import AgentChatError, AgentChatRequest, collect_agent_chat, stream_agent_chat
 from .agent.tools import ReportToolbelt
 from .server_common import (
@@ -92,6 +93,16 @@ class ManualFrameUpdateRequest(BaseModel):
     # unchanged"; a value in VALID_MARKER_SEVERITIES sets it (incl. the explicit
     # "none" that clears a prior pick).
     severity: str | None = None
+
+
+class TranscriptCorrectionRequest(BaseModel):
+    """One literal transcript correction. ``match`` is not a regex."""
+
+    match: str
+    replacement: str
+    scope: str
+    note: str | None = None
+    source: str | None = None
 
 
 @dataclass
@@ -1113,7 +1124,53 @@ def create_review_app(
                 reset_generation = session.reset_generation
             hydrate_state_with_session_frames(state, session_markers)
             state["resetGeneration"] = reset_generation
+            loaded = transcript_corrections.load_ledger(session.output_dir)
+            state["corrections"] = loaded.entries
+            if loaded.warning:
+                logger.warning(
+                    "Corrections ledger ignored for %s: %s",
+                    session.output_dir,
+                    loaded.warning,
+                )
+                state["correctionsWarning"] = loaded.warning
             return JSONResponse(content=state)
+
+    @app.post("/api/corrections")
+    async def save_transcript_correction(body: TranscriptCorrectionRequest) -> JSONResponse:
+        """Append one ledger entry. Invalid input is 400, never a torn write.
+
+        The original transcript files in the output dir are not opened. The
+        write uses the same tempfile + os.replace + fsync pattern as report JSON,
+        via the corrections ledger.
+        """
+        source = body.source or "user"
+        async with save_lock:
+            try:
+                entry = transcript_corrections.append_correction(
+                    session.output_dir,
+                    match=body.match,
+                    replacement=body.replacement,
+                    scope=body.scope,
+                    note=body.note,
+                    source=source,
+                    report_stem=Path(session.report_filename).stem,
+                    glossary_dir=transcript_corrections.default_glossary_dir(),
+                )
+            except transcript_corrections.CorrectionRejected as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except OSError as exc:
+                logger.error("Failed to write corrections ledger: %s", exc)
+                raise HTTPException(
+                    status_code=500, detail="Failed to write corrections ledger."
+                ) from exc
+            loaded = transcript_corrections.load_ledger(session.output_dir)
+        return JSONResponse(
+            content={
+                "status": "saved",
+                "entry": dict(entry),
+                "corrections": loaded.entries,
+            }
+        )
 
     @app.post("/api/reset-review")
     async def reset_review_state() -> JSONResponse:
@@ -1410,6 +1467,7 @@ def create_review_app(
             report_data,
             output_dir=session.output_dir,
             repo_root=resolved_repo,
+            report_stem=Path(session.report_filename).stem,
         )
 
     @app.post("/api/agent/chat/stream")

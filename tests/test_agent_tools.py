@@ -160,3 +160,203 @@ def test_tool_failure_does_not_expose_private_exception_details(
     result = toolbelt.execute("open_repo_file", {"path": "source.py"})
     assert json.loads(result) == {"error": "Agent tool failed. Check server logs."}
     assert private_detail not in result
+
+
+_CORRECTION_ID = "cor-11111111-1111-4111-8111-111111111111"
+
+
+def test_corrections_ledger_round_trip_is_byte_exact(tmp_path: Path) -> None:
+    """Add, save, reload: entry fields and file bytes survive a second atomic write."""
+    from screenscribe.agent.corrections import append_correction, load_ledger, save_ledger
+
+    output_dir = tmp_path / "review"
+    output_dir.mkdir()
+    glossary = tmp_path / "glossary"
+    entry = append_correction(
+        output_dir,
+        match="  cloud  ",
+        replacement="Claude",
+        scope="report",
+        note="agent voice -> Claude, not chmura",
+        source="agent",
+        report_stem="screen_report",
+        glossary_dir=glossary,
+        created_at="2026-09-28T21:00:00Z",
+        entry_id=_CORRECTION_ID,
+    )
+    path = output_dir / "corrections.json"
+    first = path.read_bytes()
+    loaded = load_ledger(output_dir)
+    assert loaded.warning is None
+    assert loaded.report == "screen_report"
+    assert loaded.entries == [entry]
+    assert entry["match"] == "cloud"
+    assert entry["replacement"] == "Claude"
+    save_ledger(output_dir, loaded.entries, report=loaded.report, glossary_dir=glossary)
+    assert path.read_bytes() == first
+    assert not glossary.exists()
+
+
+def test_corrections_do_not_rewrite_transcript_bytes(tmp_path: Path) -> None:
+    """Ledger writes must leave the original transcript (and report JSON) untouched."""
+    output_dir = tmp_path / "review"
+    output_dir.mkdir()
+    transcript = output_dir / "transcript.vtt"
+    transcript_bytes = b"WEBVTT\n\n00:00.000 --> 00:01.000\ncloud agent\n"
+    transcript.write_bytes(transcript_bytes)
+    report_json = output_dir / "screen_report.json"
+    report_bytes = b'{"findings":[{"text":"cloud"}]}\n'
+    report_json.write_bytes(report_bytes)
+
+    belt = ReportToolbelt(
+        {},
+        output_dir=output_dir,
+        report_stem="screen_report",
+        glossary_dir=tmp_path / "glossary",
+    )
+    result = belt.correct_transcript("cloud", "Claude", "report", "heard chmura")
+    assert result["type"] == "review_patch"
+    assert result["ops"][0]["op"] == "correct_transcript"
+    assert result["ops"][0]["persisted"] is True
+    assert result["ops"][0]["match"] == "cloud"
+    assert transcript.read_bytes() == transcript_bytes
+    assert report_json.read_bytes() == report_bytes
+
+
+def test_correct_transcript_rejects_empty_match_scope_and_regex(tmp_path: Path) -> None:
+    from screenscribe.agent.corrections import apply_transcript_overlay, correction_pieces
+    from screenscribe.agent.tools import anthropic_tool_schemas, responses_tool_schemas
+
+    belt = ReportToolbelt({}, output_dir=tmp_path, glossary_dir=tmp_path / "glossary")
+    empty = belt.correct_transcript("   ", "Claude", "report")
+    assert empty["error"] == "match must be a non-empty literal phrase"
+    bad_scope = belt.correct_transcript("cloud", "Claude", "regex")
+    assert "scope must be" in bad_scope["error"]
+    assert not (tmp_path / "corrections.json").exists()
+
+    stored = belt.correct_transcript("c.oud", "NO", "report")
+    assert stored["ops"][0]["match"] == "c.oud"
+    assert apply_transcript_overlay("cloud", [{"match": "c.oud", "replacement": "NO"}]) == "cloud"
+    assert apply_transcript_overlay("cloudless", [{"match": "cloud", "replacement": "Claude"}]) == (
+        "cloudless"
+    )
+    pieces = correction_pieces(
+        "say Cloud.",
+        [{"match": "cloud", "replacement": "Claude", "created_at": "2026-09-28T21:00:00Z"}],
+    )
+    replaced = [piece for piece in pieces if piece.original is not None]
+    assert replaced == [type(pieces[0])("Claude", "Cloud")]
+    later = apply_transcript_overlay(
+        "the cloud agent",
+        [
+            {
+                "match": "cloud agent",
+                "replacement": "X",
+                "created_at": "2026-09-28T21:00:00Z",
+            },
+            {
+                "match": "cloud",
+                "replacement": "Claude",
+                "created_at": "2026-09-28T21:01:00Z",
+            },
+        ],
+    )
+    assert later == "the Claude agent"
+
+    responses = responses_tool_schemas(include_repo=False)
+    tool = next(item for item in responses if item["name"] == "correct_transcript")
+    assert tool["parameters"]["required"] == ["match", "replacement", "scope"]
+    assert tool["parameters"]["properties"]["scope"]["enum"] == ["report", "global"]
+    anthropic = anthropic_tool_schemas(include_repo=False)
+    anth = next(item for item in anthropic if item["name"] == "correct_transcript")
+    assert anth["input_schema"] == tool["parameters"]
+
+
+def test_global_glossary_dedups_match_replacement(tmp_path: Path) -> None:
+    from screenscribe.agent.corrections import (
+        append_correction,
+        corrections_summary,
+        load_glossary,
+    )
+
+    output_dir = tmp_path / "review"
+    output_dir.mkdir()
+    glossary = tmp_path / "cfg"
+    append_correction(
+        output_dir,
+        match="cloud",
+        replacement="Claude",
+        scope="global",
+        source="user",
+        glossary_dir=glossary,
+        created_at="2026-09-28T21:00:00Z",
+        entry_id="cor-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    )
+    append_correction(
+        output_dir,
+        match="cloud",
+        replacement="Claude",
+        scope="global",
+        note="newer",
+        source="agent",
+        glossary_dir=glossary,
+        created_at="2026-09-28T22:00:00Z",
+        entry_id="cor-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    )
+    append_correction(
+        output_dir,
+        match="chmura",
+        replacement="Claude",
+        scope="report",
+        glossary_dir=glossary,
+        created_at="2026-09-28T23:00:00Z",
+        entry_id="cor-cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    )
+    loaded = load_glossary(glossary)
+    assert loaded.warning is None
+    assert [(entry["match"], entry["created_at"]) for entry in loaded.entries] == [
+        ("cloud", "2026-09-28T22:00:00Z")
+    ]
+    summary = corrections_summary(output_dir, limit=20, glossary_dir=glossary)
+    assert summary["warning"] is None
+    assert summary["count"] == 2
+    assert summary["truncated"] is False
+    assert [entry["match"] for entry in summary["entries"]] == ["cloud", "chmura"]
+
+
+def test_ledger_replace_failure_keeps_previous_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import screenscribe.agent.corrections as corrections
+
+    output_dir = tmp_path / "review"
+    output_dir.mkdir()
+    glossary = tmp_path / "glossary"
+    corrections.append_correction(
+        output_dir,
+        match="cloud",
+        replacement="Claude",
+        scope="report",
+        glossary_dir=glossary,
+        created_at="2026-09-28T21:00:00Z",
+        entry_id=_CORRECTION_ID,
+    )
+    path = output_dir / "corrections.json"
+    first = path.read_bytes()
+
+    def boom(_src: str, _dst: str) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(corrections.os, "replace", boom)
+    with pytest.raises(OSError, match="disk full"):
+        corrections.append_correction(
+            output_dir,
+            match="chmura",
+            replacement="Claude",
+            scope="report",
+            glossary_dir=glossary,
+            created_at="2026-09-28T22:00:00Z",
+            entry_id="cor-dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        )
+    assert path.read_bytes() == first
+    assert list(output_dir.glob(".corrections-*.json.tmp")) == []
