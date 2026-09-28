@@ -6,6 +6,9 @@ browser. ``cli.py`` re-exports ``_serve_report`` so ``screenscribe.cli`` stays
 the import surface; the browser open and console print route through the cli
 module object so ``monkeypatch.setattr(cli.webbrowser, "open", ...)`` and a
 patched ``cli.console`` still bind.
+
+``serve_existing_review`` starts that same server for a directory that already
+holds a ``<video>_report.html`` bundle (``screenscribe serve``).
 """
 
 import socket
@@ -34,11 +37,15 @@ def _serve_report(output_dir: Path, video_path: Path, port: int = 8765) -> None:
         console.print(f"[yellow]No {report_filename} found, skipping server.[/]")
         return
 
-    # Create symlink to video in output dir if not already there
+    # Create symlink to video in output dir if not already there.
+    # Only that new link is removed afterwards: a recording the operator already
+    # put in the directory (file or symlink) has to stay.
     video_link = output_dir / video_path.name
+    created_link = False
     if not video_link.exists() and video_path.exists():
         try:
             video_link.symlink_to(video_path.resolve())
+            created_link = True
             console.print(
                 f"[dim]Created symlink to video: [link=file://{video_link}]{video_link.name}[/link][/]"
             )
@@ -104,9 +111,103 @@ def _serve_report(output_dir: Path, video_path: Path, port: int = 8765) -> None:
         console.print("\n[yellow]Stopping server...[/]")
 
     finally:
-        # Clean up symlink
-        if video_link.exists() and video_link.is_symlink():
+        if created_link and video_link.is_symlink():
             try:
                 video_link.unlink()
             except OSError:
                 pass
+
+
+_VIDEO_SUFFIXES = {".mov", ".mp4", ".avi", ".mkv", ".webm", ".m4v", ".wmv"}
+_REPORT_HTML_SUFFIX = "_report.html"
+
+
+class ReviewDirError(Exception):
+    """The path is not a review directory ``_serve_report`` can open."""
+
+
+def resolve_existing_review(output_dir: Path, video: Path | None = None) -> tuple[Path, Path]:
+    """Return ``(output_dir, video_path)`` for a directory ``_serve_report`` accepts.
+
+    A servable directory holds ``<video_stem>_report.html``. The video is either
+    already inside that directory or passed explicitly (the recording usually
+    stays outside the review folder; ``review --serve`` only symlinks it while
+    the server runs).
+    """
+    output_dir = output_dir.expanduser()
+    try:
+        exists = output_dir.exists()
+        is_dir = output_dir.is_dir() if exists else False
+    except OSError as exc:
+        raise ReviewDirError(f"Cannot read review directory {output_dir}: {exc}") from None
+    if not exists:
+        raise ReviewDirError(f"Review directory not found: {output_dir}")
+    if not is_dir:
+        raise ReviewDirError(f"Not a directory: {output_dir}")
+
+    if video is not None:
+        video = video.expanduser()
+        try:
+            video_ok = video.is_file()
+        except OSError as exc:
+            raise ReviewDirError(f"Cannot read video {video}: {exc}") from None
+        if not video_ok:
+            raise ReviewDirError(f"Video not found: {video}")
+        report = output_dir / f"{video.stem}{_REPORT_HTML_SUFFIX}"
+        if not report.is_file():
+            raise ReviewDirError(
+                f"No {report.name} in {output_dir}. "
+                "Pass the review directory that contains that report."
+            )
+        return output_dir, video
+
+    try:
+        reports = sorted(
+            path
+            for path in output_dir.glob(f"*{_REPORT_HTML_SUFFIX}")
+            if path.is_file() and not path.name.startswith(".")
+        )
+    except OSError as exc:
+        raise ReviewDirError(f"Cannot read review directory {output_dir}: {exc}") from None
+    if not reports:
+        raise ReviewDirError(
+            f"No review report in {output_dir}. Expected a <video>{_REPORT_HTML_SUFFIX} file."
+        )
+
+    paired: list[tuple[Path, Path]] = []
+    for report in reports:
+        stem = report.name[: -len(_REPORT_HTML_SUFFIX)]
+        try:
+            videos = sorted(
+                path
+                for path in output_dir.iterdir()
+                if path.is_file() and path.stem == stem and path.suffix.lower() in _VIDEO_SUFFIXES
+            )
+        except OSError as exc:
+            raise ReviewDirError(f"Cannot read review directory {output_dir}: {exc}") from None
+        if len(videos) > 1:
+            names = ", ".join(path.name for path in videos)
+            raise ReviewDirError(
+                f"Multiple videos match {report.name} in {output_dir}: {names}. Pass --video."
+            )
+        if len(videos) == 1:
+            paired.append((report, videos[0]))
+
+    if len(paired) == 1:
+        return output_dir, paired[0][1]
+    if not paired:
+        names = ", ".join(path.name for path in reports)
+        raise ReviewDirError(
+            f"Found {names} in {output_dir}, but no matching source video next to it. "
+            "Pass --video with the original recording."
+        )
+    names = ", ".join(report.name for report, _video in paired)
+    raise ReviewDirError(
+        f"Multiple review reports in {output_dir}: {names}. Pass --video to choose one."
+    )
+
+
+def serve_existing_review(output_dir: Path, video: Path | None = None, port: int = 8765) -> None:
+    """Start ``_serve_report`` for an existing review directory."""
+    resolved_dir, video_path = resolve_existing_review(output_dir, video)
+    _serve_report(resolved_dir, video_path, port)

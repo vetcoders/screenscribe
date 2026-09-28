@@ -230,6 +230,7 @@ def _auto_review_if_video() -> None:
         # Skip if it's already a command or flag
         if first_arg in (
             "review",
+            "serve",
             "analyze",
             "transcribe",
             "preprocess",
@@ -912,6 +913,50 @@ def review(
         frame_interval=frame_interval,
         preset=active_preset,
     )
+
+
+@app.command()
+def serve(
+    output_dir: Annotated[
+        Path,
+        typer.Argument(
+            help="Existing review directory containing <video>_report.html",
+        ),
+    ],
+    video: Annotated[
+        Path | None,
+        typer.Option(
+            "--video",
+            help=(
+                "Source recording for this report. Required when that file is not "
+                "already inside the review directory."
+            ),
+            exists=True,
+            dir_okay=False,
+        ),
+    ] = None,
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port",
+            "-p",
+            help="Port for the HTTP server (default: 8765)",
+        ),
+    ] = 8765,
+) -> None:
+    """Start the review server for an existing report directory.
+
+    Same local server as review --serve (127.0.0.1, session token, browser)
+    without re-running the pipeline. This is the command the offline report
+    tells you to run.
+    """
+    from .cli_serve import ReviewDirError, serve_existing_review
+
+    try:
+        serve_existing_review(output_dir, video, port)
+    except ReviewDirError as exc:
+        console.print(f"[red]Error:[/] {exc}")
+        raise typer.Exit(1) from None
 
 
 @app.command()
