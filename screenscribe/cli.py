@@ -156,15 +156,27 @@ console = Console()
 BOOTSTRAP_BANNER_SHOWN_ENV = "SCREENSCRIBE_BOOTSTRAP_BANNER_SHOWN"
 
 
+def _baked_provenance() -> str | None:
+    """Commit provenance baked into the wheel at build time, if present."""
+    from ._commit import COMMIT, DIRTY
+
+    if not COMMIT:
+        return None
+    return f"g{COMMIT}{'-dirty' if DIRTY else ''}"
+
+
 def _version_string() -> str:
     """Version string for explicit --version / version queries.
 
-    Appends short git provenance (``+g<sha>``, plus ``-dirty`` for an unclean
-    tree) when the package runs from a source / editable checkout, so a dev
-    build is never mistaken for a release. A wheel / PyPI install has no git
-    work tree, so it shows the clean ``v<version>``.
+    Always carries short git provenance (``+g<sha>``, plus ``-dirty`` for an
+    unclean tree): installed wheels bake it at build time (``hatch_build.py``
+    -> ``_commit.py``), source / editable checkouts probe the live work tree.
+    Only a provenance-less build without git shows the bare ``v<version>``.
     """
     base = f"v{__version__}"
+    baked = _baked_provenance()
+    if baked is not None:
+        return f"{base}+{baked}"
     git = shutil.which("git")
     if git is None:
         return base

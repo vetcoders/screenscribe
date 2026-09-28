@@ -29,6 +29,13 @@
   the patched PyJWT release; the local ruleset and fail-closed gates remain
   enforced.
 
+- **Changed: `screenscribe --version` always carries commit provenance.**
+  Wheels now bake `+g<sha>[-dirty]` at build time (hatchling hook
+  `hatch_build.py` -> `screenscribe/_commit.py`), so an installed build
+  reports e.g. `v0.1.20.dev0+g5fce9cd` instead of the bare version — the same
+  contract `aicx --version` keeps. Source/editable checkouts are unchanged:
+  they keep probing the live work tree, which is always fresher.
+
 - **Changed: reasoning-effort default is now per provider preset; `minimal`
   removed, `xhigh`/`max` added.** `SCREENSCRIBE_LLM_REASONING_EFFORT` accepts
   `none|low|medium|high|xhigh|max`. The CLI no longer accepts `minimal`: it
