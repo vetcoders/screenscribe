@@ -29,6 +29,17 @@
   the patched PyJWT release; the local ruleset and fail-closed gates remain
   enforced.
 
+- **Added: report-agent-surfaces line — selectable AI prose, selection reference
+  toolbar, `serve` command, agent robustness, corrections ledger, annotation
+  text fix, and glossary in pipeline re-runs.** AI finding prose is now
+  selectable in the HTML Pro report; a selection toolbar lets the user insert
+  a structured reference (`screenscribe:agent-insert-reference`) into the
+  floating agent chat panel; `screenscribe serve` hosts existing report
+  directories; the agent loop gained bounded history, retryable errors,
+  persistent threads, and review-patch tools; transcript corrections are kept
+  in a report ledger plus a user glossary that flows back into pipeline
+  re-runs; and annotation canvas text rendering was fixed.
+
 - **Changed: `screenscribe --version` always carries commit provenance.**
   Wheels now bake `+g<sha>[-dirty]` at build time (hatchling hook
   `hatch_build.py` -> `screenscribe/_commit.py`), so an installed build

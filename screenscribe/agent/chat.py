@@ -295,6 +295,7 @@ async def stream_agent_chat(
         message=message,
         history=history,
         previous_response_id=bound_previous_id,
+        output_dir=tools.output_dir,
     )
 
     last_error: str | None = None

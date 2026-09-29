@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+from .corrections import corrections_summary
+
+logger = logging.getLogger(__name__)
 
 _SEED_BUDGET_CHARS = 12_000
 _FINDING_CAP = 40
@@ -74,7 +80,10 @@ def report_chain_response_id(report: dict[str, Any] | None) -> str | None:
     return last
 
 
-def seed_report_context(report: dict[str, Any] | None) -> str:
+def seed_report_context(
+    report: dict[str, Any] | None,
+    output_dir: str | Path | None = None,
+) -> str:
     """Compact JSON-report seed used when there is no chain head to resume."""
     if not isinstance(report, dict):
         return "(no report JSON loaded)"
@@ -114,7 +123,7 @@ def seed_report_context(report: dict[str, Any] | None) -> str:
                 }
             )
 
-    blob = {
+    blob: dict[str, Any] = {
         "video": report.get("video"),
         "transcript_source": report.get("transcript_source"),
         "executive_summary": report.get("executive_summary") or "",
@@ -124,6 +133,11 @@ def seed_report_context(report: dict[str, Any] | None) -> str:
         "findings": findings_out,
         "transcript_segments": segments_out,
     }
+    if output_dir is not None:
+        try:
+            blob["corrections"] = corrections_summary(output_dir, limit=20)
+        except Exception as exc:
+            logger.warning("Could not load corrections summary for context: %s", exc)
     import json
 
     text = json.dumps(blob, ensure_ascii=False, indent=2)
@@ -138,6 +152,7 @@ def prepare_turn(
     message: str,
     history: list[dict[str, str]] | None = None,
     previous_response_id: str | None = None,
+    output_dir: str | Path | None = None,
 ) -> PreparedTurn:
     """Use only a caller-owned chain id and always ground the turn in report JSON.
 
@@ -155,7 +170,7 @@ def prepare_turn(
             "content": [{"type": "input_text", "text": message}],
         }
     )
-    seed = seed_report_context(report)
+    seed = seed_report_context(report, output_dir=output_dir)
     instructions = f"{_SYSTEM}\n\nCurrent review report (JSON seed; use tools for details):\n{seed}"
     return PreparedTurn(
         previous_response_id=requested,

@@ -25,6 +25,7 @@ from screenscribe.agent.chat import (
     stream_agent_chat,
 )
 from screenscribe.agent.context import prepare_turn, report_chain_response_id
+from screenscribe.agent.corrections import append_correction
 from screenscribe.agent.tools import ReportToolbelt
 from screenscribe.config import ScreenScribeConfig
 from screenscribe.detect import Detection
@@ -168,6 +169,38 @@ def test_agent_context_marks_ocr_text_as_screen_data_not_user_intent() -> None:
     assert '"transcript_source": "ocr"' in turn.instructions
     assert "screen-extracted UI text" in turn.instructions
     assert "not narrator intent" in turn.instructions
+
+
+def test_prepare_turn_includes_corrections_summary(tmp_path: Path) -> None:
+    report = {
+        "executive_summary": "Layout is broken.",
+        "findings": [],
+        "transcript_segments": [],
+        "analysis_passes": {},
+    }
+    append_correction(
+        tmp_path,
+        match="login",
+        replacement="sign-in",
+        scope="report",
+        note="UX wording",
+        report_stem="test",
+    )
+    turn = prepare_turn(report=report, message="podsumuj", output_dir=tmp_path)
+    assert turn.seeded is True
+    assert "sign-in" in turn.instructions
+    assert '"corrections"' in turn.instructions
+
+
+def test_prepare_turn_omits_corrections_without_output_dir() -> None:
+    report = {
+        "executive_summary": "Layout is broken.",
+        "findings": [],
+        "transcript_segments": [],
+        "analysis_passes": {},
+    }
+    turn = prepare_turn(report=report, message="podsumuj")
+    assert '"corrections"' not in turn.instructions
 
 
 def test_default_xai_primary_is_processor_kept(monkeypatch: pytest.MonkeyPatch) -> None:
