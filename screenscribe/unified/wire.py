@@ -10,12 +10,60 @@ different signature — these are intentionally distinct and must not be merged.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
+from ..agent.corrections import corrections_summary, load_glossary
 from ..api_utils import is_chat_completions_endpoint, responses_reasoning_options
 from ..image_utils import encode_image_base64, get_media_type
 from ._console import console
+
+# Glossary blocks are compact: enough to fix recurring mis-transcriptions without
+# bloating the prompt. Caps match the B-01 acceptance contract.
+_GLOSSARY_MAX_ENTRIES = 50
+_GLOSSARY_MAX_BYTES = 2048
+
+
+def _build_glossary_block(output_dir: str | Path | None = None) -> str:
+    """Return a compact glossary block from the report ledger and/or global glossary.
+
+    Empty string when no ledger is readable or it has no entries. The block is
+    capped at ``_GLOSSARY_MAX_ENTRIES`` entries and ``_GLOSSARY_MAX_BYTES`` bytes;
+    match/replacement strings are JSON-encoded for literal escaping. Newest
+    entries are kept when truncation is needed.
+    """
+    entries: list[Any] = []
+    if output_dir is not None:
+        try:
+            entries = corrections_summary(output_dir, limit=None).get("entries", [])
+        except Exception:
+            entries = []
+    if not entries:
+        try:
+            entries = load_glossary().entries
+        except Exception:
+            entries = []
+    if not entries:
+        return ""
+
+    # Newest entries first; cap count, then cap byte size while preserving newest.
+    ordered = list(reversed(entries))[:_GLOSSARY_MAX_ENTRIES]
+    header = "Glossary of preferred transcriptions:"
+    lines: list[str] = [header]
+    size = len(header.encode("utf-8")) + 1  # +1 for trailing newline
+    for entry in ordered:
+        match = entry.get("match", "")
+        replacement = entry.get("replacement", "")
+        line = f"- {json.dumps(match)} -> {json.dumps(replacement)}"
+        line_bytes = len(line.encode("utf-8")) + 1
+        if size + line_bytes > _GLOSSARY_MAX_BYTES:
+            break
+        lines.append(line)
+        size += line_bytes
+    if len(lines) == 1:
+        return ""
+    return "\n".join(lines)
 
 
 def _build_unified_payload(
@@ -28,6 +76,7 @@ def _build_unified_payload(
     stream: bool,
     same_provider: bool = True,
     reasoning_effort: str | None = None,
+    output_dir: str | Path | None = None,
 ) -> dict[str, object]:
     """Build a unified analysis payload for either chat or responses endpoints.
 
@@ -38,7 +87,16 @@ def _build_unified_payload(
 
     ``reasoning_effort`` adds ``reasoning.effort`` on the Responses branch. Callers
     pass it for the text-only LLM backend only; the vision request is unchanged.
+
+    ``output_dir`` is the review/analyze output directory. When a corrections
+    ledger (``corrections.json``) or the global glossary exists there, a compact
+    glossary block is appended to the prompt so re-runs do not repeat the same
+    misrecognitions.
     """
+    glossary = _build_glossary_block(output_dir)
+    if glossary:
+        prompt = f"{prompt}\n\n{glossary}"
+
     use_chat_completions = is_chat_completions_endpoint(endpoint)
     has_screenshot = screenshot_path is not None and screenshot_path.exists()
 
