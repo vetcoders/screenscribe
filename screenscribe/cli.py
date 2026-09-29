@@ -108,6 +108,7 @@ from .keywords import (
     save_default_keywords,
 )
 from .preprocess import write_preprocess_bundle
+from .proofs import run_proof
 
 # xAI text-to-speech and the live STT websocket clients. Re-exported under the
 # cli namespace so tests patch screenscribe.cli.<name> like the other transports.
@@ -957,6 +958,48 @@ def serve(
     except ReviewDirError as exc:
         console.print(f"[red]Error:[/] {exc}")
         raise typer.Exit(1) from None
+
+
+@app.command()
+def proof(
+    out: Annotated[
+        Path,
+        typer.Option(
+            "--out",
+            "-o",
+            help="Directory for receipt artifacts (default: ./proofs)",
+        ),
+    ] = Path("./proofs"),
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Emit summary.json alongside receipts and matrix.",
+        ),
+    ] = False,
+) -> None:
+    """Run a stamped roundtrip proof for every outbound provider path and agent tool.
+
+    Writes one receipt per element plus a MATRIX.md summary. Provider probes use
+    the configured API keys and stamp NOT-PROVEN when a key is missing or the
+    provider returns an error. Tool probes run locally against a fixture built
+    from examples/example_report.json and examples/example_transcript.vtt.
+    """
+    try:
+        receipts = run_proof(out, json_mode=json_mode)
+    except Exception as exc:
+        console.print(f"[red]Proof harness failed:[/] {exc}")
+        raise typer.Exit(1) from None
+
+    proven = sum(1 for r in receipts if r.verdict == "PROVEN")
+    not_proven = sum(1 for r in receipts if r.verdict == "NOT-PROVEN")
+    console.print(
+        f"[bold]Proof complete:[/] {len(receipts)} elements — "
+        f"[green]{proven} PROVEN[/], [yellow]{not_proven} NOT-PROVEN[/]"
+    )
+    console.print(f"[dim]Artifacts:[/] {out.resolve()}")
+    if not_proven:
+        raise typer.Exit(2)
 
 
 @app.command()
