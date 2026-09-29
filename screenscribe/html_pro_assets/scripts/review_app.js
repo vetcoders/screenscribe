@@ -5185,6 +5185,16 @@ const ANNOTATION_TEXT_HALO_RATIO = 0.14;
 // Shape under-stroke width relative to the coloured stroke (peeks out as edge).
 const ANNOTATION_SHAPE_HALO_MULT = 2.4;
 
+// Intended text height in pixels for export / rasterization. The rel value is
+// defined as a fraction of FRAME HEIGHT (not the longer edge), so a default
+// 0.036 annotation is always ~3.6% of the rendered frame height regardless of
+// aspect ratio. Keeping the computation in one pure function makes the unit
+// contract testable and prevents the live normalized viewBox from accidentally
+// consuming a pixel-scaled value (the giant-text bug).
+function annotationFontSizePx(ann, targetWidth, targetHeight) {
+    return (ann.fontSizeRel || 0.036) * targetHeight;
+}
+
 // Build a stroked shape with a darker, wider under-stroke beneath the coloured
 // stroke so thin light shapes stay readable on any background.
 function makeContrastShape(tag, geom, stroke, strokeWidth) {
@@ -5495,7 +5505,7 @@ function applyAnnotationProperties(ann, props) {
         ann.strokeWidthRel = props.strokeWidthRel;
     }
     if (props.fontSizeRel != null && ann.type === 'text') {
-        ann.fontSizeRel = props.fontSizeRel;
+        ann.fontSizeRel = Math.max(0.012, Math.min(0.2, props.fontSizeRel));
     }
     return ann;
 }
@@ -5585,7 +5595,7 @@ function readAnnotationDefaultColor() {
     return '#ffffff';
 }
 
-function createAnnotationElement(ann) {
+function createAnnotationElement(ann, renderWidth = 1, renderHeight = 1) {
     if (!ann) return null;
     const stroke = ann.color || readAnnotationDefaultColor();
     // Use strokeWidthPx for export (denormalized) or strokeWidthRel for live rendering
@@ -5652,7 +5662,15 @@ function createAnnotationElement(ann) {
     }
 
     if (ann.type === 'text' && ann.text) {
-        const fontSize = ann.fontSizePx || ann.fontSizeRel || 0.036;
+        // Live rendering uses a normalized 0-1 viewBox, so the font size must be
+        // the relative value. Export rendering uses a pixel viewBox after
+        // denormalizeAnnotations, so it consumes the pre-computed pixel value.
+        // Using ann.fontSizePx unconditionally in the normalized viewBox was the
+        // unit-space mismatch that produced giant glyphs spanning the frame.
+        const isPixelSpace = renderHeight > 1 || renderWidth > 1;
+        const fontSize = isPixelSpace
+            ? (ann.fontSizePx || annotationFontSizePx(ann, renderWidth, renderHeight))
+            : (ann.fontSizeRel || 0.036);
         // Halo as SVG presentation attributes (paint-order: stroke draws the
         // dark halo UNDER the fill) so the contrast survives PNG export. The
         // user-picked colour (or the white default) stays the fill, so it reads
@@ -5671,6 +5689,7 @@ function createAnnotationElement(ann) {
             'dominant-baseline': 'hanging',
         });
         textEl.textContent = ann.text;
+        textEl.classList.remove('annotation-shape');
         textEl.classList.add('annotation-text');
         return textEl;
     }
@@ -5693,7 +5712,7 @@ function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight 
     const group = document.createElementNS(SVG_NS, 'g');
     let selectedAnn = null;
     (annotations || []).forEach(ann => {
-        const el = createAnnotationElement(ann);
+        const el = createAnnotationElement(ann, renderWidth, renderHeight);
         if (!el) return;
         if (ann && ann.id) el.setAttribute('data-ann-id', ann.id);
         if (selectedId && ann && ann.id === selectedId) {
@@ -5760,7 +5779,7 @@ function denormalizeAnnotations(annotations, targetWidth, targetHeight) {
                 ...ann,
                 x: (ann.x || 0) * targetWidth,
                 y: (ann.y || 0) * targetHeight,
-                fontSizePx: (ann.fontSizeRel || 0.036) * Math.max(targetWidth, targetHeight),
+                fontSizePx: annotationFontSizePx(ann, targetWidth, targetHeight),
                 strokeWidthPx,
             };
         }
