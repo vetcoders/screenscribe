@@ -961,7 +961,7 @@ def serve(
 
 
 @app.command()
-def proof(
+def doctor(
     out: Annotated[
         Path,
         typer.Option(
@@ -978,7 +978,7 @@ def proof(
         ),
     ] = False,
 ) -> None:
-    """Run a stamped roundtrip proof for every outbound provider path and agent tool.
+    """Diagnose every outbound provider path and agent tool with a stamped roundtrip proof.
 
     Writes one receipt per element plus a MATRIX.md summary. Provider probes use
     the configured API keys and stamp NOT-PROVEN when a key is missing or the
@@ -988,13 +988,13 @@ def proof(
     try:
         receipts = run_proof(out, json_mode=json_mode)
     except Exception as exc:
-        console.print(f"[red]Proof harness failed:[/] {exc}")
+        console.print(f"[red]Doctor run failed:[/] {exc}")
         raise typer.Exit(1) from None
 
     proven = sum(1 for r in receipts if r.verdict == "PROVEN")
     not_proven = sum(1 for r in receipts if r.verdict == "NOT-PROVEN")
     console.print(
-        f"[bold]Proof complete:[/] {len(receipts)} elements — "
+        f"[bold]Doctor complete:[/] {len(receipts)} elements — "
         f"[green]{proven} PROVEN[/], [yellow]{not_proven} NOT-PROVEN[/]"
     )
     console.print(f"[dim]Artifacts:[/] {out.resolve()}")

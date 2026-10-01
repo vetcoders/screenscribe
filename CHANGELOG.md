@@ -29,6 +29,14 @@
   the patched PyJWT release; the local ruleset and fail-closed gates remain
   enforced.
 
+- **Added: `screenscribe doctor` — stamped roundtrip proofs for every outbound
+  path.** One command probes every configured provider path (STT, LLM, vision,
+  agent protocols) with a minimal live ping and exercises all 14 report-agent
+  tools against a local fixture, then writes one receipt per element plus a
+  `MATRIX.md` summary. A missing key or provider error is stamped `NOT-PROVEN`
+  with the verbatim reason — never silently skipped. Exits 2 when any element
+  is unproven, so scripts can gate on it.
+
 - **Added: report-agent-surfaces line — selectable AI prose, selection reference
   toolbar, `serve` command, agent robustness, corrections ledger, annotation
   text fix, and glossary in pipeline re-runs.** AI finding prose is now
