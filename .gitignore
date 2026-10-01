@@ -110,3 +110,6 @@ diagnose-which-*.txt
 # Generated example report (produced by examples/generate_example.py; inlines
 # vendored minified JS, so it is regenerated locally rather than tracked).
 examples/example_report.html
+
+# screenscribe doctor default artifact output
+proofs/
