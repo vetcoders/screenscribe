@@ -1,0 +1,54 @@
+{
+  "video": "acme-notes-demo.mov",
+  "generated_at": "2026-01-01T00:00:00",
+  "summary": {
+    "total": 3,
+    "bugs": 1,
+    "changes": 1,
+    "ui": 1
+  },
+  "findings": [
+    {
+      "id": 1,
+      "category": "bug",
+      "timestamp_start": 4.0,
+      "timestamp_end": 4.0,
+      "timestamp_formatted": "00:04",
+      "text": "I type a note and click Save. It says saved, but nothing persists on reload.",
+      "context": "Note editor save flow",
+      "keywords": [
+        "save",
+        "persistence"
+      ],
+      "screenshot": ""
+    },
+    {
+      "id": 2,
+      "category": "ui",
+      "timestamp_start": 9.5,
+      "timestamp_end": 9.5,
+      "timestamp_formatted": "00:09",
+      "text": "The toolbar icons are very light gray on white. Hard to read.",
+      "context": "Editor toolbar",
+      "keywords": [
+        "contrast",
+        "accessibility"
+      ],
+      "screenshot": ""
+    },
+    {
+      "id": 3,
+      "category": "change",
+      "timestamp_start": 15.0,
+      "timestamp_end": 15.0,
+      "timestamp_formatted": "00:15",
+      "text": "On a narrow window the sidebar overflows and covers the text.",
+      "context": "Responsive layout",
+      "keywords": [
+        "layout",
+        "responsive"
+      ],
+      "screenshot": ""
+    }
+  ]
+}

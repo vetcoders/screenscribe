@@ -432,15 +432,19 @@ def _run_frame_ocr(ctx: _ProbeContext) -> ProofReceipt:
             key_state=_key_state(bool(key)),
         )
 
-    # Create a tiny valid PNG (1x1 red pixel) for the vision endpoint.
+    # Create a tiny valid PNG for the vision endpoint. Two field findings are
+    # baked in: the original literal had corrupt CRCs (providers rejected it as
+    # "Invalid PNG image"), and xAI requires >= 512 total pixels, so the frame
+    # is 32x32 (1024 px), zlib-verified.
     frame_path = ctx.tmp_dir / "proof_frame.png"
     frame_path.write_bytes(
         bytes.fromhex(
             "89504e470d0a1a0a0000000d49484452"
-            "000000010000000108020000009077535"
-            "f0000000c49444154789c630860060000"
-            "0d0001fd4e03620000000049454e44ae"
-            "426082"
+            "00000020000000200802000000fc18eda3"
+            "0000002a49444154789c633821274753c4"
+            "306ac1a805a3168c5a306ac1a805a3168c"
+            "5a306ac1a805a3160c150b0025cb103dcd"
+            "4a1e0d0000000049454e44ae426082"
         )
     )
 

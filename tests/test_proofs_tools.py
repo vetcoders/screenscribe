@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from screenscribe.agent.tools import TOOL_NAMES
 from screenscribe.proofs.receipts import VERDICT_PROVEN
 from screenscribe.proofs.tools import _build_fixture, _probe_tool, run_tool_probes
@@ -50,3 +52,38 @@ def test_run_tool_probes_covers_all_inventoryed_tools() -> None:
     elements = {r.element for r in receipts}
     assert elements == set(TOOL_NAMES)
     assert all(r.verdict == VERDICT_PROVEN for r in receipts)
+
+
+def test_packaged_fixtures_used_without_repo_examples(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Installed wheels ship fixtures inside the package (no repo checkout)."""
+    import screenscribe.proofs.tools as tools_mod
+
+    packaged = tmp_path / "pkg" / "fixtures"
+    packaged.mkdir(parents=True)
+    source = tools_mod._fixture_source()  # repo path in this checkout
+    for name in (tools_mod._EXAMPLE_REPORT, tools_mod._EXAMPLE_TRANSCRIPT):
+        (packaged / name).write_text((source / name).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(tools_mod, "_PACKAGED_FIXTURES", packaged)
+    assert tools_mod._fixture_source() == packaged
+    out = tmp_path / "out"
+    out.mkdir()
+    report, _toolbelt = tools_mod._build_fixture(out)
+    assert report["transcript_segments"]
+
+
+def test_missing_fixtures_stamp_not_proven_instead_of_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No fixtures anywhere -> all tools stamped NOT-PROVEN, no harness crash."""
+    import screenscribe.proofs.tools as tools_mod
+
+    def no_source() -> Path:
+        raise FileNotFoundError("proof fixtures missing")
+
+    monkeypatch.setattr(tools_mod, "_fixture_source", no_source)
+    receipts = tools_mod.run_tool_probes()
+    assert len(receipts) == len(TOOL_NAMES)
+    assert all(r.verdict == "NOT-PROVEN" for r in receipts)
+    assert all("fixtures missing" in r.reason for r in receipts)

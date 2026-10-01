@@ -12,18 +12,30 @@ from typing import Any
 from ..agent.tools import TOOL_NAMES, ReportToolbelt
 from .receipts import VERDICT_NOT_PROVEN, VERDICT_PROVEN, ProofReceipt
 
-# Example fixture source paths (relative to repo root).
-_EXAMPLE_REPORT = Path("examples") / "example_report.json"
-_EXAMPLE_TRANSCRIPT = Path("examples") / "example_transcript.vtt"
+# Fixture filenames; resolved against the packaged fixtures/ dir (installed
+# wheel) first and the repo's examples/ dir (dev checkout) second.
+_EXAMPLE_REPORT = "example_report.json"
+_EXAMPLE_TRANSCRIPT = "example_transcript.vtt"
+_PACKAGED_FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
-def _repo_root() -> Path:
-    """Best-effort repo root: the directory containing ``examples/``."""
+def _fixture_source() -> Path:
+    """Directory holding the proof fixtures.
+
+    Packaged ``fixtures/`` ships inside the wheel, so ``screenscribe doctor``
+    works for a pipx/uv-installed user with no repo checkout around; the repo
+    ``examples/`` path keeps dev checkouts exercising the canonical copies.
+    """
+    if (_PACKAGED_FIXTURES / _EXAMPLE_REPORT).exists():
+        return _PACKAGED_FIXTURES
     here = Path(__file__).resolve().parent
     for candidate in (here, here.parent, here.parent.parent):
-        if (candidate / "examples" / "example_report.json").exists():
-            return candidate
-    return here.parent
+        if (candidate / "examples" / _EXAMPLE_REPORT).exists():
+            return candidate / "examples"
+    raise FileNotFoundError(
+        "proof fixtures missing: neither packaged fixtures/ nor repo examples/ "
+        "carry example_report.json"
+    )
 
 
 def _parse_vtt(path: Path) -> list[dict[str, Any]]:
@@ -56,9 +68,9 @@ def _parse_vtt(path: Path) -> list[dict[str, Any]]:
 
 def _build_fixture(tmp_dir: Path) -> tuple[dict[str, Any], ReportToolbelt]:
     """Copy example report + transcript into ``tmp_dir`` and return toolbelt."""
-    root = _repo_root()
-    report_path = root / _EXAMPLE_REPORT
-    transcript_path = root / _EXAMPLE_TRANSCRIPT
+    source = _fixture_source()
+    report_path = source / _EXAMPLE_REPORT
+    transcript_path = source / _EXAMPLE_TRANSCRIPT
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["transcript_segments"] = _parse_vtt(transcript_path)
@@ -180,10 +192,31 @@ def _probe_tool(toolbelt: ReportToolbelt, name: str) -> ProofReceipt:
 
 
 def run_tool_probes() -> list[ProofReceipt]:
-    """Run all 14 ReportToolbelt tools against the example fixture."""
+    """Run all 14 ReportToolbelt tools against the example fixture.
+
+    A missing fixture stamps every tool NOT-PROVEN with the reason instead of
+    killing the whole doctor run — the harness exists to surface truth, and a
+    crashed harness surfaces nothing.
+    """
     tmp_dir = Path(tempfile.mkdtemp(prefix="screenscribe-proof-tools-"))
     try:
-        _report, toolbelt = _build_fixture(tmp_dir)
+        try:
+            _report, toolbelt = _build_fixture(tmp_dir)
+        except Exception as exc:
+            reason = f"{type(exc).__name__}: {exc}"
+            return [
+                ProofReceipt(
+                    element=name,
+                    kind="tool",
+                    request_essence=f"execute {name}",
+                    response_essence="fixture unavailable",
+                    duration_ms=0,
+                    verdict=VERDICT_NOT_PROVEN,
+                    reason=reason,
+                    key_state="n/a",
+                )
+                for name in TOOL_NAMES
+            ]
         return [_probe_tool(toolbelt, name) for name in TOOL_NAMES]
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)

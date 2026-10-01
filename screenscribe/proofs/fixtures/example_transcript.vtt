@@ -1,0 +1,23 @@
+WEBVTT
+Kind: captions
+Language: en
+
+1
+00:00:00.000 --> 00:00:04.000
+Here is the Acme Notes demo. Let me open the editor.
+
+2
+00:00:04.000 --> 00:00:09.500
+I type a note and click Save. It says saved, but nothing persists on reload.
+
+3
+00:00:09.500 --> 00:00:15.000
+The toolbar icons are very light gray on white. Hard to read.
+
+4
+00:00:15.000 --> 00:00:20.000
+On a narrow window the sidebar overflows and covers the text.
+
+5
+00:00:20.000 --> 00:00:24.000
+That is the end of the walkthrough. Three items to fix.
