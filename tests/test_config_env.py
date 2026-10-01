@@ -323,7 +323,11 @@ class TestEnvMappingAuthoritative:
         assert config.llm_merge_enabled is False
 
     def test_openai_key_fills_llm_and_vision(self, clean_env: pytest.MonkeyPatch) -> None:
+        # Sovereignty doctrine: the ambient key fills the LLM/Vision group only
+        # under an OpenAI selection (here: OpenAI endpoints via env).
         clean_env.setenv("OPENAI_API_KEY", "sk-openai-probe")  # pragma: allowlist secret
+        clean_env.setenv("SCREENSCRIBE_LLM_ENDPOINT", "https://api.openai.com/v1/responses")
+        clean_env.setenv("SCREENSCRIBE_VISION_ENDPOINT", "https://api.openai.com/v1/responses")
         config = ScreenScribeConfig()
 
         config._load_from_env()
@@ -482,30 +486,34 @@ class TestProviderEnvPrecedence:
     def test_provider_env_fills_empty_endpoint_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
         config = ScreenScribeConfig()
         monkeypatch.setenv("OPENAI_API_KEY", "ambient-openai-key")  # pragma: allowlist secret
+        monkeypatch.setenv("SCREENSCRIBE_LLM_ENDPOINT", "https://api.openai.com/v1/responses")
+        monkeypatch.setenv("SCREENSCRIBE_VISION_ENDPOINT", "https://api.openai.com/v1/responses")
 
         config._load_from_env()
 
         assert config.llm_api_key == "ambient-openai-key"  # pragma: allowlist secret
         assert config.vision_api_key == "ambient-openai-key"  # pragma: allowlist secret
 
-    def test_openai_env_key_on_default_libraxis_endpoint_blocks(
+    def test_openai_env_key_on_default_libraxis_selection_ignored(
         self, clean_env: pytest.MonkeyPatch
     ) -> None:
-        # Provenance: a key from the explicit OPENAI_API_KEY env var is PROVEN to
-        # be an OpenAI key. Sent to the default LibraxisAI endpoint it must hard
-        # block -- exactly the safety case the gate existed for (Codex P1). This
-        # is stricter than an ambiguous `sk-` key from other sources, which warns.
+        # Sovereignty doctrine: an ambient OPENAI_API_KEY under a LibraxisAI
+        # selection never enters the slots at all -- it is ignored with a
+        # warning, so the key can never reach a foreign endpoint. Supersedes
+        # the old fill-then-hard-block gate: nothing is sent because nothing
+        # is configured from a foreign ambient key.
         clean_env.setenv("OPENAI_API_KEY", "sk-ambient-openai-key")  # pragma: allowlist secret
         config = ScreenScribeConfig()
 
         config._load_from_env()
 
-        assert config.openai_env_key_slots == {"llm", "vision"}
-        errors = config.validate()
-        assert any("OPENAI_API_KEY" in error for error in errors)
-        assert any("No request was sent" in error for error in errors)
-        # The secret is never echoed into the error text.
-        assert "sk-ambient-openai-key" not in "\n".join(errors)  # pragma: allowlist secret
+        assert config.llm_api_key == ""
+        assert config.vision_api_key == ""
+        assert config.openai_env_key_slots == set()
+        warnings = config.mismatch_warnings()
+        assert any("OPENAI_API_KEY" in warning for warning in warnings)
+        # The secret is never echoed into the warning text.
+        assert "sk-ambient-openai-key" not in "\n".join(warnings)  # pragma: allowlist secret
 
     def test_generic_sk_via_screenscribe_env_on_libraxis_endpoint_warns_only(
         self, clean_env: pytest.MonkeyPatch
@@ -1081,3 +1089,74 @@ class TestInvalidEndpointMessageRedaction:
         from screenscribe.config import _invalid_endpoint_label
 
         assert _invalid_endpoint_label("not a url") == "Invalid endpoint (unparseable URL)"
+
+
+class TestSelectionSovereignty:
+    """Ambient provider keys never cross into a foreign selection.
+
+    Selection identity is per slot group: STT is free, LLM/Vision are locked
+    together. Provenance comes from the env var NAME, not the key shape.
+    """
+
+    def test_libraxis_env_ignored_under_xai_selection(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        clean_env.setenv("LIBRAXIS_API_KEY", "lx-ambient")  # pragma: allowlist secret
+        clean_env.setenv("SCREENSCRIBE_STT_ENDPOINT", "https://api.x.ai/v1/stt")
+        clean_env.setenv("SCREENSCRIBE_LLM_ENDPOINT", "https://api.x.ai/v1/responses")
+        clean_env.setenv("SCREENSCRIBE_VISION_ENDPOINT", "https://api.x.ai/v1/responses")
+        config = ScreenScribeConfig()
+
+        config._load_from_env()
+
+        assert config.stt_api_key == ""
+        assert config.api_key == ""
+        stt_warnings = config.mismatch_warnings({"stt"})
+        assert any("LIBRAXIS_API_KEY" in warning for warning in stt_warnings)
+        assert "lx-ambient" not in "\n".join(stt_warnings)  # pragma: allowlist secret
+
+    def test_libraxis_env_fills_only_stt_under_split_selection(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        # STT stays LibraxisAI (defaults), LLM/Vision pinned to xAI: the
+        # ambient LibraxisAI key fills ONLY the STT slot.
+        clean_env.setenv("LIBRAXIS_API_KEY", "lx-ambient")  # pragma: allowlist secret
+        clean_env.setenv("SCREENSCRIBE_LLM_ENDPOINT", "https://api.x.ai/v1/responses")
+        clean_env.setenv("SCREENSCRIBE_VISION_ENDPOINT", "https://api.x.ai/v1/responses")
+        config = ScreenScribeConfig()
+
+        config._load_from_env()
+
+        assert config.stt_api_key == "lx-ambient"  # pragma: allowlist secret
+        assert config.api_key == ""
+        assert "stt" in config.libraxis_env_key_slots
+        llm_warnings = config.mismatch_warnings({"llm"})
+        assert any("LLM/Vision" in warning for warning in llm_warnings)
+        stt_warnings = config.mismatch_warnings({"stt"})
+        assert not any("LIBRAXIS_API_KEY" in warning for warning in stt_warnings)
+
+    def test_llm_vision_provider_split_is_a_blocking_error(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        # LLM and VLM are one provider group; a known-provider split between
+        # their endpoints is a configuration error, not a feature.
+        clean_env.setenv("SCREENSCRIBE_LLM_ENDPOINT", "https://api.x.ai/v1/responses")
+        clean_env.setenv("SCREENSCRIBE_VISION_ENDPOINT", "https://api.openai.com/v1/responses")
+        config = ScreenScribeConfig()
+
+        config._load_from_env()
+
+        errors = config.validate()
+        assert any("one provider group" in error for error in errors)
+
+    def test_libraxis_env_fills_both_slots_under_libraxis_defaults(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        clean_env.setenv("LIBRAXIS_API_KEY", "lx-ambient")  # pragma: allowlist secret
+        config = ScreenScribeConfig()
+
+        config._load_from_env()
+
+        assert config.stt_api_key == "lx-ambient"  # pragma: allowlist secret
+        assert config.api_key == "lx-ambient"  # pragma: allowlist secret
+        assert config.mismatch_warnings() == []

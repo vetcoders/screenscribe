@@ -184,6 +184,19 @@ class ScreenScribeConfig:
     # ``SCREENSCRIBE_*_API_KEY`` override), so sending it to a LibraxisAI endpoint
     # stays a hard block in :meth:`validate`. Not persisted, not part of equality.
     openai_env_key_slots: set[str] = field(default_factory=set, repr=False, compare=False)
+    # Same provenance contract for LIBRAXIS_API_KEY: the env var name proves a
+    # LibraxisAI key regardless of key shape, so it may only populate slots
+    # whose routing actually targets LibraxisAI. Deferred to the end of
+    # _load_from_env (endpoints resolve in the same pass). When routing points
+    # elsewhere, the key is ignored and libraxis_env_ignored carries the reason
+    # for mismatch_warnings. Not persisted, not part of equality.
+    libraxis_env_key_slots: set[str] = field(default_factory=set, repr=False, compare=False)
+    libraxis_env_ignored_slots: set[str] = field(default_factory=set, repr=False, compare=False)
+    _libraxis_env_value: str = field(default="", repr=False, compare=False)
+    # Same sovereignty contract for OPENAI_API_KEY: an ambient OpenAI key may
+    # fill LLM/Vision slots only when the selection's identity is OpenAI.
+    openai_env_ignored: str = field(default="", repr=False, compare=False)
+    _openai_env_value: str = field(default="", repr=False, compare=False)
 
     @staticmethod
     def _normalize_api_base(value: str) -> str:
@@ -427,6 +440,25 @@ class ScreenScribeConfig:
             providers = {"llm", "vision", "stt"}
         errors = []
 
+        # LLM and Vision are one locked provider group: both endpoints must
+        # resolve to the same known provider. A split (e.g. llm on xAI, vision
+        # on OpenAI) is a configuration error, not a feature — set the group
+        # with `screenscribe config llm --provider <name>`.
+        llm_ep = self._endpoint_provider(self.llm_endpoint)
+        vision_ep = self._endpoint_provider(self.vision_endpoint)
+        if (
+            {"llm", "vision"} & providers
+            and llm_ep
+            and vision_ep
+            and llm_ep != vision_ep
+            and "custom" not in {llm_ep, vision_ep}
+        ):
+            errors.append(
+                "LLM and Vision endpoints resolve to different providers "
+                f"({llm_ep} vs {vision_ep}). LLM/VLM are one provider group.\n"
+                "  Set both together: `screenscribe config llm --provider <name>`."
+            )
+
         # Check for endpoint/provider mismatch
         # Note: Both OpenAI and LibraxisAI support /v1/responses (Responses API)
         # LibraxisAI serves the OpenAI-compatible Responses API natively
@@ -571,6 +603,20 @@ class ScreenScribeConfig:
         if providers is None:
             providers = {"llm", "vision", "stt"}
         warnings: list[str] = []
+        libraxis_ignored_parts: list[str] = []
+        if "stt" in self.libraxis_env_ignored_slots and "stt" in providers:
+            libraxis_ignored_parts.append("STT")
+        if "llm" in self.libraxis_env_ignored_slots and ({"llm", "vision"} & providers):
+            libraxis_ignored_parts.append("LLM/Vision")
+        if libraxis_ignored_parts:
+            warnings.append(
+                f"LIBRAXIS_API_KEY is set but the {' and '.join(libraxis_ignored_parts)} "
+                "selection is not LibraxisAI; the env key is ignored there "
+                "(ambient keys never override a provider selection). Use an "
+                "explicit SCREENSCRIBE_*_API_KEY for an intentional override."
+            )
+        if self.openai_env_ignored and ({"llm", "vision"} & providers):
+            warnings.append(self.openai_env_ignored)
         pairs = (
             ("llm", "LLM", self.get_llm_api_key(), self.llm_endpoint),
             ("vision", "Vision", self.get_vision_api_key(), self.vision_endpoint),
@@ -732,17 +778,16 @@ class ScreenScribeConfig:
                 # loaded from config.env. Use SCREENSCRIBE_*_API_KEY env vars
                 # for an intentional per-endpoint override.
                 if env_key == "OPENAI_API_KEY":
-                    if not self.llm_api_key:
-                        self.llm_api_key = value
-                        self.openai_env_key_slots.add("llm")
-                    if not self.vision_api_key:
-                        self.vision_api_key = value
-                        self.openai_env_key_slots.add("vision")
+                    # Deferred to _apply_openai_env_key at the end of this pass
+                    # (endpoints resolve in this same loop): an ambient OpenAI
+                    # key fills slots only under an OpenAI selection.
+                    self._openai_env_value = value
                 elif env_key == "LIBRAXIS_API_KEY":
-                    if not self.stt_api_key:
-                        self.stt_api_key = value
-                    if not self.api_key:
-                        self.api_key = value
+                    # Deferred to _apply_libraxis_env_key at the end of this
+                    # pass: the var name proves LibraxisAI provenance regardless
+                    # of key shape, so the key may land only on slots whose
+                    # resolved routing targets LibraxisAI.
+                    self._libraxis_env_value = value
                 else:
                     # Routing is taken straight from env_mapping (the mapped
                     # attribute is authoritative), never re-derived by substring
@@ -756,6 +801,72 @@ class ScreenScribeConfig:
         # endpoint set instead of rejecting the override as a preset mismatch.
         if routing_is_overridden and not provider_is_explicit:
             self.provider = ""
+
+        self._apply_libraxis_env_key()
+        self._apply_openai_env_key()
+
+    def _slot_provider(self, slot: str) -> str:
+        """Provider identity owning a key slot group.
+
+        STT is a free slot group; LLM and Vision are one locked group (set
+        together, no separate VLM selection). A known endpoint host decides; a
+        custom or unknown endpoint inherits the declared provider selection.
+        """
+        endpoint = {
+            "stt": self.stt_endpoint,
+            "llm": self.llm_endpoint,
+            "vision": self.vision_endpoint,
+        }[slot]
+        return self._endpoint_provider(endpoint) or self.recognized_provider()
+
+    def _apply_libraxis_env_key(self) -> None:
+        """Apply a deferred LIBRAXIS_API_KEY, per slot group, under sovereignty.
+
+        The variable name is provenance: its value is a LibraxisAI key whatever
+        its shape. An ambient key fills only slots whose selection identity is
+        LibraxisAI; elsewhere it is ignored and recorded in
+        ``libraxis_env_ignored`` for mismatch_warnings, so it never cross-wires
+        onto an xAI/OpenAI endpoint and the account-bearer fallback can serve.
+        """
+        value = self._libraxis_env_value
+        if not value:
+            return
+        if self._slot_provider("stt") == "libraxis":
+            if not self.stt_api_key:
+                self.stt_api_key = value
+                self.libraxis_env_key_slots.add("stt")
+        else:
+            self.libraxis_env_ignored_slots.add("stt")
+        if self._slot_provider("llm") == "libraxis":
+            if not self.api_key:
+                self.api_key = value
+                self.libraxis_env_key_slots.add("api_key")
+        else:
+            self.libraxis_env_ignored_slots.add("llm")
+
+    def _apply_openai_env_key(self) -> None:
+        """Apply a deferred OPENAI_API_KEY only under an OpenAI selection.
+
+        Mirrors the LibraxisAI gate: LLM/Vision are one locked group, so both
+        slots fill together or not at all.
+        """
+        value = self._openai_env_value
+        if not value:
+            return
+        if self._slot_provider("llm") == "openai":
+            if not self.llm_api_key:
+                self.llm_api_key = value
+                self.openai_env_key_slots.add("llm")
+            if not self.vision_api_key:
+                self.vision_api_key = value
+                self.openai_env_key_slots.add("vision")
+        else:
+            self.openai_env_ignored = (
+                "OPENAI_API_KEY is set but the LLM/Vision selection is not "
+                "OpenAI; the env key is ignored (ambient keys never override a "
+                "provider selection). Use an explicit SCREENSCRIBE_*_API_KEY "
+                "for an intentional override."
+            )
 
     # Attributes needing normalization when assigned from an env value; every
     # other mapped attribute is a plain string assignment.

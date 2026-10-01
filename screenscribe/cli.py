@@ -1925,6 +1925,71 @@ def config_setup() -> None:
     console.print(f"[green]Status:[/] {preset.configuration_status()}")
 
 
+@config_app.command("auth")
+def config_auth(
+    provider: Annotated[str, typer.Argument(help="Provider: libraxis | openai | xai")],
+    login: Annotated[
+        bool, typer.Option("--login", help="Sign in via the OAuth device flow")
+    ] = False,
+    key: Annotated[
+        bool, typer.Option("--key", help="Paste an API key (hidden prompt)")
+    ] = False,
+) -> None:
+    """Select a provider and set up its credentials in one gesture.
+
+    The selection is sovereign: endpoints and models are written as one
+    coherent preset (LLM and Vision travel together; STT follows the same
+    provider by default). ``--login`` stores an account token that serves as
+    the credential fallback; ``--key`` writes an explicit API key.
+    """
+    from .cli_auth import auth_login
+
+    provider = provider.lower().strip()
+    if provider not in {"libraxis", "openai", "xai"}:
+        console.print("[red]Error:[/] provider must be one of: libraxis, openai, xai")
+        raise typer.Exit(1)
+    if login == key:
+        console.print("[red]Error:[/] pass exactly one of --login or --key.")
+        raise typer.Exit(1)
+
+    api_key = ""
+    if login:
+        auth_login(provider, no_browser=False)
+        from .account_auth import account_status
+
+        status = account_status(provider)
+        if not status.api_bearer_usable:
+            console.print(
+                f"[yellow]The {provider} account token cannot serve REST calls;[/] "
+                "rerun with --key to set an API key instead."
+            )
+            raise typer.Exit(1)
+    else:
+        api_key = typer.prompt("API key", hide_input=True).strip()
+        if not api_key:
+            console.print("[red]Error:[/] API key cannot be empty.")
+            raise typer.Exit(1)
+
+    try:
+        preset = ScreenScribeConfig.provider_preset(provider, api_key)
+    except ValueError as error:
+        console.print(f"[red]Error:[/] {error}")
+        raise typer.Exit(1) from None
+
+    config_path = Path.home() / ".config" / "screenscribe" / "config.env"
+    if config_path.exists() and not typer.confirm(
+        f"Write the {provider} selection (endpoints+models) to {config_path}?",
+        default=True,
+    ):
+        console.print("[dim]Selection unchanged; credentials kept.[/]")
+        return
+
+    path = preset.save_default_config()
+    console.print(f"[green]Selection saved:[/] {provider} → [link=file://{path}]{path}[/link]")
+    console.print(f"[green]Status:[/] {preset.configuration_status()}")
+    console.print("[dim]Verify the whole setup:[/] screenscribe doctor")
+
+
 # ---------------------------------------------------------------------------
 # keywords command group
 # ---------------------------------------------------------------------------

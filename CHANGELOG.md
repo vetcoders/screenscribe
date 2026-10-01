@@ -29,6 +29,21 @@
   the patched PyJWT release; the local ruleset and fail-closed gates remain
   enforced.
 
+- **Changed: provider selection is sovereign over ambient env keys.** A stray
+  `LIBRAXIS_API_KEY`/`OPENAI_API_KEY` in the environment no longer leaks onto a
+  foreign provider's endpoints (field incident: a LibraxisAI key exported from
+  `~/.zshenv` was sent to api.x.ai and 400'd every STT call while `doctor`,
+  running without that env, stayed green). Ambient keys now fill only slots
+  whose selection identity matches their provenance; elsewhere they are ignored
+  with a warning that names the variable. STT stays a free slot group (many
+  providers offer no STT); LLM and Vision are one locked provider group — a
+  known-provider split between their endpoints is a blocking config error.
+- **Added: `screenscribe config auth <libraxis|openai|xai> --login|--key`.**
+  Writes one coherent provider selection and sets credentials in a single
+  gesture — device-flow OAuth (`--login`, account bearer fallback) or a hidden
+  API-key prompt (`--key`). An OpenAI `--login` refuses instead of writing a
+  dead selection, since ChatGPT account tokens cannot serve REST calls.
+
 - **Added: `screenscribe doctor` — stamped roundtrip proofs for every outbound
   path.** One command probes every configured provider path (STT, LLM, vision,
   agent protocols) with a minimal live ping and exercises all 14 report-agent

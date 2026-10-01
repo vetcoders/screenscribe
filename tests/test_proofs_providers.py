@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -41,7 +40,7 @@ class _MockAsyncStream:
         self.status_code = status_code
         self._lines = lines or []
 
-    async def __aenter__(self) -> "_MockAsyncStream":
+    async def __aenter__(self) -> _MockAsyncStream:
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -59,7 +58,7 @@ class _MockAsyncClient:
     def __init__(self, stream: _MockAsyncStream) -> None:
         self._stream = stream
 
-    async def __aenter__(self) -> "_MockAsyncClient":
+    async def __aenter__(self) -> _MockAsyncClient:
         return self
 
     async def __aexit__(self, *args: object) -> None:

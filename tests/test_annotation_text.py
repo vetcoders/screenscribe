@@ -164,7 +164,7 @@ def _run_js(assertions: str) -> None:
 
 
 def test_default_text_font_size_is_height_relative() -> None:
-    """A default text annotation on a 2600×1654 frame is ~3.6% of frame height."""
+    """A default text annotation on a 2600x1654 frame is ~3.6% of frame height."""
     _run_js(
         """
         const ann = { type: 'text', text: 'TUTAJ JEST BUG', x: 0.1, y: 0.1 };
@@ -231,10 +231,9 @@ def test_font_size_slider_clamps_to_bounds() -> None:
 
 def test_default_text_fill_and_halo_are_readable_on_dark_theme() -> None:
     """Text carries the light theme default fill and a dark halo for contrast."""
-    default_color = _read_annotation_default_color()
     _run_js(
-        f"""
-        const ann = {{ type: 'text', text: 'x', x: 0.1, y: 0.1 }};
+        """
+        const ann = { type: 'text', text: 'x', x: 0.1, y: 0.1 };
         const el = createAnnotationElement(ann, 1, 1);
         const fill = el.getAttribute('fill');
         const stroke = el.getAttribute('stroke');
