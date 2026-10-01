@@ -111,5 +111,5 @@ diagnose-which-*.txt
 # vendored minified JS, so it is regenerated locally rather than tracked).
 examples/example_report.html
 
-# screenscribe doctor default artifact output
-proofs/
+# screenscribe doctor default artifact output (root only; screenscribe/proofs/ is a shipped package)
+/proofs/
