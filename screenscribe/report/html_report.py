@@ -79,6 +79,7 @@ def save_html_report_pro(
             "category": detection.category,
             "timestamp_formatted": format_timestamp(detection.segment.start),
             "timestamp": detection.segment.start,
+            "timestamp_end": detection.segment.end,
             "text": detection.segment.text,
             "context": detection.context,
             "keywords": detection.keywords_found,
