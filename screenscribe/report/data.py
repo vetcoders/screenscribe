@@ -1,6 +1,7 @@
 """Shared report primitives and the single console instance."""
 
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,17 @@ from ..detect import Detection
 from ..transcribe import Segment
 
 console = Console()
+
+
+def count_report_categories(
+    detections: Iterable[Detection], categories: Iterable[str]
+) -> dict[str, int]:
+    """Count detections in the declared category order, including zeroes."""
+    counts = dict.fromkeys(categories, 0)
+    for detection in detections:
+        if detection.category in counts:
+            counts[detection.category] += 1
+    return counts
 
 
 def _prepare_html_video_source(video_path: Path, output_path: Path) -> str:
@@ -300,14 +312,18 @@ def _serialize_unified_analysis(finding: Any | None) -> dict[str, Any]:
     }
 
 
-def _last_pass_response_id(unified_findings: list[Any] | None) -> str | None:
-    """``response_id`` of the last unified finding that has one."""
-    last: str | None = None
+def _distinct_response_ids(unified_findings: list[Any] | None) -> list[str]:
+    """Distinct finding response IDs in report order, without claiming a head."""
+    response_ids: list[str] = []
+    seen: set[str] = set()
     for finding in unified_findings or []:
         rid = getattr(finding, "response_id", "") or ""
         if isinstance(rid, str) and rid.strip():
-            last = rid.strip()
-    return last
+            normalized = rid.strip()
+            if normalized not in seen:
+                seen.add(normalized)
+                response_ids.append(normalized)
+    return response_ids
 
 
 def _build_analysis_passes(
@@ -327,6 +343,7 @@ def _build_analysis_passes(
     unified_status = "empty"
     if screenshots and matched_count:
         unified_status = "partial" if matched_count < len(screenshots) else "completed"
+    response_ids = _distinct_response_ids(unified_findings)
 
     return {
         "detections": {
@@ -342,8 +359,10 @@ def _build_analysis_passes(
             "count": unified_total,
             "matched_findings": matched_count,
             "unmatched_findings": max(len(screenshots) - matched_count, 0),
-            # Last VLM pass id so review-agent chat can resume with
-            # previous_response_id instead of reseeding the whole report.
-            "response_id": _last_pass_response_id(unified_findings),
+            # Parallel analysis does not expose its actual shared chain head.
+            # A single distinct id is unambiguous; multiple ids are evidence,
+            # not permission to guess which branch is final.
+            "response_id": response_ids[0] if len(response_ids) == 1 else None,
+            "response_ids": response_ids,
         },
     }

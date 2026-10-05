@@ -7,11 +7,15 @@ from rich.panel import Panel
 from rich.table import Table
 
 from ..detect import Detection, format_timestamp
-from .data import console
+from .data import console, count_report_categories
 
 
 def print_report(
-    detections: list[Detection], screenshots: list[tuple[Detection, Path]], video_path: Path
+    detections: list[Detection],
+    screenshots: list[tuple[Detection, Path]],
+    video_path: Path,
+    *,
+    categories: tuple[str, ...] | None = None,
 ) -> None:
     """Print a rich console report of findings."""
     console.print()
@@ -28,13 +32,16 @@ def print_report(
     table.add_column("Category", style="cyan")
     table.add_column("Count", justify="right")
 
-    bugs = sum(1 for d in detections if d.category == "bug")
-    changes = sum(1 for d in detections if d.category == "change")
-    ui = sum(1 for d in detections if d.category == "ui")
-
-    table.add_row("Bugs", str(bugs))
-    table.add_row("Change Requests", str(changes))
-    table.add_row("UI Issues", str(ui))
+    if categories is not None:
+        for category, count in count_report_categories(detections, categories).items():
+            table.add_row(category, str(count))
+    else:
+        bugs = sum(1 for d in detections if d.category == "bug")
+        changes = sum(1 for d in detections if d.category == "change")
+        ui = sum(1 for d in detections if d.category == "ui")
+        table.add_row("Bugs", str(bugs))
+        table.add_row("Change Requests", str(changes))
+        table.add_row("UI Issues", str(ui))
     table.add_row("[bold]Total[/]", f"[bold]{len(detections)}[/]")
 
     console.print(table)

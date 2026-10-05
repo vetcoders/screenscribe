@@ -857,7 +857,7 @@ class TestLlmReasoningEffort:
             ("libraxis", "none"),
             ("openai", "none"),
             ("xai", "low"),  # xAI rejects "none" with a 400
-            ("custom", "none"),
+            ("custom", ""),
         ],
     )
     def test_unset_default_resolves_per_provider_preset(self, provider: str, expected: str) -> None:
@@ -914,7 +914,8 @@ class TestLlmReasoningEffort:
         with pytest.warns(UserWarning, match="SCREENSCRIBE_LLM_REASONING_EFFORT"):
             config._load_from_env()
 
-        assert config.llm_reasoning_effort == "none"
+        assert config.llm_reasoning_effort == ""
+        assert config.get_llm_reasoning_effort() == "none"
 
     def test_env_off_is_invalid_and_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # "off" is rejected by the Responses API (response.failed); only "none"
@@ -925,7 +926,8 @@ class TestLlmReasoningEffort:
         with pytest.warns(UserWarning, match="SCREENSCRIBE_LLM_REASONING_EFFORT"):
             config._load_from_env()
 
-        assert config.llm_reasoning_effort == "none"
+        assert config.llm_reasoning_effort == ""
+        assert config.get_llm_reasoning_effort() == "none"
 
     def test_env_override_is_normalized(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SCREENSCRIBE_LLM_REASONING_EFFORT", " LOW ")
@@ -944,11 +946,12 @@ class TestLlmReasoningEffort:
         with pytest.warns(UserWarning, match="SCREENSCRIBE_LLM_REASONING_EFFORT"):
             config._load_from_env()
 
-        assert config.llm_reasoning_effort == "none"
+        assert config.llm_reasoning_effort == ""
+        assert config.get_llm_reasoning_effort() == "none"
 
     @pytest.mark.parametrize(
         ("provider", "expected"),
-        [("xai", "low"), ("custom", "none")],
+        [("xai", "low"), ("custom", "")],
     )
     def test_invalid_value_falls_back_to_provider_default(
         self, provider: str, expected: str
@@ -959,8 +962,35 @@ class TestLlmReasoningEffort:
         with pytest.warns(UserWarning, match="SCREENSCRIBE_LLM_REASONING_EFFORT"):
             config._set_from_key("SCREENSCRIBE_LLM_REASONING_EFFORT", "bogus")
 
-        assert config.llm_reasoning_effort == expected
+        assert config.llm_reasoning_effort == ""
         assert config.get_llm_reasoning_effort() == expected
+
+    @pytest.mark.parametrize(
+        "lines",
+        [
+            [
+                "SCREENSCRIBE_LLM_REASONING_EFFORT=bogus",
+                "SCREENSCRIBE_PROVIDER=xai",
+            ],
+            [
+                "SCREENSCRIBE_PROVIDER=xai",
+                "SCREENSCRIBE_LLM_REASONING_EFFORT=bogus",
+            ],
+        ],
+    )
+    def test_invalid_config_value_uses_final_provider_regardless_of_key_order(
+        self, tmp_path: Path, lines: list[str]
+    ) -> None:
+        path = tmp_path / "config.env"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        config = ScreenScribeConfig()
+
+        with pytest.warns(UserWarning, match="Using the provider default"):
+            config._load_from_file(path)
+
+        assert config.recognized_provider() == "xai"
+        assert config.llm_reasoning_effort == ""
+        assert config.get_llm_reasoning_effort() == "low"
 
     def test_config_file_key(self) -> None:
         config = ScreenScribeConfig()
@@ -970,6 +1000,29 @@ class TestLlmReasoningEffort:
         assert config.llm_reasoning_effort == "high"
         # Must not leak into the LLM model through substring routing.
         assert config.llm_model == DEFAULT_LLM_MODEL
+
+    def test_custom_provider_omits_unverified_default_reasoning_option(self) -> None:
+        from screenscribe.api_utils import build_llm_request_body
+
+        config = ScreenScribeConfig.provider_preset(
+            "custom", "test-key", custom_base="https://provider.example"
+        )
+        body = build_llm_request_body(
+            config.llm_model,
+            "Describe the finding.",
+            config.llm_endpoint,
+            reasoning_effort=config.get_llm_reasoning_effort(),
+        )
+        assert "reasoning" not in body
+
+        config.llm_reasoning_effort = "high"
+        configured = build_llm_request_body(
+            config.llm_model,
+            "Describe the finding.",
+            config.llm_endpoint,
+            reasoning_effort=config.get_llm_reasoning_effort(),
+        )
+        assert configured["reasoning"]["effort"] == "high"
 
     def test_direct_invalid_value_falls_back_at_use(self) -> None:
         assert ScreenScribeConfig(llm_reasoning_effort="bogus").get_llm_reasoning_effort() == (
@@ -989,13 +1042,13 @@ class TestLlmReasoningEffort:
 
     @pytest.mark.parametrize(
         ("provider", "expected"),
-        [("xai", "low"), ("custom", "none")],
+        [("xai", "low"), ("custom", "")],
     )
     def test_setup_writes_provider_default_explicitly(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, expected: str
     ) -> None:
-        # A fresh `config setup` must never start with a value its provider
-        # rejects: the preset's default is written into config.env explicitly.
+        # Known presets write their supported default. Custom providers leave
+        # the value empty so requests omit an unverified reasoning option.
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         kwargs = {"custom_base": "https://api.example.com"} if provider == "custom" else {}
         config = ScreenScribeConfig.provider_preset(provider, "test-key", **kwargs)

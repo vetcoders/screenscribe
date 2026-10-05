@@ -38,6 +38,8 @@ def _write_report_artifacts(
     markdown_report: bool,
     html_report: bool,
     preset_meta: dict[str, Any] | None = None,
+    processing_provenance: dict[str, Any] | None = None,
+    transcript_source: str | None = None,
 ) -> None:
     """Emit the JSON/Markdown/HTML report trio for one video.
 
@@ -63,9 +65,16 @@ def _write_report_artifacts(
             transcript=transcript,
             transcript_segments=transcript_segments,
             preset_meta=preset_meta,
+            processing_provenance=processing_provenance,
+            transcript_source=transcript_source,
         )
 
     if markdown_report:
+        markdown_context: dict[str, Any] = {}
+        if preset_meta is not None:
+            markdown_context["preset_meta"] = preset_meta
+        if transcript_source is not None:
+            markdown_context["transcript_source"] = transcript_source
         save_enhanced_markdown_report(
             detections,
             screenshots,
@@ -77,6 +86,7 @@ def _write_report_artifacts(
             errors=errors,
             transcript=transcript,
             transcript_segments=transcript_segments,
+            **markdown_context,
         )
 
     if html_report:
@@ -91,6 +101,7 @@ def _write_report_artifacts(
             errors=errors,
             embed_video=embed_video,
             language=language,
+            transcript_source=transcript_source,
         )
 
 

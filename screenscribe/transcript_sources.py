@@ -11,9 +11,9 @@ that feed semantic analysis and response chaining. Two sources exist today:
   recording has no audio track or when the operator passes
   ``--transcript-source ocr`` / ``--no-audio``.
 
-Hook for future sources (e.g. ``.srt`` subtitle files): implement the
-``TranscriptSource`` protocol and register the instance in
-``TRANSCRIPT_SOURCE_REGISTRY`` — the pipeline resolves sources by name.
+The protocol/registry are standalone extension helpers. The current pipeline
+uses the fixed audio/OCR resolver and its checkpointed stages directly;
+registering another implementation does not make it a CLI transcript source.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
+from .api_utils import is_chat_completions_endpoint
 from .config import ScreenScribeConfig
 from .transcribe_types import TranscriptionResult
 
@@ -88,6 +89,13 @@ TRANSCRIPT_SOURCE_REGISTRY: dict[str, TranscriptSource] = {
 def get_transcript_source(name: ResolvedTranscriptSource) -> TranscriptSource:
     """Look up a resolved source implementation by name."""
     return TRANSCRIPT_SOURCE_REGISTRY[name]
+
+
+def response_id_can_chain(source_endpoint: str, target_endpoint: str) -> bool:
+    """Whether a provider response ID is safe to replay at ``target_endpoint``."""
+    if is_chat_completions_endpoint(target_endpoint):
+        return False
+    return source_endpoint.rstrip("/") == target_endpoint.rstrip("/")
 
 
 def normalize_transcript_source(requested: str, *, no_audio: bool = False) -> TranscriptSourceName:

@@ -49,7 +49,9 @@ def _validate_poi_category(raw: str, allowed: tuple[str, ...] = POI_CATEGORIES) 
     """
     if raw in allowed:
         return raw
-    return "other"
+    if "other" in allowed:
+        return "other"
+    raise ValueError("Model returned a category outside the active preset vocabulary")
 
 
 def _coerce_confidence(raw: Any, default: float = 0.5) -> float:
@@ -585,11 +587,11 @@ def semantic_prefilter(
             console.print(f"[dim]  Response ID for VLM chaining: {response_id[:20]}...[/]")
 
         # Summary by category
-        categories: dict[str, int] = {}
+        category_counts: dict[str, int] = {}
         for poi in pois:
-            categories[poi.category] = categories.get(poi.category, 0) + 1
+            category_counts[poi.category] = category_counts.get(poi.category, 0) + 1
 
-        for cat, count in sorted(categories.items()):
+        for cat, count in sorted(category_counts.items()):
             console.print(f"[dim]  • {cat}: {count}[/]")
 
         return SemanticFilterResult(pois=pois, response_id=response_id)
@@ -770,7 +772,9 @@ def _parse_prefilter_response(
     list still returns ``[]`` -- that is a real empty, not a failure.)
 
     ``categories`` is the active category vocabulary (the default six unless a
-    preset is running); parsed categories outside it degrade to ``"other"``.
+    preset is running). An out-of-vocabulary category degrades to ``"other"``
+    only when that category belongs to the active vocabulary; custom vocabularies
+    without ``"other"`` fail validation instead of fabricating a domain label.
     """
     # Strip model control tokens
     content = re.sub(r"<\|[^|]+\|>\w*\s*", "", content)
@@ -1028,7 +1032,7 @@ def poi_to_detection(
     # no need to collapse performance/accessibility/other to 'ui'; doing so
     # falsified the VLM prompt hint and the report category (BH44). Narrow only
     # to the active POI vocabulary (default six, or the preset's) for safety.
-    category = poi.category if poi.category in categories else "other"
+    category = _validate_poi_category(poi.category, categories)
 
     return Detection(
         segment=segment,

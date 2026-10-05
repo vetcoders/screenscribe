@@ -23,6 +23,14 @@ from screenscribe.config import ScreenScribeConfig
 from screenscribe.semantic_filter import PointOfInterest, SemanticFilterResult
 from screenscribe.transcribe import Segment, TranscriptionResult
 
+_LIBRAXIS_LLM_RECEIPT = {
+    "llm": {
+        "host": "api.libraxis.cloud",
+        "protocol": "responses",
+        "provider": "libraxis",
+    }
+}
+
 
 def test_review_empty_state_uses_single_cli_import_style() -> None:
     """Keep this file on one CLI import path so review comments stay quiet."""
@@ -130,6 +138,12 @@ def test_review_writes_all_three_reports_when_prefilter_returns_zero_pois(
     assert report["summary"]["total"] == 0
     assert report["findings"] == []
     assert report["transcript"] == "OK, success."
+    assert report["transcript_source"] == "audio"
+    assert report["processing_provenance"]["llm"] == {
+        "host": "api.libraxis.cloud",
+        "protocol": "responses",
+        "provider": "libraxis",
+    }
     assert "executive_summary" in report
     assert "no points of interest" in report["executive_summary"].lower()
 
@@ -205,6 +219,9 @@ def test_review_failed_prefilter_does_not_write_a_false_no_issues_report(
     assert "no points of interest" not in normalized_output.lower()
     assert "no issues detected" not in normalized_output.lower()
     assert "Traceback" not in result.output
+    checkpoint = load_checkpoint(output_dir)
+    assert checkpoint is not None
+    assert checkpoint.processing_provenance == {}
 
 
 def test_review_failed_prefilter_panel_names_reason_and_endpoint_host(
@@ -751,6 +768,8 @@ def test_review_warns_when_vision_requested_but_no_vision_key(
     report = json.loads((output_dir / "demo_report.json").read_text(encoding="utf-8"))
     error_messages = " ".join(e["message"] for e in report["errors"]).lower()
     assert "vision" in error_messages
+    assert report["processing_provenance"] == _LIBRAXIS_LLM_RECEIPT
+    assert report["transcript_source"] == "audio"
 
 
 def test_review_transcript_only_summary_failure_redacts_url_in_report(
@@ -825,6 +844,7 @@ def test_review_vision_no_key_keeps_truthful_resumable_checkpoint(
     # Checkpoint must survive and reflect what actually ran.
     checkpoint = load_checkpoint(output_dir)
     assert checkpoint is not None, "checkpoint must be kept so --resume can finish vision"
+    assert checkpoint.processing_provenance == _LIBRAXIS_LLM_RECEIPT
     assert checkpoint.is_stage_complete("detection")  # semantic prefilter really ran
     assert not checkpoint.is_stage_complete("vision")  # never ran -> not complete
     assert not checkpoint.is_stage_complete("unified_analysis")  # resume gate -> must re-run

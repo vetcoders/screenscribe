@@ -444,6 +444,8 @@ def _body_attrs(config: SurfaceConfig, context: Mapping[str, Any]) -> str:
         "data-report-language": str(context.get("ui_language", "")),
         "data-window-mode": "workspace",
     }
+    if context.get("transcript_source") in ("audio", "ocr"):
+        attrs["data-transcript-source"] = str(context["transcript_source"])
     for attr_name in ("mode", "default_lang", "speech_lang", "has_markers"):
         context_key = f"body_{attr_name}"
         if context_key in context:

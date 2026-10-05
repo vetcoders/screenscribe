@@ -520,6 +520,7 @@ def render_html_report_pro(
     embed_video: bool = False,
     language: str = "en",
     static_demo: bool = False,
+    transcript_source: str | None = None,
 ) -> str:
     """Render complete HTML Pro report with video player and synchronized subtitles.
 
@@ -707,5 +708,6 @@ def render_html_report_pro(
         "findings_json": findings_json,
         "segments_json": segments_json,
         "static_demo": static_demo,
+        "transcript_source": transcript_source if transcript_source in ("audio", "ocr") else None,
     }
     return render_surface(REVIEW_SURFACE, context)
