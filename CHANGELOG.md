@@ -122,6 +122,11 @@
   partial response from one provider with another.
 - **Fixed: signed-in xAI setup can use its account bearer without a pasted key.**
   API-key setup remains available through the same wizard.
+- **Fixed: TTS and live STT account access follows the actual destination.**
+  Custom TTS/WebSocket endpoints cannot inherit an xAI account bearer from
+  the REST STT configuration; explicit provider-key fallback is preserved.
+  Live STT status and device-code transport errors also redact URL credentials
+  and query values.
 
 - **Internal: refresh runtime and development dependencies.** Updated the lockfile
   to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.

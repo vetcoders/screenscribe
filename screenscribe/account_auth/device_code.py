@@ -31,6 +31,7 @@ from typing import Any
 
 import httpx
 
+from ..api_utils import redact_error_message, redact_url
 from . import (
     AccountAuthError,
     AccountTokens,
@@ -85,8 +86,10 @@ def _post(client: httpx.Client, url: str, **kwargs: Any) -> httpx.Response:
     try:
         return client.post(url, **kwargs)
     except httpx.HTTPError as error:
+        detail = redact_error_message(error)
         raise AccountAuthError(
-            "http", f"request to {url} failed: {error.__class__.__name__}"
+            "http",
+            f"request to {redact_url(url)} failed: {error.__class__.__name__}: {detail}",
         ) from None
 
 

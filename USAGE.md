@@ -300,7 +300,10 @@ screenscribe tts TEXT --out FILE [--voice ID] [--language CODE] [--speed 0.7-1.5
 | `--speed` | `1.0` | Speech rate, 0.7-1.5. |
 
 The endpoint comes from the xAI preset or `SCREENSCRIBE_TTS_ENDPOINT`; the key
-from `SCREENSCRIBE_TTS_API_KEY`, falling back to the STT key.
+from `SCREENSCRIBE_TTS_API_KEY`, falling back to an explicit STT/general key.
+Without an explicit key, account access is resolved against the actual TTS
+destination: only `api.x.ai` receives the xAI account bearer. Live STT applies
+the same rule to its actual WebSocket host, independently of the REST STT host.
 
 ---
 
@@ -428,6 +431,8 @@ wins; without one, a signed-in **xAI** account token is used for endpoints on
 rejects a ChatGPT account token for REST calls (verified 2026-09-08), so
 Screenscribe prints a warning and still requires an OpenAI API key for
 requests. The shipped public client ids are disclosed in `NOTICE`.
+TTS and live STT resolve account access against their own destination host;
+custom service endpoints never inherit an account token from the REST STT host.
 
 ---
 

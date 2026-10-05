@@ -1201,7 +1201,7 @@ def _transcribe_live(
             "Set SCREENSCRIBE_STT_LIVE_ENDPOINT (wss://...) or choose xAI / LibraxisAI."
         )
         raise typer.Exit(1)
-    api_key = config.get_stt_api_key()
+    api_key = config.get_stt_live_api_key()
     if not api_key:
         console.print(
             "[red]Error:[/] No STT API key configured. Run `screenscribe config setup` "
@@ -1210,6 +1210,8 @@ def _transcribe_live(
         raise typer.Exit(1)
 
     from typing import BinaryIO, cast
+
+    from .api_utils import redact_url
 
     stdin = cast("BinaryIO", getattr(sys.stdin, "buffer", sys.stdin))
     # 100 ms of 16-bit mono per frame.
@@ -1233,7 +1235,9 @@ def _transcribe_live(
         finally:
             client.finish()
 
-    console.print(f"[dim]Live STT via {endpoint} ({sample_rate} Hz PCM16LE from stdin)[/]")
+    console.print(
+        f"[dim]Live STT via {redact_url(endpoint)} ({sample_rate} Hz PCM16LE from stdin)[/]"
+    )
     with client:
         pump_thread = threading.Thread(target=pump, name="screenscribe-live-stdin", daemon=True)
         pump_thread.start()
@@ -1310,7 +1314,11 @@ def tts(
         raise typer.Exit(1)
     api_key = config.get_tts_api_key()
     if not api_key:
-        console.print("[red]Error:[/] No TTS API key. Set SCREENSCRIBE_TTS_API_KEY.")
+        console.print(
+            "[red]Error:[/] No TTS credential for this endpoint. "
+            "Sign in with `screenscribe auth login xai` for api.x.ai, "
+            "or set SCREENSCRIBE_TTS_API_KEY for your provider."
+        )
         raise typer.Exit(1)
 
     codec = _TTS_CODEC_BY_SUFFIX.get(out.suffix.lower(), "mp3")
