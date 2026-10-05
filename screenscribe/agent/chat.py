@@ -100,6 +100,7 @@ class ProviderRound:
     function_calls: list[FunctionCall]
     error: str | None = None
     tool_use_blocks: list[dict[str, Any]] = field(default_factory=list)
+    response_output_items: list[dict[str, Any]] = field(default_factory=list)
 
 
 def format_sse(event: str, payload: dict[str, Any]) -> str:
@@ -381,13 +382,23 @@ def _bound_previous_response_id(
     for provider in providers:
         if (
             provider.slot == "primary"
-            and provider.protocol == "responses"
+            and _supports_stateful_response_chain(provider)
             and provider.name == provider_name
             and provider.protocol == protocol
             and provider.host == host.strip().lower()
         ):
             return response_id
     return None
+
+
+def _supports_stateful_response_chain(provider: AgentProvider) -> bool:
+    """Whether top-level instructions may accompany a response cursor.
+
+    xAI currently rejects ``instructions`` together with
+    ``previous_response_id``. The review agent must resend its trusted policy and
+    report seed, so xAI uses the stateless full-history path instead.
+    """
+    return provider.protocol == "responses" and provider.host != "api.x.ai"
 
 
 async def _run_provider(
@@ -399,14 +410,11 @@ async def _run_provider(
 ) -> AsyncIterator[str]:
     include_repo = tools.repo_root is not None
     current_input: list[dict[str, Any]] = list(turn.input_items)
+    stateful_chain = _supports_stateful_response_chain(provider)
     # Chain ids are scoped to the provider endpoint that minted them. The client
     # cursor belongs to the primary; a fallback starts from seed/history and may
     # chain only ids minted by its own later tool rounds.
-    previous = (
-        turn.previous_response_id
-        if provider.protocol == "responses" and provider.slot == "primary"
-        else None
-    )
+    previous = turn.previous_response_id if stateful_chain and provider.slot == "primary" else None
     last_response_id = previous
 
     for _round in range(_MAX_TOOL_ROUNDS):
@@ -436,7 +444,7 @@ async def _run_provider(
         round_result = await _dispatch_round(provider, payload)
         if round_result.error:
             raise AgentChatError(round_result.error)
-        if round_result.response_id and provider.protocol == "responses":
+        if round_result.response_id and stateful_chain:
             last_response_id = round_result.response_id
             previous = round_result.response_id
         if round_result.text:
@@ -492,8 +500,32 @@ async def _run_provider(
                 {"role": "assistant", "content": tool_uses},
                 {"role": "user", "content": anthropic_results},
             ]
-        else:
+        elif stateful_chain:
             current_input = outputs
+        else:
+            # xAI rejects top-level instructions together with a cursor. Keep the
+            # trusted instructions and run statelessly: resend the full user/chat
+            # context, then append the assistant tool call(s) and their outputs in
+            # the Responses API input-item shape.
+            response_items = [dict(item) for item in round_result.response_output_items]
+            if not response_items:
+                if round_result.text:
+                    response_items.append(
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": round_result.text}],
+                        }
+                    )
+                response_items.extend(
+                    {
+                        "type": "function_call",
+                        "call_id": call.call_id,
+                        "name": call.name,
+                        "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                    }
+                    for call in round_result.function_calls
+                )
+            current_input = [*current_input, *response_items, *outputs]
 
     yield format_sse(
         "error",
@@ -520,6 +552,11 @@ def _build_responses_payload(
         payload["instructions"] = instructions
     if previous_response_id:
         payload["previous_response_id"] = previous_response_id
+    elif provider.host == "api.x.ai":
+        # xAI's stateless tool-loop contract replays ``response.output``. Ask
+        # explicitly for encrypted reasoning so Grok 4.6 returns the reasoning
+        # items needed to preserve agentic state across those full-history calls.
+        payload["include"] = ["reasoning.encrypted_content"]
     reasoning = responses_reasoning_options(provider.url, config.get_llm_reasoning_effort())
     if reasoning:
         payload["reasoning"] = reasoning
@@ -545,6 +582,7 @@ async def _responses_round(provider: AgentProvider, payload: dict[str, Any]) -> 
     response_id: str | None = None
     calls: dict[str, dict[str, Any]] = {}
     item_to_call: dict[str, str] = {}
+    response_output_items: list[dict[str, Any]] = []
     async with httpx.AsyncClient(timeout=90.0) as client:
         async with client.stream("POST", provider.url, headers=headers, json=payload) as resp:
             if resp.status_code >= 400:
@@ -590,17 +628,35 @@ async def _responses_round(provider: AgentProvider, payload: dict[str, Any]) -> 
                     "response.done",
                 }:
                     _ingest_function_events(event, calls, item_to_call)
+                    item = event.get("item")
+                    if event_type == "response.output_item.done" and isinstance(item, dict):
+                        _upsert_response_output_item(response_output_items, item)
                     completed = event.get("response")
                     if isinstance(completed, dict) and completed.get("id"):
                         response_id = completed.get("id") or response_id
                         output = completed.get("output")
                         if isinstance(output, list):
                             _ingest_output_list(output, calls, item_to_call)
+                            response_output_items = [
+                                dict(item) for item in output if isinstance(item, dict)
+                            ]
     return ProviderRound(
         text="".join(text_parts) if text_parts else (final_text or ""),
         response_id=response_id if isinstance(response_id, str) else None,
         function_calls=_calls_from_bucket(calls),
+        response_output_items=response_output_items,
     )
+
+
+def _upsert_response_output_item(items: list[dict[str, Any]], item: dict[str, Any]) -> None:
+    """Keep completed Responses output items in their emitted order."""
+    item_id = item.get("id")
+    if isinstance(item_id, str) and item_id:
+        for index, existing in enumerate(items):
+            if existing.get("id") == item_id:
+                items[index] = dict(item)
+                return
+    items.append(dict(item))
 
 
 def _ingest_function_events(

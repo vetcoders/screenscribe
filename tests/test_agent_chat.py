@@ -53,6 +53,18 @@ def _xai_config(**overrides: Any) -> ScreenScribeConfig:
     return ScreenScribeConfig(**values)
 
 
+def _libraxis_config(**overrides: Any) -> ScreenScribeConfig:
+    values: dict[str, Any] = {
+        "provider": "libraxis",
+        "api_key": "test-key",  # pragma: allowlist secret
+        "llm_endpoint": "https://api.libraxis.cloud/v1/responses",
+        "llm_model": "programmer",
+        "agent_egress": "deny",
+    }
+    values.update(overrides)
+    return ScreenScribeConfig(**values)
+
+
 def _xai_processing_provenance() -> dict[str, dict[str, str]]:
     return {
         "llm": {
@@ -266,7 +278,8 @@ def test_stream_agent_chat_emits_token_and_done(monkeypatch: pytest.MonkeyPatch)
     assert "event: token" in body
     assert "Krytyczne: layout." in body
     assert "event: done" in body
-    assert "resp_live" in body
+    assert '"response_id": null' in body
+    assert "resp_live" not in body
     assert '"provider": "primary"' in body
     assert '"protocol": "responses"' in body
     assert '"host": "api.x.ai"' in body
@@ -344,7 +357,7 @@ def test_stream_agent_chat_runs_tool_loop(monkeypatch: pytest.MonkeyPatch) -> No
     assert "event: tool_result" in body
     assert "event: token" in body
     assert "Podsumowanie gotowe." in body
-    assert '"response_id": "resp_final"' in body
+    assert '"response_id": null' in body
 
 
 def test_collect_agent_chat_raises_when_egress_denies_all(
@@ -583,17 +596,39 @@ def test_provider_fallback_still_runs_before_any_primary_frame(
     assert "event: done" in body
 
 
-def test_responses_instructions_are_sent_on_every_tool_round(
+def test_xai_uses_full_history_with_instructions_for_second_turn_and_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payloads: list[dict[str, Any]] = []
     rounds = iter(
         [
             ProviderRound(
-                text="",
+                text="I will inspect the report.",
                 response_id="resp_tool",
                 function_calls=[
                     FunctionCall(name="get_report_summary", call_id="call_1", arguments={})
+                ],
+                response_output_items=[
+                    {
+                        "id": "rs_1",
+                        "type": "reasoning",
+                        "encrypted_content": "encrypted-reasoning",
+                        "summary": [],
+                    },
+                    {
+                        "id": "msg_1",
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": "I will inspect the report."}],
+                    },
+                    {
+                        "id": "fc_1",
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "name": "get_report_summary",
+                        "arguments": "{}",
+                    },
                 ],
             ),
             ProviderRound(text="done", response_id="resp_done", function_calls=[]),
@@ -610,39 +645,95 @@ def test_responses_instructions_are_sent_on_every_tool_round(
         "processing_provenance": _xai_processing_provenance(),
     }
 
-    async def _collect() -> None:
-        async for _frame in stream_agent_chat(
-            config=_xai_config(),
-            report=report,
-            tools=ReportToolbelt(report),
-            message="hi",
-            previous_response_id="resp_before",
-            previous_response_provider="primary",
-            previous_response_protocol="responses",
-            previous_response_host="api.x.ai",
-        ):
-            pass
+    async def _collect() -> str:
+        return "".join(
+            [
+                frame
+                async for frame in stream_agent_chat(
+                    config=_xai_config(),
+                    report=report,
+                    tools=ReportToolbelt(report),
+                    message="edit finding 11",
+                    history=[
+                        {"role": "user", "content": "first question"},
+                        {"role": "assistant", "content": "first answer"},
+                    ],
+                    previous_response_id="resp_before",
+                    previous_response_provider="primary",
+                    previous_response_protocol="responses",
+                    previous_response_host="api.x.ai",
+                )
+            ]
+        )
 
-    asyncio.run(_collect())
+    body = asyncio.run(_collect())
     assert len(payloads) == 2
-    assert payloads[0]["previous_response_id"] == "resp_before"
     assert all("Screenscribe review agent" in payload["instructions"] for payload in payloads)
+    assert all("Current review report" in payload["instructions"] for payload in payloads)
+    assert all("previous_response_id" not in payload for payload in payloads)
+    assert all(payload["include"] == ["reasoning.encrypted_content"] for payload in payloads)
+    first_input = payloads[0]["input"]
+    assert [item.get("role") for item in first_input] == ["user", "assistant", "user"]
+    assert "first question" in json.dumps(first_input)
+    assert "first answer" in json.dumps(first_input)
+    assert "edit finding 11" in json.dumps(first_input)
+
+    second_input = payloads[1]["input"]
+    assert second_input[: len(first_input)] == first_input
+    round_output_items: list[dict[str, Any]] = [
+        {
+            "id": "rs_1",
+            "type": "reasoning",
+            "encrypted_content": "encrypted-reasoning",
+            "summary": [],
+        },
+        {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": "I will inspect the report."}],
+        },
+        {
+            "id": "fc_1",
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "get_report_summary",
+            "arguments": "{}",
+        },
+    ]
+    assert second_input[len(first_input) : len(first_input) + 3] == round_output_items
+    assert round_output_items[0]["encrypted_content"] == "encrypted-reasoning"
+    call_index = next(
+        index for index, item in enumerate(second_input) if item.get("type") == "function_call"
+    )
+    output_index = next(
+        index
+        for index, item in enumerate(second_input)
+        if item.get("type") == "function_call_output"
+    )
+    assert call_index < output_index
+    assert second_input[call_index] == round_output_items[2]
+    assert second_input[output_index]["call_id"] == "call_1"
+    assert '"response_id": null' in body
 
 
 @pytest.mark.parametrize(
-    ("provider_name", "protocol", "host"),
+    ("provider_name", "protocol", "host", "should_chain"),
     [
-        (None, None, None),
-        ("fallback", "responses", "api.x.ai"),
-        ("primary", "anthropic", "api.x.ai"),
-        ("primary", "responses", "other.example"),
+        (None, None, None, False),
+        ("fallback", "responses", "api.libraxis.cloud", False),
+        ("primary", "anthropic", "api.libraxis.cloud", False),
+        ("primary", "responses", "other.example", False),
+        ("primary", "responses", "api.libraxis.cloud", True),
     ],
 )
-def test_foreign_or_ambiguous_cursor_is_dropped(
+def test_non_xai_cursor_requires_exact_primary_identity(
     monkeypatch: pytest.MonkeyPatch,
     provider_name: str | None,
     protocol: str | None,
     host: str | None,
+    should_chain: bool,
 ) -> None:
     payloads: list[dict[str, Any]] = []
 
@@ -651,14 +742,11 @@ def test_foreign_or_ambiguous_cursor_is_dropped(
         return ProviderRound(text="done", response_id="new-id", function_calls=[])
 
     monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
-    report: dict[str, Any] = {
-        "findings": [],
-        "processing_provenance": _xai_processing_provenance(),
-    }
+    report: dict[str, Any] = {"findings": []}
 
     async def _collect() -> None:
         async for _frame in stream_agent_chat(
-            config=_xai_config(),
+            config=_libraxis_config(),
             report=report,
             tools=ReportToolbelt(report),
             message="hi",
@@ -671,7 +759,11 @@ def test_foreign_or_ambiguous_cursor_is_dropped(
 
     asyncio.run(_collect())
     assert len(payloads) == 1
-    assert "previous_response_id" not in payloads[0]
+    assert "include" not in payloads[0]
+    if should_chain:
+        assert payloads[0]["previous_response_id"] == "foreign-id"
+    else:
+        assert "previous_response_id" not in payloads[0]
 
 
 def test_anthropic_tool_continuation_keeps_tool_use_and_report_seed(
@@ -880,13 +972,42 @@ def test_responses_function_events_keep_one_call_id() -> None:
 
 
 @pytest.mark.parametrize(
-    ("events", "expected_text", "error_match"),
+    ("events", "expected_text", "error_match", "expected_output_types"),
     [
-        ([{"type": "response.output_text.done", "text": "final-only"}], "final-only", None),
+        ([{"type": "response.output_text.done", "text": "final-only"}], "final-only", None, []),
         (
             [{"type": "error", "error": {"message": "provider failed", "code": "server_error"}}],
             "",
             "provider failed",
+            [],
+        ),
+        (
+            [
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp_tool",
+                        "output": [
+                            {
+                                "id": "rs_1",
+                                "type": "reasoning",
+                                "encrypted_content": "encrypted",
+                                "summary": [],
+                            },
+                            {
+                                "id": "fc_1",
+                                "type": "function_call",
+                                "call_id": "call_1",
+                                "name": "get_report_summary",
+                                "arguments": "{}",
+                            },
+                        ],
+                    },
+                }
+            ],
+            "",
+            None,
+            ["reasoning", "function_call"],
         ),
     ],
 )
@@ -895,6 +1016,7 @@ def test_responses_round_handles_final_text_and_stream_errors(
     events: list[dict[str, Any]],
     expected_text: str,
     error_match: str | None,
+    expected_output_types: list[str],
 ) -> None:
     class FakeResponse:
         status_code = 200
@@ -939,6 +1061,7 @@ def test_responses_round_handles_final_text_and_stream_errors(
     else:
         result = asyncio.run(agent_chat._responses_round(provider, {}))
         assert result.text == expected_text
+        assert [item["type"] for item in result.response_output_items] == expected_output_types
 
 
 def test_chat_completions_endpoint_is_rejected_before_network(
