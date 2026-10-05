@@ -4,8 +4,13 @@ from typing import Any
 
 import httpx
 from rich.console import Console
+from rich.markup import escape
 
-from screenscribe.api_utils import is_chat_completions_endpoint, redact_error_message
+from screenscribe.api_utils import (
+    is_chat_completions_endpoint,
+    redact_error_message,
+    redact_urls_in_text,
+)
 from screenscribe.config import ScreenScribeConfig
 
 console = Console()
@@ -118,9 +123,11 @@ def _check_llm_model(config: ScreenScribeConfig, model: str, model_type: str) ->
                     )
                     if any(marker in lowered for marker in truncation_markers):
                         return True
+                    safe_error_message = redact_urls_in_text(error_message)
                     console.print(
                         "[yellow]  Warning: validation request returned failed "
-                        f"status for {model}: {error_message or 'unknown provider error'}[/]"
+                        f"status for {model}: "
+                        f"{escape(safe_error_message or 'unknown provider error')}[/]"
                     )
                     # Honest, non-blocking: the probe genuinely failed, so do NOT
                     # claim a silent green check downstream. Pre-flight only -- the
@@ -149,10 +156,11 @@ def _check_llm_model(config: ScreenScribeConfig, model: str, model_type: str) ->
                 # Try to parse error message
                 try:
                     error_data = response.json()
-                    error_msg = error_data.get("error", {}).get("message", "")
-                    if "model" in error_msg.lower():
+                    error_msg = str(error_data.get("error", {}).get("message", ""))
+                    safe_error_msg = redact_urls_in_text(error_msg)
+                    if "model" in safe_error_msg.lower():
                         raise ModelValidationError(
-                            f"{model_type} model '{model}' unavailable: {error_msg}",
+                            f"{model_type} model '{model}' unavailable: {safe_error_msg}",
                             model_type=model_type,
                             model_name=model,
                         )

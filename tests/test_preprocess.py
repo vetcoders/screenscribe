@@ -515,8 +515,10 @@ def test_preprocess_default_output_skips_foreign_base(
     assert _snapshot(base) == before
 
 
-def test_preprocess_empty_base_dir_is_used(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """An empty ``demo_preprocess`` base directory is free and written in place."""
+def test_preprocess_empty_base_dir_is_skipped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An empty base may be another process's claim, so the bundle uses ``_2``."""
     runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
     base = tmp_path / "demo_preprocess"
     base.mkdir()
@@ -524,12 +526,13 @@ def test_preprocess_empty_base_dir_is_used(monkeypatch: pytest.MonkeyPatch, tmp_
     result = _run_preprocess(runner, video_path, None)
 
     assert result.exit_code == 0, result.output
-    assert _manifest_mode(base) == "preprocess"
-    assert not (tmp_path / "demo_preprocess_2").exists()
+    assert list(base.iterdir()) == []
+    assert _manifest_mode(tmp_path / "demo_preprocess_2") == "preprocess"
 
 
 def _assert_force_refused(result: Result) -> None:
-    normalized = " ".join(result.output.split())
+    borderless = "".join(" " if ch in "│╭╮╰╯─" else ch for ch in result.output)
+    normalized = " ".join(borderless.split())
     assert result.exit_code == 1, result.output
     assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
     assert "Traceback" not in result.output
@@ -580,6 +583,20 @@ def test_preprocess_force_refuses_foreign_file(
     _assert_force_refused(result)
     assert base.read_bytes() == b"a file named like the bundle"
     assert sorted(p.name for p in parent.iterdir()) == ["demo_preprocess"]
+
+
+def test_preprocess_force_refuses_empty_unowned_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    _forbid_pipeline(monkeypatch)
+    empty = tmp_path / "demo_preprocess"
+    empty.mkdir()
+
+    result = _run_preprocess(runner, video_path, None, "--force")
+
+    _assert_force_refused(result)
+    assert list(empty.iterdir()) == []
 
 
 def test_preprocess_force_overwrites_own_bundle_in_place(
@@ -731,6 +748,35 @@ def test_preprocess_slot_taken_after_allocation_is_reselected(
     assert raced == [slot_2]
     assert slot_2.read_bytes() == foreign
     assert _manifest_mode(tmp_path / "demo_preprocess_3") == "preprocess"
+
+
+def test_preprocess_empty_slot_claimed_after_allocation_is_reselected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A concurrent process's newly-created empty base is never shared."""
+    runner, video_path = _preprocess_harness(monkeypatch, tmp_path)
+    claimed = tmp_path / "demo_preprocess"
+
+    import screenscribe.cli as cli_module
+
+    real_allocator = cli_module._find_next_versioned_path
+    raced: list[Path] = []
+
+    def racing_allocator(base: Path, **kwargs: Any) -> tuple[Path, int | None]:
+        path, version = real_allocator(base, **kwargs)
+        if not raced and path == claimed:
+            claimed.mkdir()
+            raced.append(path)
+        return path, version
+
+    monkeypatch.setattr("screenscribe.cli._find_next_versioned_path", racing_allocator)
+
+    result = _run_preprocess(runner, video_path, None)
+
+    assert result.exit_code == 0, result.output
+    assert raced == [claimed]
+    assert list(claimed.iterdir()) == []
+    assert _manifest_mode(tmp_path / "demo_preprocess_2") == "preprocess"
 
 
 def test_preprocess_force_on_unwritable_own_bundle_fails_before_stt(
