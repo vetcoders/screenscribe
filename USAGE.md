@@ -879,6 +879,13 @@ source excerpt for each finding when available, review state, components,
 model proposals and evidence-frame references. The ZIP includes the same TODO,
 reviewed JSON, images, `transcript.txt` and `agent_manifest.json`.
 
+Within the ZIP, both the legacy `findings[].screenshot_path` and
+`screenshot_original` reference the same bundled original image by relative
+path. `screenshot_annotated` references a bundled annotated image when present.
+Source-report image paths are never carried into this ZIP JSON; when no image
+is bundled, its image-path fields are omitted. The standalone JSON export
+retains its existing source-report reference behavior.
+
 Narration and reviewer notes are the source of user intent. Later corrections,
 scope limits and retractions apply even when they occur outside a finding's
 timestamp. A model's summary, suggested fix and action items are proposals.

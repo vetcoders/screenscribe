@@ -7905,7 +7905,15 @@ async function exportReviewedZIP() {
             // Rejected findings (false alarms) do not ship in the bundle —
             // they are listed explicitly in the JSON's `rejected` section.
             if (normalizeVerdict(review.verdict) === 'rejected') continue;
-            const { screenshot, ...findingWithoutBase64 } = f;
+            // Source-workspace paths are not portable ZIP references. Rebuild
+            // every image alias below only after writing its actual ZIP member.
+            const {
+                screenshot,
+                screenshot_path: _sourceScreenshotPath,
+                screenshot_original: _sourceScreenshotOriginal,
+                screenshot_annotated: _sourceScreenshotAnnotated,
+                ...findingWithoutBase64
+            } = f;
             const annotations = review.annotations || [];
 
             const result = {
@@ -7980,8 +7988,10 @@ async function exportReviewedZIP() {
             // the file above is never written; pointing screenshot_original (and
             // the manifest) at screenshots/Fxx then made the reviewed JSON and
             // agent_manifest.json reference a MISSING file in the bundle. Relative
-            // path replaces the previous absolute screenshot_path leak.
+            // paths replace source-workspace references, including the legacy
+            // screenshot_path field used by older readers.
             if (screenshotWritten) {
+                result.screenshot_path = screenshotRelPath;
                 result.screenshot_original = screenshotRelPath;
             }
 

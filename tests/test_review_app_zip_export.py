@@ -282,6 +282,66 @@ def test_text_only_finding_does_not_reference_missing_screenshot() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "source_path",
+    ["01_ui_01-16.jpg", "screenshots/old.jpg", "https://example.com/old.jpg"],
+)
+def test_zip_rewrites_legacy_screenshot_path_to_bundled_original(source_path: str) -> None:
+    """Legacy and current readers must find the same real image in the archive."""
+    _run_export(
+        """
+        const reviewed = JSON.parse(files['report_reviewed_demo.json'].data);
+        const finding = reviewed.findings[0];
+        if (finding.screenshot_path !== 'screenshots/F01_ui_01-15.jpg')
+            throw new Error('source screenshot_path leaked: ' + finding.screenshot_path);
+        if (finding.screenshot_path !== finding.screenshot_original)
+            throw new Error('legacy and current screenshot aliases disagree');
+        for (const key of ['screenshot_path', 'screenshot_original', 'screenshot_annotated']) {
+            if (finding[key] && !(finding[key] in files))
+                throw new Error('dangling image reference: ' + key + '=' + finding[key]);
+        }
+        const manifest = JSON.parse(files['agent_manifest.json'].data);
+        if (manifest.findings[0].screenshot !== finding.screenshot_path)
+            throw new Error('legacy JSON and manifest disagree');
+        """,
+        findings=[
+            {
+                **_FINDINGS[0],
+                "screenshot_path": source_path,
+                "screenshot_original": "old-original.jpg",
+                "screenshot_annotated": "old-annotated.png",
+            }
+        ],
+    )
+
+
+def test_zip_drops_inherited_image_paths_when_no_image_is_bundled() -> None:
+    """A stale path is not evidence when the finding has no image bytes."""
+    _run_export(
+        """
+        const reviewed = JSON.parse(files['report_reviewed_demo.json'].data);
+        for (const finding of reviewed.findings) {
+            for (const key of ['screenshot_path', 'screenshot_original', 'screenshot_annotated']) {
+                if (key in finding)
+                    throw new Error('text-only finding retained source image path: ' + key);
+            }
+        }
+        const manifest = JSON.parse(files['agent_manifest.json'].data);
+        if (manifest.findings[0].screenshot !== null)
+            throw new Error('text-only manifest should have no screenshot');
+        """,
+        findings=[
+            {
+                **_TEXT_ONLY_FINDINGS[1],
+                "screenshot_path": "old.jpg",
+                "screenshot_original": "old-original.jpg",
+                "screenshot_annotated": "old-annotated.png",
+            }
+        ],
+        review_setup="reportState.findings = {f2: {verdict: 'accepted', annotations: []}};",
+    )
+
+
 # Three findings where f1 + f3 are human-merged (f1 is base by timestamp), f2
 # stays standalone. Routing must fold the merge into ONE deliverable entry.
 _MERGE_FINDINGS = [
@@ -377,6 +437,29 @@ def test_agent_manifest_folds_merged_group_to_single_entry() -> None:
             throw new Error('absorbed f3 must not leak into rejected[]: ' + JSON.stringify(rej));
         """,
         findings=_MERGE_FINDINGS,
+        review_setup=_MERGE_REVIEW_SETUP,
+    )
+
+
+def test_zip_merged_findings_rewrite_legacy_image_paths() -> None:
+    """Folding a merge must not revive the source screenshot filename."""
+    _run_export(
+        """
+        const reviewed = JSON.parse(files['report_reviewed_demo.json'].data);
+        if (reviewed.findings.length !== 2) throw new Error('merge was not folded');
+        for (const finding of reviewed.findings) {
+            if (!finding.screenshot_path || finding.screenshot_path !== finding.screenshot_original)
+                throw new Error('merged/standalone legacy alias missing or inconsistent');
+            for (const key of ['screenshot_path', 'screenshot_original', 'screenshot_annotated']) {
+                if (finding[key] && !(finding[key] in files))
+                    throw new Error('merged finding has dangling ' + key);
+            }
+        }
+        """,
+        findings=[
+            {**finding, "screenshot_path": f"old-{finding['id']}.jpg"}
+            for finding in _MERGE_FINDINGS
+        ],
         review_setup=_MERGE_REVIEW_SETUP,
     )
 
