@@ -611,7 +611,10 @@ Optional Anthropic fallback (skipped when unset): `ANTHROPIC_API_KEY` or `SCREEN
 SSE events: `token`, `tool_call`, `tool_result`, `done`, `error`. Text uses
 round-buffered delivery: the backend sends it after each provider round
 completes, then emits tool events. It does not deliver individual tokens as
-the provider generates them. Requests
+the provider generates them. Unexpected provider/tool failures return a
+generic error to the browser and model; exception details remain in server
+logs. Explicit configuration and tool-input validation messages remain
+available. Requests
 contain `message`, `history`, and an optional cursor bundle:
 `previous_response_id`, `previous_response_provider`,
 `previous_response_protocol`, `previous_response_host`. The cursor is reused

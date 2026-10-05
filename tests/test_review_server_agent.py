@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from screenscribe.agent.chat import AgentProvider, ProviderRound, format_sse
+from screenscribe.agent.chat import AgentChatError, AgentProvider, ProviderRound, format_sse
 from screenscribe.config import ScreenScribeConfig
 from screenscribe.review_server import create_review_app
 
@@ -201,6 +201,22 @@ def test_agent_chat_non_stream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     payload = response.json()
     assert payload["text"] == "HIGH: układ."
     assert payload["response_id"] == "resp_mock"
+
+
+def test_agent_chat_non_stream_does_not_expose_exception_details(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_detail = f"debug path: {tmp_path / 'private-source.py'}"
+
+    async def fail_collect(**_kwargs: Any) -> dict[str, Any]:
+        raise AgentChatError(private_detail)
+
+    monkeypatch.setattr("screenscribe.review_server.collect_agent_chat", fail_collect)
+    response = TestClient(_app(tmp_path)).post("/api/agent/chat", json={"message": "hi"})
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Review agent request failed. Check server logs."}
+    assert private_detail not in response.text
+    assert str(tmp_path) not in response.text
 
 
 def test_agent_chat_rejects_empty_message(tmp_path: Path) -> None:

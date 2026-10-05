@@ -145,3 +145,18 @@ def test_repo_tool_schema_does_not_claim_nonexistent_cli_flag() -> None:
     )
     assert "--repo" not in schema["description"]
     assert "programmatically" in schema["description"]
+
+
+def test_tool_failure_does_not_expose_private_exception_details(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    toolbelt = _toolbelt(repo_root=tmp_path)
+    private_detail = f"debug path: {tmp_path / 'private-source.py'}"
+
+    def fail_read(_path: str) -> dict[str, object]:
+        raise OSError(private_detail)
+
+    monkeypatch.setattr(toolbelt, "open_repo_file", fail_read)
+    result = toolbelt.execute("open_repo_file", {"path": "source.py"})
+    assert json.loads(result) == {"error": "Agent tool failed. Check server logs."}
+    assert private_detail not in result

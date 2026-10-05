@@ -311,8 +311,13 @@ async def stream_agent_chat(
                 yield frame
             return
         except Exception as exc:
-            last_error = redact_error_message(exc)
-            logger.warning("Agent provider %s failed: %s", provider.name, last_error)
+            logger.warning("Agent provider %s failed: %s", provider.name, redact_error_message(exc))
+            last_error = (
+                "Review agent requires a Responses API endpoint; the configured "
+                "LLM endpoint uses /v1/chat/completions."
+                if provider.protocol == "chat_completions"
+                else "Review agent request failed. Check server logs."
+            )
             if emitted:
                 # Retrying a whole turn after any visible token/tool frame would
                 # splice two providers' answers into one SSE response.
