@@ -1336,6 +1336,9 @@ def create_review_app(
                 message=payload.message,
                 history=payload.history,
                 previous_response_id=payload.previous_response_id,
+                previous_response_provider=payload.previous_response_provider,
+                previous_response_protocol=payload.previous_response_protocol,
+                previous_response_host=payload.previous_response_host,
             ):
                 yield frame
 
@@ -1354,6 +1357,9 @@ def create_review_app(
                 message=payload.message,
                 history=payload.history,
                 previous_response_id=payload.previous_response_id,
+                previous_response_provider=payload.previous_response_provider,
+                previous_response_protocol=payload.previous_response_protocol,
+                previous_response_host=payload.previous_response_host,
             )
         except AgentChatError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc

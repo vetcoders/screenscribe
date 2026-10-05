@@ -34,7 +34,9 @@ FIXTURE = Path(__file__).parent / "fixtures" / "agent_report_2026-09-15.json"
 
 
 def _load_fixture() -> dict[str, Any]:
-    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+    loaded = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    return loaded
 
 
 def _toolbelt() -> tuple[ReportToolbelt, dict[str, Any]]:
@@ -270,6 +272,9 @@ def test_stream_set_severity_round_trips_patch_in_tool_result(
     _drop_agent_env(monkeypatch)
     config = _xai_config()
     report = _load_fixture()
+    report["processing_provenance"] = {
+        "llm": {"host": "api.x.ai", "protocol": "responses", "provider": "xai"}
+    }
 
     async def _collect() -> str:
         return "".join(
