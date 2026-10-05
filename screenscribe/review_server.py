@@ -1452,7 +1452,9 @@ def create_review_app(
                 previous_response_host=payload.previous_response_host,
             )
         except AgentChatError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=502, detail="Review agent request failed. Check server logs."
+            ) from exc
 
     app.mount(
         "/",

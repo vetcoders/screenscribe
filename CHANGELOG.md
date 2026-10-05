@@ -2,6 +2,11 @@
 
 ## [0.1.20.dev0] - Unreleased
 
+- **Fixed: review-agent exception details stay in server logs.** Unexpected
+  provider and tool failures no longer expose exception text to SSE clients,
+  tool consumers or the non-streaming HTTP route. Configuration and explicit
+  tool-input validation still return readable messages.
+
 - **Fixed: development-tool dependency security updates.** The lockfile uses
   patched PyJWT, urllib3 and virtualenv releases. Semgrep's development floor
   and repository hook are aligned at 1.179.0, whose dependency range permits

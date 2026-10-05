@@ -555,6 +555,44 @@ def test_provider_fallback_stops_after_visible_primary_frames(
     assert "fallback-answer" not in body
     assert calls == {"primary": 2}
     assert "event: error" in body
+    assert "primary failed after output" not in body
+    assert "Review agent request failed. Check server logs." in body
+
+
+@pytest.mark.parametrize("exception_type", [RuntimeError, AgentChatError])
+def test_provider_failure_does_not_expose_private_exception_details(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exception_type: type[Exception]
+) -> None:
+    _drop_agent_env(monkeypatch)
+    private_detail = f"debug path: {tmp_path / 'private-source.py'}"
+
+    async def fail_round(_provider: AgentProvider, _payload: dict[str, Any]) -> ProviderRound:
+        raise exception_type(private_detail)
+
+    monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fail_round)
+    report: dict[str, Any] = {
+        "findings": [],
+        "processing_provenance": _xai_processing_provenance(),
+    }
+
+    async def collect() -> str:
+        return "".join(
+            [
+                frame
+                async for frame in stream_agent_chat(
+                    config=_xai_config(),
+                    report=report,
+                    tools=ReportToolbelt(report),
+                    message="hi",
+                )
+            ]
+        )
+
+    body = asyncio.run(collect())
+    assert "event: error" in body
+    assert "Review agent request failed. Check server logs." in body
+    assert private_detail not in body
+    assert str(tmp_path) not in body
 
 
 def test_provider_fallback_still_runs_before_any_primary_frame(

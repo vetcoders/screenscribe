@@ -8,11 +8,14 @@ Read tools inspect the loaded report. Write tools do **not** touch
 from __future__ import annotations
 
 import json
+import logging
 import math
 from pathlib import Path
 from typing import Any
 
 from ..work_item import VERDICT_VALUES
+
+logger = logging.getLogger(__name__)
 
 _MAX_OPEN_FILE_BYTES = 80_000
 _MAX_TRANSCRIPT_HITS = 80
@@ -382,7 +385,8 @@ class ReportToolbelt:
             else:
                 result = {"error": f"Unknown tool: {name}"}
         except Exception as exc:
-            result = {"error": str(exc)}
+            logger.warning("Agent tool %s failed: %s", name, exc)
+            result = {"error": "Agent tool failed. Check server logs."}
         return json.dumps(result, ensure_ascii=False)
 
     def list_findings(self, filter_text: str = "") -> dict[str, Any]:
