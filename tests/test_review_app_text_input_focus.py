@@ -90,6 +90,9 @@ def test_onblur_has_ready_guard_against_instant_blur() -> None:
     )
     # The arming callback must flip the flag true after focusing.
     assert re.search(r"ready\s*=\s*true", block), "`ready` is never set true after focus"
+    assert "this.toolbarInteraction" in onblur, (
+        "onBlur does not preserve a text draft while the annotation toolbar takes focus"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -261,3 +264,40 @@ def test_empty_blur_after_ready_discards_draft() -> None:
         assertTrue(tool.annotations.length === 0, 'empty draft must not create an annotation');
         """
     )
+
+
+def test_toolbar_focus_keeps_draft_and_commits_new_picker_colour() -> None:
+    """Opening the colour picker must not blur-commit with the previous colour."""
+    _run_js(
+        """
+        const tool = makeTool('#bc1515');
+        const draft = tool.beginTextDraft({ x: 0.25, y: 0.35 });
+        const input = draft.input;
+        flushRaf();
+        input.value = 'keep editing';
+
+        tool.toolbarInteraction = true;
+        input.dispatch('blur');
+        assertTrue(tool.textDraft !== null, 'toolbar focus committed the draft too early');
+        assertTrue(tool.annotations.length === 0, 'old-colour annotation committed on picker focus');
+
+        tool.toolbarInteraction = false;
+        tool.color = '#22cc44';
+        tool.applyColorToActiveDraft();
+        input.dispatch('blur');
+        assertTrue(tool.annotations.length === 1, 'draft was not committed after picker interaction');
+        assertTrue(tool.annotations[0].color === '#22cc44',
+            'committed text kept the pre-picker colour: ' + tool.annotations[0].color);
+        """
+    )
+
+
+def test_viewport_sync_reinserts_and_repositions_active_text_draft() -> None:
+    source = REVIEW_APP_JS.read_text(encoding="utf-8")
+    viewport = source[
+        source.index("const onViewportChange") : source.index(
+            "window.addEventListener('scroll'", source.index("const onViewportChange")
+        )
+    ]
+    assert "this.svg.appendChild(this.textDraft.el)" in viewport
+    assert "this.positionTextInput(this.textDraft.input, this.textDraft.pos)" in viewport

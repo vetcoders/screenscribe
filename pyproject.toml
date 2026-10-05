@@ -1,6 +1,6 @@
 [project]
 name = "screenscribe"
-version = "0.1.19"
+version = "0.1.20.dev0"
 description = "Turn screen recordings into actionable engineering reports — narrated screencast review (STT → LLM → VLM)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -33,6 +33,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.32.0",
     "python-multipart>=0.0.12",
+    "websockets>=17.1",
 ]
 
 [project.urls]
@@ -42,6 +43,9 @@ Documentation = "https://github.com/vetcoders/screenscribe/blob/main/README.md"
 Showcase = "https://github.com/vetcoders/screenscribe/blob/main/docs/SHOWCASE.md"
 Issues = "https://github.com/vetcoders/screenscribe/issues"
 Changelog = "https://github.com/vetcoders/screenscribe/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40.0"]
 
 [project.scripts]
 screenscribe = "screenscribe.bootstrap:main"
@@ -63,9 +67,9 @@ dev = [
     "bandit[toml]>=1.7.0",
     # Security static analysis: the ss-verify semgrep gate is fail-closed, so the
     # scanner must resolve via `uv run` in every dev/CI env. Pinned floor tracks
-    # the .pre-commit-config.yaml hook (rev v1.146.0) so gate + pre-commit enforce
+    # the .pre-commit-config.yaml hook (rev v1.179.0) so gate + pre-commit enforce
     # the SAME ruleset.
-    "semgrep>=1.146.0",
+    "semgrep>=1.179.0",
     "types-pyyaml>=6.0.0",
     "detect-secrets>=1.5.0",
     "playwright>=1.60.0",

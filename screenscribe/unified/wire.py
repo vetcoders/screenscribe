@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..api_utils import is_chat_completions_endpoint
+from ..api_utils import is_chat_completions_endpoint, responses_reasoning_options
 from ..image_utils import encode_image_base64, get_media_type
 from ._console import console
 
@@ -72,14 +72,19 @@ def _build_unified_payload(
             }
         )
 
-    reasoning: dict[str, str] = {"summary": "auto"}
-    if reasoning_effort:
-        reasoning["effort"] = reasoning_effort
     payload = {
         "model": model,
         "input": [{"role": "user", "content": content_responses}],
-        "reasoning": reasoning,
     }
+    # None is the unchanged vision default; an empty text effort explicitly
+    # means this custom provider's reasoning support is unverified.
+    reasoning = (
+        {"summary": "auto"}
+        if reasoning_effort is None
+        else responses_reasoning_options(endpoint, reasoning_effort)
+    )
+    if reasoning is not None:
+        payload["reasoning"] = reasoning
     # Only chain when vision and LLM endpoints are the same provider.
     if previous_response_id and same_provider:
         payload["previous_response_id"] = previous_response_id

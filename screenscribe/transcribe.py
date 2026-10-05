@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from rich.console import Console
@@ -9,6 +10,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from .api_utils import retry_request
 from .config import LIBRAXIS_STT_ENDPOINT
+from .providers.xai import transcribe_file_xai
 
 # Value types and timeline helpers live in the leaf ``transcribe_types`` module.
 # They are re-exported here (``X as X``) so the ~35 consumers importing them from
@@ -79,6 +81,105 @@ MIME_TYPES = {
     ".flac": "audio/flac",
     ".webm": "audio/webm",
 }
+
+
+# (endpoint URL, model) pairs whose server refused ``response_format=verbose_json``
+# with HTTP 400. Whisper-family models return per-segment timing under
+# ``verbose_json``; OpenAI's ``gpt-transcribe`` / ``gpt-4o-transcribe`` family
+# accepts only ``json`` or ``text`` and rejects the request outright. The first
+# refusal is retried once with ``json`` and remembered here for the rest of the
+# process, so a silence-aware chunked run (30+ chunks) pays the rejected
+# request once, not once per chunk. Process-local by design: a different
+# endpoint or model starts from ``verbose_json`` again.
+_VERBOSE_JSON_REFUSED: set[tuple[str, str]] = set()
+
+# --- STT model capability table ----------------------------------------------
+# Model-name prefixes (lower-cased) whose servers accept only ``json``/``text``
+# for ``response_format`` and reject ``verbose_json`` with HTTP 400. Known
+# members skip the rejected request entirely; every other model (whisper family,
+# vendor-specific names) starts from ``verbose_json`` and relies on the 400
+# fallback above. Extend here when a provider documents a new json-only family.
+STT_JSON_ONLY_MODEL_PREFIXES: tuple[str, ...] = (
+    "gpt-transcribe",
+    "gpt-4o-transcribe",
+    "gpt-4o-mini-transcribe",
+)
+
+
+def preferred_stt_response_format(stt_model: str) -> str:
+    """Return the richest ``response_format`` the model is known to accept.
+
+    ``verbose_json`` (per-segment timing + decode confidence) for whisper-family
+    and unknown models; ``json`` for the OpenAI ``gpt-*-transcribe`` family, which
+    rejects ``verbose_json`` outright.
+    """
+    normalized = (stt_model or "").strip().lower()
+    if normalized.startswith(STT_JSON_ONLY_MODEL_PREFIXES):
+        return "json"
+    return "verbose_json"
+
+
+def _server_rejects_response_format(error: httpx.HTTPStatusError) -> bool:
+    """True when a 400 names ``response_format`` as the unsupported parameter.
+
+    Accepts both the OpenAI envelope (``{"error": {"param": "response_format",
+    ...}}``) and gateways that flatten it to a bare ``message``. Any other 400
+    (bad language, oversized file, ...) is left to the caller untouched.
+    """
+    if error.response.status_code != 400:
+        return False
+    try:
+        body: Any = error.response.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        return "response_format" in (error.response.text or "")
+    detail = body.get("error", body)
+    if not isinstance(detail, dict):
+        return "response_format" in str(detail)
+    if detail.get("param") == "response_format":
+        return True
+    return "response_format" in str(detail.get("message", ""))
+
+
+def _is_xai_endpoint(stt_endpoint: str | None) -> bool:
+    """True when the STT endpoint host is xAI (``api.x.ai``), whose wire differs."""
+    if not stt_endpoint:
+        return False
+    try:
+        host = (urlsplit(stt_endpoint).hostname or "").lower()
+    except ValueError:
+        return False
+    return host == "x.ai" or host.endswith(".x.ai")
+
+
+def _transcribe_via_xai(
+    audio_data: bytes,
+    filename: str,
+    *,
+    content_type: str | None,
+    language: str,
+    api_key: str | None,
+    stt_endpoint: str,
+) -> TranscriptionResult:
+    """Route one payload to ``providers.xai`` (no ``model``/``response_format``)."""
+    if not audio_data:
+        raise ValueError("Audio payload is empty")
+    if not api_key:
+        raise ValueError(
+            "API key required for cloud STT. Set SCREENSCRIBE_API_KEY, "
+            "run `screenscribe config setup`, or use --local for local STT."
+        )
+    result = transcribe_file_xai(
+        audio_data,
+        filename,
+        api_key=api_key,
+        language=language or None,
+        endpoint=stt_endpoint,
+        content_type=_normalize_content_type(filename, content_type),
+    )
+    console.print(f"[green]Transcription complete:[/] {len(result.segments)} segments")
+    return result
 
 
 def _resolve_stt_url(use_local: bool, stt_endpoint: str | None) -> str:
@@ -198,26 +299,49 @@ def _request_transcription_payload(
     is_local_endpoint = url.startswith("http://127.0.0.1") or url.startswith("http://localhost")
     field_name = "audio" if is_local_endpoint else "file"
     files = {field_name: (filename, audio_data, mime_type)}
-    data = {
-        "model": stt_model,
-        "language": language,
-        "response_format": response_format,
-    }
     headers: dict[str, str] = {}
     if api_key and not use_local and not is_local_endpoint:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    def do_transcribe() -> httpx.Response:
+    def post_with(fmt: str) -> httpx.Response:
+        data = {
+            "model": stt_model,
+            "language": language,
+            "response_format": fmt,
+        }
         with httpx.Client(timeout=600.0) as client:
             response = client.post(url, files=files, data=data, headers=headers)
             response.raise_for_status()
             return response
 
-    response = retry_request(
-        do_transcribe,
-        max_retries=3,
-        operation_name="STT transcription",
-    )
+    effective_format = response_format
+    if effective_format == "verbose_json" and (
+        (url, stt_model) in _VERBOSE_JSON_REFUSED
+        or preferred_stt_response_format(stt_model) == "json"
+    ):
+        effective_format = "json"
+
+    try:
+        response = retry_request(
+            lambda: post_with(effective_format),
+            max_retries=3,
+            operation_name="STT transcription",
+        )
+    except httpx.HTTPStatusError as exc:
+        if effective_format != "verbose_json" or not _server_rejects_response_format(exc):
+            raise
+        # A 400 is not retriable, so this is the first and only rejected request
+        # for this (endpoint, model). Downgrade once and remember it.
+        _VERBOSE_JSON_REFUSED.add((url, stt_model))
+        console.print(
+            f"[yellow]STT model {stt_model} rejects response_format=verbose_json; "
+            "retrying with json (no per-segment timing, timeline will be synthetic)[/]"
+        )
+        response = retry_request(
+            lambda: post_with("json"),
+            max_retries=3,
+            operation_name="STT transcription",
+        )
     payload = response.json()
     if not isinstance(payload, dict):
         raise RuntimeError("STT API returned unexpected payload shape")
@@ -237,6 +361,15 @@ def transcribe_audio_bytes(
     response_format: str = "json",
 ) -> TranscriptionResult:
     """Transcribe in-memory audio payloads, suitable for browser uploads."""
+    if not use_local and _is_xai_endpoint(stt_endpoint):
+        return _transcribe_via_xai(
+            audio_data,
+            filename,
+            content_type=content_type,
+            language=language,
+            api_key=api_key,
+            stt_endpoint=stt_endpoint or "",
+        )
     payload = _request_transcription_payload(
         audio_data,
         filename,
@@ -295,6 +428,15 @@ def transcribe_audio(
         with open(audio_path, "rb") as handle:
             audio_data = handle.read()
 
+        if not use_local and _is_xai_endpoint(stt_endpoint):
+            return _transcribe_via_xai(
+                audio_data,
+                audio_path.name,
+                content_type=None,
+                language=language,
+                api_key=api_key,
+                stt_endpoint=stt_endpoint or "",
+            )
         payload = _request_transcription_payload(
             audio_data,
             audio_path.name,

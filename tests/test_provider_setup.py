@@ -7,6 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 import screenscribe.cli as cli
+from screenscribe.account_auth import AccountTokens, store_account_tokens
 from screenscribe.cli import app
 from screenscribe.config import (
     LIBRAXIS_API_BASE,
@@ -22,6 +23,47 @@ runner = CliRunner()
 def _config_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     return tmp_path / ".config" / "screenscribe" / "config.env"
+
+
+def test_xai_setup_uses_signed_in_account_without_an_api_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _config_path(monkeypatch, tmp_path)
+    store_account_tokens(
+        "xai", AccountTokens.from_token_response({"access_token": "account-bearer"})
+    )
+
+    result = runner.invoke(app, ["config", "setup"], input="4\ny\n")
+
+    assert result.exit_code == 0, result.output
+    assert "API key:" not in result.output
+    assert "account-bearer" not in result.output
+    config = ScreenScribeConfig()
+    config._load_from_file(path)
+    assert config.provider == "xai"
+    assert config.api_key == ""
+    assert config.stt_api_key == config.llm_api_key == config.vision_api_key == ""
+    assert config.stt_endpoint == "https://api.x.ai/v1/stt"
+    assert config.llm_endpoint == config.vision_endpoint == "https://api.x.ai/v1/responses"
+    assert config.get_stt_api_key() == "account-bearer"
+    assert config.get_llm_api_key() == "account-bearer"
+    assert config.validate() == []
+
+
+def test_xai_setup_can_choose_an_api_key_over_a_signed_in_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _config_path(monkeypatch, tmp_path)
+    store_account_tokens(
+        "xai", AccountTokens.from_token_response({"access_token": "account-bearer"})
+    )
+
+    result = runner.invoke(app, ["config", "setup"], input="4\nn\nxai-fixture-key\n")
+
+    assert result.exit_code == 0, result.output
+    config = ScreenScribeConfig()
+    config._load_from_file(path)
+    assert config.get_llm_api_key() == "xai-fixture-key"
 
 
 def test_libraxis_preset_is_coherent() -> None:

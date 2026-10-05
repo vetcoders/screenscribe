@@ -5,12 +5,16 @@
         <svg id="lightbox-svg" class="lightbox-annotation-svg"></svg>
     </div>
     <div id="lightbox-toolbar" class="lightbox-toolbar" style="display: none;" role="toolbar" aria-label="Annotation tools">
+        <button type="button" class="tool-btn" data-tool="select" data-i18n="toolSelect">{t_tool_select}</button>
         <button type="button" class="tool-btn" data-tool="pen" data-i18n="toolPen">{t_tool_pen}</button>
         <button type="button" class="tool-btn" data-tool="rect" data-i18n="toolRect">{t_tool_rect}</button>
         <button type="button" class="tool-btn" data-tool="arrow" data-i18n="toolArrow">{t_tool_arrow}</button>
         <button type="button" class="tool-btn" data-tool="text" data-i18n="toolText">{t_tool_text}</button>
         <input type="color" class="color-picker" value="#ffffff" data-default-token="--annotation-color-default">
+        <input type="range" class="stroke-width-input" min="0.002" max="0.03" step="0.001" value="0.008" data-i18n-title="propStroke" title="{t_prop_stroke}">
+        <input type="range" class="font-size-input" min="0.012" max="0.18" step="0.002" value="0.036" hidden data-i18n-title="propFontSize" title="{t_prop_font_size}">
         <button type="button" class="undo-btn" data-i18n="toolUndo">{t_tool_undo}</button>
+        <button type="button" class="delete-btn" data-i18n="toolDelete">{t_tool_delete}</button>
         <button type="button" class="clear-btn" data-i18n="toolClear">{t_tool_clear}</button>
         <button type="button" class="done-btn" data-action="close-lightbox" data-i18n="toolDone">{t_tool_done}</button>
     </div>

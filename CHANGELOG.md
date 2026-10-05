@@ -1,6 +1,176 @@
 # Changelog
 
-## Unreleased
+## [0.1.20.dev0] - Unreleased
+
+- **Fixed: review-agent exception details stay in server logs.** Unexpected
+  provider and tool failures no longer expose exception text to SSE clients,
+  tool consumers or the non-streaming HTTP route. Configuration and explicit
+  tool-input validation still return readable messages.
+
+- **Fixed: development-tool dependency security updates.** The lockfile uses
+  patched PyJWT, urllib3 and virtualenv releases. Semgrep's development floor
+  and repository hook are aligned at 1.179.0, whose dependency range permits
+  the patched PyJWT release; the local ruleset and fail-closed gates remain
+  enforced.
+
+- **Changed: reasoning-effort default is now per provider preset; `minimal`
+  removed, `xhigh`/`max` added.** `SCREENSCRIBE_LLM_REASONING_EFFORT` accepts
+  `none|low|medium|high|xhigh|max`. The CLI no longer accepts `minimal`: it
+  warns and falls back like any other unknown value, with no deprecation
+  shim. When no effort is configured, the default
+  is resolved from the provider preset: `low` for xAI (which rejects `none`
+  with a 400), `none` for LibraxisAI and OpenAI. Unknown custom providers omit
+  the option until explicitly configured.
+  Invalid configured values fall back to that provider default instead of
+  blindly `medium`, and `config setup` writes the preset's default into the
+  generated `config.env` explicitly, so a fresh setup never starts with a
+  value its provider rejects. Configs that explicitly set an effort (e.g.
+  `medium`) behave exactly as before.
+
+- **Added: `SCREENSCRIBE_LLM_REASONING_EFFORT=none`.** `none` is now a legal
+  reasoning-effort value alongside `low|medium|high`; it turns
+  reasoning off on providers that support it (OpenAI Responses, LibraxisAI)
+  and is sent to the wire verbatim as `reasoning.effort = "none"`.
+
+- **Added: annotation objects in the HTML report editor can be selected, moved,
+  resized, recoloured, and deleted.** Each annotation now has a stable `id`
+  (legacy saves without one are migrated on load). The lightbox toolbar gains
+  Select / Delete plus stroke and font-size controls; Delete/Backspace removes
+  the active object. Overlay position re-reads `getActualImageRect` on every
+  pointer sample and on scroll/resize so a rectangle drawn next to on-screen
+  text no longer lands in a different place after the player layout shifts.
+- **Added: transcript source abstraction for `review` — audio STT or frame OCR.**
+  New flags `--transcript-source auto|audio|ocr`, `--no-audio` (alias for
+  `ocr`), and `--frame-interval <s>` (default 5). The transcript is now an
+  abstraction over where timestamped segments come from: the classic STT path
+  (`audio`, unchanged) or VLM OCR of frames taken every N seconds (`ocr`),
+  where visually identical frames are deduplicated before any paid call and
+  every surviving frame with readable text becomes one segment in the exact
+  STT shape (`start`, `end`, `text`). The default `auto` probes each video and
+  routes silent recordings to OCR, so a recording without an audio track now
+  reaches semantic analysis and the report instead of dying at the
+  "has no audio track" gate; an explicit `--transcript-source audio` keeps
+  that readable fail-fast error. `--prompt` instructions reach the OCR stage
+  and all analysis stages, OCR results are cached per frame content hash, and
+  the rest of the pipeline (semantic pre-filter, screenshots, unified VLM
+  analysis, reports, response chaining) works unchanged on OCR segments.
+- **Added: `review --preset` — analysis presets for new domains.** A preset
+  bundles the keyword dictionary, the finding categories, and a prompt
+  fragment (who the viewer is, what counts as a finding). Shipped presets:
+  `programming` (the default — bit-for-bit the historical behavior), `casual`
+  (informal product feedback), `medical`, and `veterinary` (clinical
+  consultations, procedures, and clinic systems such as Vista, with
+  `finding/observation/risk/followup/other` categories and Polish+English
+  dictionaries). `--preset custom` builds the profile from your own
+  `--keywords-file` (its top-level keys become the categories) and fails with
+  instructions when the flag is missing. Keyword priority is now
+  `--keywords-file` > global file > preset dictionary > built-in default;
+  non-default presets record `preset` (name + categories) in the JSON report
+  and their category badges render in the HTML report.
+- **Added: review-agent chat on the report server.** `POST /api/agent/chat/stream`
+  (SSE) and `POST /api/agent/chat` continue a conversation about the loaded
+  report with tools (`list_findings`, `get_transcript`, `seek`, `show_frame`,
+  `get_report_summary`, optional `open_repo_file`). Primary provider is the
+  configured LLM Responses endpoint (`previous_response_id` chaining); Anthropic
+  is an optional fallback extra. Screen recordings are treated as secrets:
+  `SCREENSCRIBE_AGENT_EGRESS` defaults to `deny` for `trust=external` hosts.
+  A successful semantic request records `processing_provenance.llm` and
+  establishes processor trust for that report; configured endpoints alone
+  do not. Finding response IDs remain evidence, not a shared chat cursor.
+- **Added: floating screenscribe agent chat on the HTML review report.** A
+  collapsed 『s』 chip docks in the corner; expanding it places a draggable
+  panel beside the player (never over it) and streams `POST /api/agent/chat/stream`.
+  Offline file:// reports show the supported `review` / `analyze` commands instead of a console
+  error. Tool calls `seek` and `show_frame` jump the player and highlight the
+  matching finding. Cut `w1-05-agent-floating`.
+
+- **Fixed: 『s』 agent panel send, coverage, and empty error bubbles.** Enter
+  sends (Shift+Enter keeps a newline; IME composition does not send);
+  overlapping restored positions are discarded and the panel is recomputed
+  beside the player (or docks as a side sheet that shrinks `.app-container`
+  when no clear spot fits); an error turn paints the assistant bubble instead
+  of leaving an empty one.
+  A recorded successful semantic host is `trust=processor` and is kept under
+  that default. `SCREENSCRIBE_AGENT_PRIMARY_TRUST=external` remains
+  the opt-out; a fallback on a different host (e.g. Anthropic) is still skipped
+  under `deny`. Chat cursors bind the actual provider/protocol/host and are
+  cleared on fallback/error; every turn keeps the report seed/instructions.
+- **Added: review-patch write tools on the review agent.** The agent can
+  `set_verdict`, `set_severity`, `edit_finding`, and `add_finding`, or
+  `propose_review` a plan for a broad request. Tools never write `report.json`;
+  they return a `review_patch` / `review_plan` in the existing SSE `tool_result`
+  envelope so the browser stays the single writer (existing `/api/save` lock and
+  Undo/Reset). `review_finding_state` hydrates additive `summary_override` and
+  `category_override`. Auth is unchanged: empty API key + signed-in xAI account
+  bearer is enough. `merge_findings` / `unmerge_finding` return
+  `{"unsupported": true}` until the panel grows a patch-callable merge.
+- **Added: the 『s』 panel applies agent review patches and plans.** A
+  `review_patch` in `tool_result` updates the finding card through the existing
+  verdict/severity/notes setters, marks the report modified, and saves with the
+  same `Zapisz recenzję` path (`resetGeneration` included). A `review_plan`
+  renders per-op checkboxes with Apply/Cancel; Apply posts “Zastosowano N z M”
+  into the chat. Offline `file://` reports announce that patches cannot be saved
+  and never apply silently. Save 409/network failures show a Retry instead of
+  looping. Merge ops stay unsupported. Cut `w2-02-review-panel`.
+
+- **Fixed: review and agent handoffs preserve source authority.** TODO and ZIP
+  exports include the complete timestamped source, per-finding source evidence,
+  reviewer state/notes and separate model proposals. OCR is labelled screen text,
+  never narrator instructions. Applied agent edits preserve the exact user
+  request in notes and confirm only after save. Summary/category/action overrides
+  survive reload, merges and export; empty saved overrides preserve the generated
+  proposal. Verdict controls restore their checked state after reload.
+- **Fixed: OCR and resume bind effective inputs.** Private OCR cache keys include
+  frame/model/endpoint/prompt; malformed entries are misses and temporary frames
+  are removed. Checkpoint v3 binds source/interval/preset/vocabulary/prompt.
+  Preset category IDs are validated before paid work and custom category counts
+  include explicit zeros without replacing legacy JSON summary keys.
+- **Fixed: review interaction and agent streaming.** Annotation moves preserve
+  geometry at image edges, legacy IDs remain stable, text overlays track layout,
+  and manual captures wait for seeking. The panel fits narrow screens, accepts
+  CRLF SSE and clears stale cursors. Responses tool-call IDs and Anthropic
+  continuations preserve their protocol contracts; fallback never combines a
+  partial response from one provider with another.
+- **Fixed: repeated xAI agent turns keep their policy and context.** xAI rejects
+  top-level instructions alongside a response cursor, so its agent uses full
+  history without `previous_response_id`, including output items/tool results
+  on tool continuations. Other Responses providers keep bound stateful cursors.
+- **Fixed: manual captures survive a server restart and another save.** The
+  browser preserves the image path even while it has live pixels, and a fresh
+  server restores disk-backed markers/results before saving. Legacy captures
+  recover only their exact JPEG/PNG filename within `manual_frames/`; startup
+  does not rewrite JSON. Persisted response IDs remain evidence and do not
+  become a shared conversation cursor.
+- **Fixed: signed-in xAI setup can use its account bearer without a pasted key.**
+  API-key setup remains available through the same wizard.
+- **Fixed: TTS and live STT account access follows the actual destination.**
+  Custom TTS/WebSocket endpoints cannot inherit an xAI account bearer from
+  the REST STT configuration; explicit provider-key fallback is preserved.
+  Live STT status and device-code transport errors also redact URL credentials
+  and query values.
+
+- **Internal: refresh runtime and development dependencies.** Updated the lockfile
+  to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.
+  Normalized the development version to PEP 440's `0.1.20.dev0` spelling so
+  project metadata, installed metadata, and this changelog agree.
+
+- **Internal: bandit pre-commit hook runs from the project environment.** The
+  remote `PyCQA/bandit` hook's pbr-based build ran `git describe` against our
+  tags from inside git hooks and broke on the non-PEP440 recovery tag; the
+  hook is now `repo: local` and calls the same `uv run bandit` used by
+  `make verify`.
+
+- **Fixed: STT models that reject `response_format=verbose_json` no longer abort
+  the review.** The file transcription path (`review`, `transcribe`, and every
+  chunk of a long recording) asks for `verbose_json` to get per-segment timing.
+  OpenAI's `gpt-transcribe` / `gpt-4o-transcribe` family answers HTTP 400
+  (`param=response_format`, `code=unsupported_value`), which previously killed
+  the run at chunk 1/32 with "Speech-to-text failed (HTTP 400)". Screenscribe
+  now retries that one request with `json`, marks the resulting timeline as
+  synthetic, and remembers the refusal per endpoint+model for the rest of the
+  process so a chunked run does not repeat the rejected request per chunk.
+  Whisper-family models keep `verbose_json` and their real segment timing; any
+  other 400 still fails loudly.
 
 - **Fixed: model-validation messages redact provider-supplied URLs.** Both
   streaming failure bodies and model-unavailable errors remove URL credentials
@@ -83,20 +253,16 @@
   the default LLM reasoned in a loop for 11-20 minutes, emitted no text and
   ended with `response.failed`. All text-LLM Responses API requests (pre-filter,
   text-only finding analysis, executive summaries, LLM merge) now send
-  `reasoning.effort`, default `medium`,
-  configurable with the new `SCREENSCRIBE_LLM_REASONING_EFFORT`
-  (`minimal`/`low`/`medium`/`high`); Chat Completions endpoints and the vision
+  `reasoning.effort` using the provider default (`low` for xAI, `none` for
+  verified OpenAI/Libraxis presets; omitted for unconfigured custom providers),
+  configurable with `SCREENSCRIBE_LLM_REASONING_EFFORT`
+  (`none`/`low`/`medium`/`high`/`xhigh`/`max`); Chat Completions endpoints and the vision
   request are unchanged. An in-stream provider error is retried only if it
   arrives before the model streamed any output, so such a failure is reported
   once (with a hint to lower the effort) instead of being retried for close to
   an hour. Non-streaming summary and merge calls also treat a 200 response with
   status `failed` or `incomplete` as a failure (local summary / merge skipped)
   instead of using its partial text.
-- **Internal: bandit pre-commit hook runs from the project environment.** The
-  remote `PyCQA/bandit` hook's pbr-based build ran `git describe` against our
-  tags from inside git hooks and broke on the non-PEP440 recovery tag; the
-  hook is now `repo: local` and calls the same `uv run bandit` used by
-  `make verify`.
 
 ## [0.1.19] - 2026-08-23
 

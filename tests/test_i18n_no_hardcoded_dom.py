@@ -17,6 +17,7 @@ SURFACE_JS = (
     SCRIPTS / "review_app.js",
     SCRIPTS / "analyze_dashboard.js",
     SCRIPTS / "video_player.js",
+    SCRIPTS / "agent_panel.js",
 )
 ANCHOR_SOURCES = (
     (ASSETS / "templates/shell.html", "review"),
@@ -27,6 +28,7 @@ ANCHOR_SOURCES = (
     (ASSETS / "templates/partials/capture_panel.html", "analyze"),
     (ASSETS / "templates/partials/voice_notes_panel.html", "analyze"),
     (ASSETS / "templates/partials/export_panel.html", "analyze"),
+    (ASSETS / "templates/partials/lightbox.html", "review"),
     (ASSETS / "templates/partials/frame_modal.html", "analyze"),
 )
 

@@ -10,6 +10,7 @@ import webbrowser as webbrowser
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import typer
 import typer.rich_utils as _typer_rich_utils
 from rich.console import Console
@@ -28,8 +29,10 @@ from .audio import (
 # the callers read them via cli.<name>).
 from .audio import extract_audio as extract_audio
 from .audio import get_video_duration as get_video_duration
+from .audio import has_audio_stream as has_audio_stream
 from .audio import require_audio_stream as require_audio_stream
 from .audio import tail_is_silent as tail_is_silent
+from .cli_auth import auth_app
 from .cli_estimate import (
     ESTIMATE_SEMANTIC_PER_DETECTION as ESTIMATE_SEMANTIC_PER_DETECTION,
 )
@@ -97,6 +100,7 @@ from .cli_serve import (
     _serve_report as _serve_report,
 )
 from .config import ScreenScribeConfig
+from .frame_ocr import transcribe_video_ocr as transcribe_video_ocr
 from .keywords import (
     CATEGORIES,
     GLOBAL_KEYWORDS_PATH,
@@ -104,6 +108,10 @@ from .keywords import (
     save_default_keywords,
 )
 from .preprocess import write_preprocess_bundle
+
+# xAI text-to-speech and the live STT websocket clients. Re-exported under the
+# cli namespace so tests patch screenscribe.cli.<name> like the other transports.
+from .providers.xai import synthesize_speech_xai as synthesize_speech_xai
 
 # Explicit re-exports: review_pipeline calls these through the cli module
 # (cli.print_report / cli.save_enhanced_json_report) so they stay the patch
@@ -118,9 +126,16 @@ from .semantic_filter import semantic_prefilter as semantic_prefilter
 # Explicit re-export: the audio/STT guards in cli_messages and (next) the
 # review pipeline read transcribe_audio via cli.transcribe_audio, and tests
 # patch screenscribe.cli.transcribe_audio.
+from .stt_stream import stream_client_for_endpoint as stream_client_for_endpoint
 from .transcribe import filter_hallucinated_segments as filter_hallucinated_segments
 from .transcribe import transcribe_audio as transcribe_audio
 from .transcribe import transcribe_audio_chunked as transcribe_audio_chunked
+from .transcript_sources import (
+    normalize_transcript_source as normalize_transcript_source,
+)
+from .transcript_sources import (
+    resolve_transcript_source as resolve_transcript_source,
+)
 from .validation import APIKeyError, ModelValidationError, validate_models
 
 # Legacy imports kept for backwards compatibility (not used in unified pipeline)
@@ -461,6 +476,35 @@ def review(
             help="Use local STT server instead of LibraxisAI cloud",
         ),
     ] = False,
+    transcript_source: Annotated[
+        str,
+        typer.Option(
+            "--transcript-source",
+            help=(
+                "Where transcript segments come from: 'auto' (audio STT when an "
+                "audio track exists, frame OCR otherwise), 'audio' (STT, requires "
+                "an audio track), 'ocr' (VLM OCR of frames, no audio needed)"
+            ),
+        ),
+    ] = "auto",
+    no_audio: Annotated[
+        bool,
+        typer.Option(
+            "--no-audio",
+            help=(
+                "Alias for the OCR transcript source: skip audio/STT entirely "
+                "and build the transcript from OCR'd frames"
+            ),
+        ),
+    ] = False,
+    frame_interval: Annotated[
+        float,
+        typer.Option(
+            "--frame-interval",
+            min=0.5,
+            help="Seconds between frames for the OCR transcript source",
+        ),
+    ] = 5.0,
     vision: Annotated[
         bool,
         typer.Option(
@@ -515,6 +559,17 @@ def review(
             dir_okay=False,
         ),
     ] = None,
+    preset: Annotated[
+        str,
+        typer.Option(
+            "--preset",
+            help=(
+                "Analysis preset: programming (default), casual, medical, veterinary, "
+                "or custom. A preset switches the keyword dictionary, the finding "
+                "categories, and the analysis focus. 'custom' requires --keywords-file."
+            ),
+        ),
+    ] = "programming",
     resume: Annotated[
         bool,
         typer.Option(
@@ -599,6 +654,16 @@ def review(
       detection, used by default if present (always on, safe when empty). They
       never replace the LLM analysis. Manage them with `screenscribe keywords`.
     • --keywords-file: override the global dictionary with a per-run file.
+    • --preset: switch the whole analysis profile (keyword dictionary, finding
+      categories, prompt focus): programming (default), casual, medical,
+      veterinary, or custom (requires --keywords-file).
+
+    Transcript source:
+    • --transcript-source auto|audio|ocr: audio STT when the recording has an
+      audio track, frame OCR otherwise ('auto' is the default); the OCR source
+      also has a single boolean alias flag and reads frames on a configurable
+      interval with the vision model — no audio track required, and custom
+      prompt instructions still reach the OCR and semantic stages.
 
     Output options:
     • --serve/--no-serve: Start HTTP server and open report in browser
@@ -611,6 +676,7 @@ def review(
         uv run screenscribe review video1.mov video2.mov video3.mov
         uv run screenscribe review ./recordings/*.mov --no-serve
         uv run screenscribe review video.mov --keywords-file my-keywords.yaml
+        uv run screenscribe review consult.mov --preset veterinary
     """
     # Validate video paths exist
     for video in videos:
@@ -636,13 +702,35 @@ def review(
     # Check FFmpeg is installed (shared guard — identical message across commands)
     _check_ffmpeg_or_exit()
 
+    # Fold --no-audio into the transcript source and validate the combination
+    # before any probing or paid work happens.
+    try:
+        requested_source = normalize_transcript_source(transcript_source, no_audio=no_audio)
+    except ValueError as e:
+        console.print(f"[red]Error:[/] {e}")
+        raise typer.Exit(2) from None
+
     # --estimate is a zero-cost preview that only needs the container duration,
     # not a decoded audio stream. Requiring audio here would exit an estimate on
     # an audioless clip; skip the audio guard in estimate mode (run_review reads
     # the duration defensively and still renders the table).
+    #
+    # The audio gate now sits UNDER the transcript-source decision: 'auto'
+    # probes each video and routes audioless recordings to frame OCR instead of
+    # failing, while an explicit 'audio' source keeps the historical readable
+    # "has no audio track" error.
+    resolved_sources: dict[Path, str] = {}
     if not estimate:
         for video in videos:
-            _require_audio_or_exit(video)
+            source = resolve_transcript_source(requested_source, video, has_audio=has_audio_stream)
+            resolved_sources[video] = source
+            if source == "audio":
+                _require_audio_or_exit(video)
+            else:
+                console.print(
+                    f"[blue]Transcript source:[/] OCR (frames every {frame_interval:g}s) "
+                    f"for {video.name}"
+                )
 
     # --embed-video inlines the clip as base64, but the HTML renderer silently
     # falls back to a file reference for anything >=50MB. Warn up front so the
@@ -671,11 +759,61 @@ def review(
     config.verbose = verbose
     config.analysis_prompt_override = (prompt or "").strip()
 
+    # --- Preset block (w1-03-presets) ---------------------------------------
+    # Resolve the analysis preset FIRST: it decides the keyword dictionary,
+    # the finding categories, and the prompt focus. 'custom' has no built-in
+    # definition and must be backed by the user's own --keywords-file.
+    from .presets import PresetError, load_custom_preset, load_preset
+
+    if preset == "custom":
+        if keywords_file is None:
+            console.print(
+                "[red]Error:[/] --preset custom requires your own keyword dictionary.\n\n"
+                "Usage: [bold]screenscribe review <video> --preset custom "
+                "--keywords-file my-keywords.yaml[/]\n\n"
+                "The file is a YAML mapping of your finding categories to phrases, e.g.:\n"
+                "  regression:\n"
+                '    - "nie działa po zmianie"\n'
+                '    - "used to work"'
+            )
+            raise typer.Exit(1)
+        try:
+            active_preset = load_custom_preset(keywords_file)
+        except PresetError as e:
+            console.print(f"[red]Error:[/] {e}")
+            raise typer.Exit(1) from None
+    else:
+        try:
+            active_preset = load_preset(preset)
+        except PresetError as e:
+            console.print(f"[red]Error:[/] {e}")
+            raise typer.Exit(1) from None
+
+    # Load the active keyword vocabulary once (explicit --keywords-file, else
+    # global user file, else preset dictionary, else built-in default). These
+    # are passed to the AI as hints during detection; an empty/absent
+    # dictionary is a safe no-op.
+    keywords = KeywordsConfig.load(keywords_file, preset=active_preset)
+    config.keywords = keywords
+
+    # The preset's prompt fragment rides the same channel as --prompt: both are
+    # appended to analysis prompts as schema-preserving instructions.
+    if active_preset.prompt:
+        config.analysis_prompt_override = "\n\n".join(
+            part for part in (active_preset.prompt, config.analysis_prompt_override) if part
+        )
+    # --- end preset block ----------------------------------------------------
+
     if not estimate:
+        # STT is only paid for videos routed to the audio source; OCR videos
+        # hit the vision endpoint instead, so vision credentials are required
+        # for them even under --no-vision (which only skips VLM analysis).
+        needs_audio_stt = any(source == "audio" for source in resolved_sources.values())
+        needs_ocr = any(source == "ocr" for source in resolved_sources.values())
         active_providers = {"llm"}
-        if not local:
+        if not local and needs_audio_stt:
             active_providers.add("stt")
-        if vision:
+        if vision or needs_ocr:
             active_providers.add("vision")
         _check_provider_config_or_exit(config, providers=active_providers)
 
@@ -683,9 +821,15 @@ def review(
     # LOCAL Whisper server; the LLM pre-filter and the Vision stage still hit the
     # cloud, so they must be validated even under --local -- only the STT probe is
     # skipped. --estimate is a zero-cost preview and skips validation entirely.
+    # OCR-sourced videos need the vision model (that is where OCR runs) and no
+    # STT model at all.
     if not skip_validation and not estimate:
         try:
-            validate_models(config, use_vision=vision, validate_stt=not local)
+            validate_models(
+                config,
+                use_vision=vision or needs_ocr,
+                validate_stt=(not local) and needs_audio_stt,
+            )
         except APIKeyError as e:
             console.print(f"[red]API Key Error:[/] {e}")
             raise typer.Exit(1) from None
@@ -704,18 +848,18 @@ def review(
     # this module so the monkeypatch surface is preserved.
     from . import review_pipeline
 
-    # Load the active keyword vocabulary once (explicit --keywords-file, else
-    # global user file, else built-in default). These are passed to the AI as
-    # hints during detection; an empty/absent dictionary is a safe no-op.
-    keywords = KeywordsConfig.load(keywords_file)
-
     # C6.3: --dry-run does NOT mean zero-cost. Despite the name, it still runs
     # Step 2 transcription (paid STT unless --local) and Step 3 issue detection
     # (the LLM semantic prefilter, ALWAYS paid) before exiting -- it only skips
     # report artifacts. Warn before the first paid call so the user can abort.
     # (--estimate is the real zero-cost path and exits before any paid call.)
     if dry_run and not estimate:
-        if local:
+        if needs_ocr:
+            cost_line = (
+                "Frame transcription uses paid vision OCR, followed by LLM issue detection. "
+                "Audio STT is used only for recordings routed to the audio source."
+            )
+        elif local:
             cost_line = (
                 "Transcription runs locally (--local, no STT cost), but issue "
                 "detection still calls the LLM and incurs API cost."
@@ -752,6 +896,9 @@ def review(
         dry_run=dry_run,
         serve=serve,
         port=port,
+        transcript_source=requested_source,
+        frame_interval=frame_interval,
+        preset=active_preset,
     )
 
 
@@ -914,13 +1061,13 @@ def analyze(
 @app.command()
 def transcribe(
     video: Annotated[
-        Path,
+        Path | None,
         typer.Argument(
-            help="Path to video file",
+            help="Path to video file (omit with --live)",
             exists=True,
             dir_okay=False,
         ),
-    ],
+    ] = None,
     output: Annotated[
         Path | None,
         typer.Option(
@@ -944,22 +1091,50 @@ def transcribe(
             help="Use local STT server",
         ),
     ] = False,
+    live: Annotated[
+        bool,
+        typer.Option(
+            "--live",
+            help=(
+                "Live mode: read 16 kHz mono PCM16LE from stdin (e.g. an ffmpeg pipe) and "
+                "stream it to the provider's websocket STT, printing partial/final lines"
+            ),
+        ),
+    ] = False,
+    sample_rate: Annotated[
+        int,
+        typer.Option(
+            "--sample-rate",
+            help="Sample rate of the PCM on stdin (live mode only)",
+        ),
+    ] = 16000,
 ) -> None:
     """
     Transcribe video audio to text (no analysis).
 
-    Quick transcription using LibraxisAI STT or local Whisper.
-    Outputs plain text transcript to stdout or file.
+    Quick transcription using the configured STT provider or local Whisper.
+    Outputs plain text transcript to stdout or file. With --live the audio comes
+    from stdin as raw PCM16LE mono and is streamed over a websocket.
 
     Examples:
         uv run screenscribe transcribe video.mov
         uv run screenscribe transcribe video.mov -o transcript.txt
         uv run screenscribe transcribe video.mov --local --lang en
+        ffmpeg -loglevel error -f avfoundation -i ":0" -ac 1 -ar 16000 -f s16le - \
+            | screenscribe transcribe --live --lang pl
     """
     config = ScreenScribeConfig.load()
     if language is not None:
         config.language = language
     language = config.language
+
+    if live:
+        _transcribe_live(config, language=language, sample_rate=sample_rate, output=output)
+        return
+
+    if video is None:
+        console.print("[red]Error:[/] Provide a VIDEO path, or use --live to stream from stdin.")
+        raise typer.Exit(2)
 
     if not local:
         _check_provider_config_or_exit(config, providers={"stt"})
@@ -1012,6 +1187,176 @@ def transcribe(
     else:
         console.print()
         console.print(result.text)
+
+
+def _transcribe_live(
+    config: ScreenScribeConfig, *, language: str, sample_rate: int, output: Path | None
+) -> None:
+    """Stream PCM16LE from stdin to the live STT gateway and print transcript lines."""
+    _check_provider_config_or_exit(config, providers={"stt"})
+    endpoint = config.get_stt_live_endpoint()
+    if not endpoint:
+        console.print(
+            "[red]Error:[/] No live STT gateway for this provider. "
+            "Set SCREENSCRIBE_STT_LIVE_ENDPOINT (wss://...) or choose xAI / LibraxisAI."
+        )
+        raise typer.Exit(1)
+    api_key = config.get_stt_live_api_key()
+    if not api_key:
+        console.print(
+            "[red]Error:[/] No STT API key configured. Run `screenscribe config setup` "
+            "or set SCREENSCRIBE_STT_API_KEY."
+        )
+        raise typer.Exit(1)
+
+    from typing import BinaryIO, cast
+
+    from .api_utils import redact_url
+
+    stdin = cast("BinaryIO", getattr(sys.stdin, "buffer", sys.stdin))
+    # 100 ms of 16-bit mono per frame.
+    frame_bytes = max(2, (sample_rate // 10) * 2)
+    finals: list[str] = []
+    failed = ""
+
+    import threading
+
+    client = stream_client_for_endpoint(
+        endpoint, api_key=api_key, sample_rate=sample_rate, language=language
+    )
+
+    def pump() -> None:
+        try:
+            while True:
+                chunk = stdin.read(frame_bytes)
+                if not chunk:
+                    break
+                client.send_pcm(chunk)
+        finally:
+            client.finish()
+
+    console.print(
+        f"[dim]Live STT via {redact_url(endpoint)} ({sample_rate} Hz PCM16LE from stdin)[/]"
+    )
+    with client:
+        pump_thread = threading.Thread(target=pump, name="screenscribe-live-stdin", daemon=True)
+        pump_thread.start()
+        for event in client:
+            if event.kind == "partial":
+                console.print(f"[dim]partial:[/] {event.text}")
+            elif event.kind == "final":
+                span = ""
+                if event.start_ms is not None and event.end_ms is not None:
+                    span = f" [{event.start_ms / 1000:.2f}s-{event.end_ms / 1000:.2f}s]"
+                console.print(f"[green]final{span}:[/] {event.text}")
+                finals.append(event.text)
+            elif event.kind == "error":
+                failed = event.text or event.code or "unknown error"
+        pump_thread.join(5.0)
+
+    if failed:
+        console.print(
+            Panel(
+                f"Live transcription failed: {failed}\n\n"
+                "Check the STT API key and SCREENSCRIBE_STT_LIVE_ENDPOINT.",
+                title="[bold red]Live STT Failed[/]",
+                border_style="red",
+            )
+        )
+        raise typer.Exit(1)
+
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("\n".join(finals) + ("\n" if finals else ""), encoding="utf-8")
+        console.print(f"[green]Transcript saved:[/] [link=file://{output}]{output}[/link]")
+
+
+_TTS_CODEC_BY_SUFFIX = {".mp3": "mp3", ".wav": "wav", ".pcm": "pcm", ".raw": "pcm"}
+
+
+@app.command()
+def tts(
+    text: Annotated[str, typer.Argument(help="Text to synthesize (max 15,000 characters)")],
+    out: Annotated[
+        Path,
+        typer.Option("--out", "-o", help="Output audio file (.mp3 or .wav; suffix picks codec)"),
+    ],
+    voice: Annotated[
+        str | None,
+        typer.Option("--voice", help="Voice id (defaults to config, then 'eve')"),
+    ] = None,
+    language: Annotated[
+        str | None,
+        typer.Option("--language", "--lang", "-l", help="BCP-47 language (defaults to config)"),
+    ] = None,
+    speed: Annotated[
+        float, typer.Option("--speed", help="Speech rate 0.7-1.5", min=0.7, max=1.5)
+    ] = 1.0,
+) -> None:
+    """
+    Synthesize speech from text (xAI TTS).
+
+    Uses the configured TTS endpoint (derived from the xAI preset, or
+    SCREENSCRIBE_TTS_ENDPOINT). The key falls back to the STT key.
+
+    Examples:
+        screenscribe tts "Dzień dobry" --out hello.mp3 --language pl
+        screenscribe tts "Hello" --out hello.wav --voice ara
+    """
+    config = ScreenScribeConfig.load()
+    endpoint = config.get_tts_endpoint()
+    if not endpoint:
+        console.print(
+            "[red]Error:[/] No TTS provider configured. TTS is available with the xAI preset "
+            "(`screenscribe config setup`, option 4) or by setting SCREENSCRIBE_TTS_ENDPOINT "
+            "and SCREENSCRIBE_TTS_API_KEY."
+        )
+        raise typer.Exit(1)
+    api_key = config.get_tts_api_key()
+    if not api_key:
+        console.print(
+            "[red]Error:[/] No TTS credential for this endpoint. "
+            "Sign in with `screenscribe auth login xai` for api.x.ai, "
+            "or set SCREENSCRIBE_TTS_API_KEY for your provider."
+        )
+        raise typer.Exit(1)
+
+    codec = _TTS_CODEC_BY_SUFFIX.get(out.suffix.lower(), "mp3")
+    try:
+        audio, content_type = synthesize_speech_xai(
+            text,
+            api_key=api_key,
+            language=language or config.language,
+            voice_id=voice or config.tts_voice or "eve",
+            codec=codec,
+            speed=speed,
+            endpoint=endpoint,
+        )
+    except ValueError as exc:
+        console.print(f"[red]Error:[/] {exc}")
+        raise typer.Exit(1) from None
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        console.print(
+            Panel(
+                _build_transcription_failure_message(exc).replace(
+                    "speech-to-text", "text-to-speech"
+                ),
+                title="[bold red]TTS Failed[/]",
+                border_style="red",
+            )
+        )
+        raise typer.Exit(1) from None
+
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(audio)
+    except OSError as exc:
+        console.print(f"[red]Error:[/] Cannot write {out}: {exc}")
+        raise typer.Exit(1) from None
+    console.print(
+        f"[green]Audio saved:[/] [link=file://{out}]{out}[/link] "
+        f"[dim]({len(audio)} bytes, {content_type or codec})[/]"
+    )
 
 
 @app.command()
@@ -1257,6 +1602,7 @@ config_app = typer.Typer(
     invoke_without_command=True,
 )
 app.add_typer(config_app, name="config")
+app.add_typer(auth_app, name="auth")
 
 
 @config_app.callback()
@@ -1348,6 +1694,7 @@ def config(
         provider_labels = {
             "libraxis": "LibraxisAI",
             "openai": "OpenAI",
+            "xai": "xAI",
             "custom": "Custom OpenAI-compatible",
         }
         provider = cfg.recognized_provider()
@@ -1412,24 +1759,39 @@ def config(
 
 @config_app.command("setup")
 def config_setup() -> None:
-    """Interactively create one coherent provider preset using a hidden key prompt."""
+    """Create a coherent provider preset using an API key or a signed-in account."""
     console.print("[bold]Choose your provider:[/]")
     console.print("  1. LibraxisAI")
     console.print("  2. OpenAI")
     console.print("  3. Custom OpenAI-compatible provider (advanced)")
+    console.print("  4. xAI (Grok: STT, TTS, live STT)")
 
     choice = typer.prompt("Provider", type=str).strip()
-    provider_by_choice = {"1": "libraxis", "2": "openai", "3": "custom"}
+    provider_by_choice = {"1": "libraxis", "2": "openai", "3": "custom", "4": "xai"}
     if choice not in provider_by_choice:
-        console.print("[red]Error:[/] Choose 1, 2, or 3.")
-        raise typer.Exit(1)
-
-    api_key = typer.prompt("API key", hide_input=True).strip()
-    if not api_key:
-        console.print("[red]Error:[/] API key cannot be empty.")
+        console.print("[red]Error:[/] Choose 1, 2, 3, or 4.")
         raise typer.Exit(1)
 
     provider = provider_by_choice[choice]
+    use_account = False
+    if provider == "xai":
+        from .account_auth import AccountAuthError, account_status
+
+        try:
+            status = account_status(provider)
+        except AccountAuthError as error:
+            console.print(f"[yellow]Account sign-in is unavailable ({error.kind}).[/]")
+        else:
+            if status.signed_in and status.api_bearer_usable:
+                use_account = typer.confirm(
+                    "Use your signed-in xAI account instead of an API key?", default=True
+                )
+
+    api_key = "" if use_account else typer.prompt("API key", hide_input=True).strip()
+    if not use_account and not api_key:
+        console.print("[red]Error:[/] API key cannot be empty.")
+        raise typer.Exit(1)
+
     kwargs: dict[str, str] = {}
     if provider == "custom":
         kwargs = {

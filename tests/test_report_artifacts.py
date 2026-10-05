@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+import screenscribe.cli_reporting as cli_reporting
 from screenscribe.checkpoint import (
     deserialize_unified_finding,
     serialize_unified_finding,
@@ -60,6 +61,70 @@ def _sample_unified_finding(
         technical_observations="",
         response_id="resp_test",
     )
+
+
+def test_report_artifact_writer_forwards_optional_markdown_context(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        cli_reporting,
+        "save_enhanced_markdown_report",
+        lambda *args, **kwargs: captured.append(kwargs),
+    )
+    common = {
+        "detections": [],
+        "screenshots": [],
+        "video": Path("video.mov"),
+        "video_output": tmp_path,
+        "video_stem": "video",
+        "unified_findings": [],
+        "executive_summary": "",
+        "visual_summary": "",
+        "errors": None,
+        "transcript": "screen text",
+        "transcript_segments": None,
+        "embed_video": False,
+        "language": "pl",
+        "json_report": False,
+        "markdown_report": True,
+        "html_report": False,
+    }
+
+    cli_reporting._write_report_artifacts(
+        **common,
+        preset_meta={"name": "veterinary", "categories": ["finding", "risk"]},
+        transcript_source="ocr",
+    )
+    assert captured[-1]["preset_meta"] == {
+        "name": "veterinary",
+        "categories": ["finding", "risk"],
+    }
+    assert captured[-1]["transcript_source"] == "ocr"
+
+    cli_reporting._write_report_artifacts(**common)
+    assert "preset_meta" not in captured[-1]
+    assert "transcript_source" not in captured[-1]
+
+
+def test_html_artifact_preserves_source_kind_for_export_labels(tmp_path: Path) -> None:
+    output = tmp_path / "report.html"
+    save_html_report_pro(
+        detections=[],
+        screenshots=[],
+        video_path=tmp_path / "video.mov",
+        output_path=output,
+        transcript_source="ocr",
+    )
+    assert 'data-transcript-source="ocr"' in output.read_text(encoding="utf-8")
+
+    save_html_report_pro(
+        detections=[],
+        screenshots=[],
+        video_path=tmp_path / "video.mov",
+        output_path=output,
+    )
+    assert "data-transcript-source=" not in output.read_text(encoding="utf-8")
 
 
 def test_enhanced_json_report_persists_timestamped_transcript(tmp_path: Path) -> None:

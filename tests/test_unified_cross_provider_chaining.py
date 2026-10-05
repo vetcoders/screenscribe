@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from typing import Any, ClassVar
 
+import pytest
+
 from screenscribe.config import ScreenScribeConfig
 from screenscribe.detect import Detection, Segment
 from screenscribe.unified.finding import UnifiedFinding
@@ -53,6 +55,35 @@ def test_payload_skips_chaining_when_cross_provider() -> None:
         same_provider=False,
     )
     assert "previous_response_id" not in payload
+
+
+def test_payload_reasoning_effort_none_reaches_the_wire() -> None:
+    """Effort "none" is carried verbatim as reasoning.effort on Responses payloads."""
+    payload = _build_unified_payload(
+        endpoint="https://example.test/v1/responses",
+        model="m",
+        prompt="p",
+        screenshot_path=None,
+        previous_response_id=None,
+        stream=False,
+        reasoning_effort="none",
+    )
+    assert payload["reasoning"] == {"summary": "auto", "effort": "none"}
+
+
+@pytest.mark.parametrize("effort", ["xhigh", "max"])
+def test_payload_reasoning_effort_xhigh_max_reach_the_wire(effort: str) -> None:
+    """The extended efforts are carried verbatim as reasoning.effort."""
+    payload = _build_unified_payload(
+        endpoint="https://example.test/v1/responses",
+        model="m",
+        prompt="p",
+        screenshot_path=None,
+        previous_response_id=None,
+        stream=False,
+        reasoning_effort=effort,
+    )
+    assert payload["reasoning"] == {"summary": "auto", "effort": effort}
 
 
 def test_payload_default_is_same_provider() -> None:

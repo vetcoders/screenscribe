@@ -10,6 +10,7 @@ THEME = STYLES_DIR / "screenscribe-theme.css"
 SURFACE_STYLESHEETS = (
     STYLES_DIR / "report-pro.css",
     STYLES_DIR / "analyze_dashboard.css",
+    STYLES_DIR / "agent_panel.css",
 )
 
 _CUSTOM_PROPERTY = re.compile(r"(?m)^\s*(--[-_a-zA-Z0-9]+)\s*:\s*([^;]+);")

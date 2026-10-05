@@ -611,7 +611,7 @@ def _run_unified_summary(config: ScreenScribeConfig) -> str:
 @pytest.mark.parametrize(
     ("endpoint", "effort", "expected_reasoning"),
     [
-        (None, None, {"summary": "auto", "effort": "medium"}),
+        (None, None, {"summary": "auto", "effort": "none"}),
         (None, "low", {"summary": "auto", "effort": "low"}),
         (_CHAT_ENDPOINT, "low", None),
     ],

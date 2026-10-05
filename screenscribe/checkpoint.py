@@ -20,10 +20,11 @@ CHECKPOINT_DIR_NAME = ".screenscribe_cache"
 CHECKPOINT_FILE_NAME = "checkpoint.json"
 
 # Bumped when the on-disk checkpoint shape changes incompatibly.
-# v2 dropped the legacy per-detection semantic serialization path; checkpoints written
-# by an older screenscribe (no schema marker, or a lower version) are no longer
-# loadable and are skipped gracefully rather than raising on load.
-CHECKPOINT_SCHEMA_VERSION = 2
+# v2 dropped the legacy per-detection semantic serialization path. v3 binds
+# resumable stage data to the transcript/preset inputs that produced it.
+# Checkpoints written by an older screenscribe are skipped gracefully rather
+# than replaying state under a different analysis contract.
+CHECKPOINT_SCHEMA_VERSION = 3
 
 
 @dataclass
@@ -38,6 +39,15 @@ class PipelineCheckpoint:
     # On-disk schema marker. Defaults to the legacy sentinel (1) so that
     # checkpoints written before the marker existed deserialize as "old shape".
     schema_version: int = 1
+
+    # Inputs that determine reusable transcription/detection state. A resume is
+    # valid only when these match the current invocation exactly.
+    analysis_inputs: dict[str, Any] = field(default_factory=dict)
+
+    # Receipts for providers that actually completed a processing stage. These
+    # are persisted independently from current config so resume never upgrades a
+    # configured-but-unused endpoint into a proven processor.
+    processing_provenance: dict[str, dict[str, str]] = field(default_factory=dict)
 
     # Completed stages
     completed_stages: list[str] = field(default_factory=list)
@@ -181,7 +191,12 @@ def delete_checkpoint(output_dir: Path) -> None:
 
 
 def checkpoint_valid_for_video(
-    checkpoint: PipelineCheckpoint, video_path: Path, output_dir: Path, language: str
+    checkpoint: PipelineCheckpoint,
+    video_path: Path,
+    output_dir: Path,
+    language: str,
+    *,
+    analysis_inputs: dict[str, Any] | None = None,
 ) -> bool:
     """Check if a checkpoint is valid for the given video."""
     # Check paths match
@@ -197,6 +212,10 @@ def checkpoint_valid_for_video(
         console.print("[yellow]Checkpoint is for a different language setting[/]")
         return False
 
+    if analysis_inputs is not None and checkpoint.analysis_inputs != analysis_inputs:
+        console.print("[yellow]Checkpoint is for different transcript or preset settings[/]")
+        return False
+
     # Check video hasn't changed
     current_hash = compute_file_hash(video_path)
     if checkpoint.video_hash != current_hash:
@@ -206,7 +225,13 @@ def checkpoint_valid_for_video(
     return True
 
 
-def create_checkpoint(video_path: Path, output_dir: Path, language: str) -> PipelineCheckpoint:
+def create_checkpoint(
+    video_path: Path,
+    output_dir: Path,
+    language: str,
+    *,
+    analysis_inputs: dict[str, Any] | None = None,
+) -> PipelineCheckpoint:
     """Create a new checkpoint for a video."""
     return PipelineCheckpoint(
         video_path=str(video_path.absolute()),
@@ -214,6 +239,7 @@ def create_checkpoint(video_path: Path, output_dir: Path, language: str) -> Pipe
         output_dir=str(output_dir.absolute()),
         language=language,
         schema_version=CHECKPOINT_SCHEMA_VERSION,
+        analysis_inputs=dict(analysis_inputs or {}),
     )
 
 

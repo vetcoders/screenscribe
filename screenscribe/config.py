@@ -4,7 +4,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 from urllib.parse import urlsplit
 
 from .api_utils import redact_url
@@ -35,6 +35,22 @@ OPENAI_STT_MODEL = "whisper-1"
 OPENAI_LLM_MODEL = "gpt-5.6-luna"
 OPENAI_VISION_MODEL = "gpt-5.6-luna"
 
+# xAI (api.x.ai). STT/TTS are xAI-native endpoints (see screenscribe.providers.xai);
+# LLM/vision speak the Responses API on the same host. xAI STT takes no model.
+XAI_API_BASE = "https://api.x.ai"
+XAI_STT_ENDPOINT = f"{XAI_API_BASE}/v1/stt"
+XAI_LLM_ENDPOINT = f"{XAI_API_BASE}/v1/responses"
+XAI_VISION_ENDPOINT = f"{XAI_API_BASE}/v1/responses"
+XAI_TTS_ENDPOINT = f"{XAI_API_BASE}/v1/tts"
+XAI_STT_LIVE_ENDPOINT = "wss://api.x.ai/v1/stt"
+XAI_STT_MODEL = ""
+XAI_LLM_MODEL = "grok-4.6"
+XAI_VISION_MODEL = "grok-4.6"
+XAI_TTS_VOICE = "eve"
+
+# LibraxisAI live STT gateway (stt-ws-v1; see screenscribe.stt_stream).
+LIBRAXIS_STT_LIVE_ENDPOINT = "wss://api.libraxis.cloud/v1/audio/transcribe"
+
 # Default models
 DEFAULT_STT_MODEL = "whisper-1"
 DEFAULT_LLM_MODEL = "programmer"  # screenscribe product default (LibraxisAI profile)
@@ -46,10 +62,25 @@ DEFAULT_VISION_MODEL = "programmer"
 # Reasoning effort sent with every text-LLM Responses API request (semantic
 # pre-filter, text-only unified analysis, executive summaries, LLM merge). Without an explicit effort, reasoning
 # models on long prompts can reason in a loop for many minutes, emit no answer
-# and end with ``response.failed``. "medium" keeps the "liberal" pre-filter's
-# recall while bounding the time spent reasoning.
-LLM_REASONING_EFFORTS = ("minimal", "low", "medium", "high")
-DEFAULT_LLM_REASONING_EFFORT = "medium"
+# and end with ``response.failed``. "none" turns reasoning off entirely on
+# providers that support it (OpenAI Responses, LibraxisAI); "off" is NOT a
+# valid value and is rejected by the API. "minimal" was never supported by any
+# provider (OpenAI rejects it, xAI aliases it to "low") and is not a valid
+# value here either.
+LLM_REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
+# Last-resort fallback when no provider can be resolved; in practice
+# ``recognized_provider()`` always yields one of the presets below, so the
+# effective default comes from ``PROVIDER_DEFAULT_REASONING_EFFORTS``.
+DEFAULT_LLM_REASONING_EFFORT = "none"
+# Effective default when no effort is configured, resolved per provider preset:
+# xAI rejects "none" (400), so it starts at "low"; OpenAI/Libraxis accept
+# "none". Unknown custom services receive no reasoning option unless configured.
+PROVIDER_DEFAULT_REASONING_EFFORTS = {
+    "libraxis": "none",
+    "openai": "none",
+    "xai": "low",
+    "custom": "",
+}
 
 # Config file locations (checked in order)
 # User config has priority - local .env is for development/examples only
@@ -97,8 +128,10 @@ class ScreenScribeConfig:
     llm_model: str = DEFAULT_LLM_MODEL
     vision_model: str = DEFAULT_VISION_MODEL
 
-    # Reasoning effort for text-LLM Responses API calls (minimal/low/medium/high).
-    llm_reasoning_effort: str = DEFAULT_LLM_REASONING_EFFORT
+    # Reasoning effort for text-LLM Responses API calls
+    # (none/low/medium/high/xhigh/max). Empty = not set: the effective default
+    # is resolved per provider preset (see PROVIDER_DEFAULT_REASONING_EFFORTS).
+    llm_reasoning_effort: str = ""
 
     # Optional STT fallback (opt-in). The user supplies a second provider
     # (e.g. their own OpenAI key + endpoint); it is tried ONLY when the primary
@@ -107,6 +140,16 @@ class ScreenScribeConfig:
     stt_fallback_endpoint: str = ""
     stt_fallback_api_key: str = ""
     stt_fallback_model: str = ""
+
+    # Text-to-speech (currently xAI only). Empty endpoint = derived from the STT
+    # provider when it offers TTS, else TTS is unavailable. The key falls back to
+    # the STT key, then the generic key.
+    tts_endpoint: str = ""
+    tts_api_key: str = ""
+    tts_voice: str = ""
+
+    # Live (websocket) STT gateway. Empty = derived from the STT endpoint host.
+    stt_live_endpoint: str = ""
 
     # Processing options
     language: str = "en"
@@ -119,6 +162,14 @@ class ScreenScribeConfig:
     # to a falsey value to disable it (falls back to heuristic-only dedup, e.g.
     # when there is no LLM budget). A missing LLM API key also makes it a no-op.
     llm_merge_enabled: bool = True
+
+    # Review-agent chat (POST /api/agent/chat). Screen recordings contain
+    # secrets: providers with trust=external are skipped unless egress is allow.
+    # A recorded successful semantic request establishes trust=processor for
+    # that report. Configuration alone proves no processing.
+    # SCREENSCRIBE_AGENT_PRIMARY_TRUST=external opts that host out.
+    agent_egress: str = "deny"
+    agent_primary_trust: str = ""
 
     # Active keyword vocabulary hints (loaded from --keywords-file / global file /
     # built-in default). Passed to the AI as hints during detection and marker
@@ -175,6 +226,21 @@ class ScreenScribeConfig:
                 llm_model=OPENAI_LLM_MODEL,
                 vision_model=OPENAI_VISION_MODEL,
             )
+        if normalized == "xai":
+            return cls(
+                provider="xai",
+                api_key=api_key,
+                api_base=XAI_API_BASE,
+                stt_endpoint=XAI_STT_ENDPOINT,
+                llm_endpoint=XAI_LLM_ENDPOINT,
+                vision_endpoint=XAI_VISION_ENDPOINT,
+                stt_model=XAI_STT_MODEL,
+                llm_model=llm_model or XAI_LLM_MODEL,
+                vision_model=vision_model or XAI_VISION_MODEL,
+                tts_endpoint=XAI_TTS_ENDPOINT,
+                tts_voice=XAI_TTS_VOICE,
+                stt_live_endpoint=XAI_STT_LIVE_ENDPOINT,
+            )
         if normalized == "custom":
             base = cls._normalize_api_base(custom_base)
             if not base.startswith(("https://", "http://")):
@@ -208,25 +274,40 @@ class ScreenScribeConfig:
         return self.keywords
 
     def get_stt_api_key(self) -> str:
-        """Get API key for STT endpoint."""
-        return self.stt_api_key or self.api_key
+        """Get API key for STT endpoint (explicit key, else account bearer)."""
+        return self._key_or_account_bearer(self.stt_api_key or self.api_key, self.stt_endpoint)
 
     def get_llm_api_key(self) -> str:
-        """Get API key for LLM endpoint."""
-        return self.llm_api_key or self.api_key
+        """Get API key for LLM endpoint (explicit key, else account bearer)."""
+        return self._key_or_account_bearer(self.llm_api_key or self.api_key, self.llm_endpoint)
 
     def get_llm_reasoning_effort(self) -> str:
         """Reasoning effort for text-LLM Responses calls; invalid values fall back.
 
         Loading already warns about an invalid configured value; this accessor
-        only guarantees a value the API accepts, even for a directly-built config.
+        preserves explicitly configured values. An unset effort resolves to a
+        known provider's preset default (xAI starts at "low"). Custom providers
+        without verified reasoning support omit the option by default.
         """
         effort = (self.llm_reasoning_effort or "").strip().lower()
-        return effort if effort in LLM_REASONING_EFFORTS else DEFAULT_LLM_REASONING_EFFORT
+        if effort in LLM_REASONING_EFFORTS:
+            return effort
+        return self._default_reasoning_effort()
 
-    @staticmethod
-    def _normalize_reasoning_effort(value: str) -> str:
-        """Validate a configured reasoning effort; warn and use the default if invalid."""
+    def _default_reasoning_effort(self) -> str:
+        """Provider-resolved default effort for configs that set none."""
+        return PROVIDER_DEFAULT_REASONING_EFFORTS.get(self.recognized_provider(), "")
+
+    def _normalize_reasoning_effort(self, value: str) -> str:
+        """Validate a configured effort; leave invalid values provider-unset.
+
+        Provider identity can be declared later in a config file or overridden
+        by the environment.  Persisting the fallback selected *at parse time*
+        makes the effective result depend on key order (and can leave xAI with
+        its unsupported ``none`` value).  The empty sentinel lets
+        :meth:`get_llm_reasoning_effort` resolve the final provider default only
+        after routing is fully loaded.
+        """
         effort = value.strip().lower()
         if effort in LLM_REASONING_EFFORTS:
             return effort
@@ -234,15 +315,83 @@ class ScreenScribeConfig:
 
         warnings.warn(
             f"Invalid SCREENSCRIBE_LLM_REASONING_EFFORT={value!r}; expected one of "
-            f"{', '.join(LLM_REASONING_EFFORTS)}. Using {DEFAULT_LLM_REASONING_EFFORT!r}.",
+            f"{', '.join(LLM_REASONING_EFFORTS)}. Using the provider default.",
             UserWarning,
             stacklevel=2,
         )
-        return DEFAULT_LLM_REASONING_EFFORT
+        return ""
 
     def get_vision_api_key(self) -> str:
-        """Get API key for Vision endpoint."""
-        return self.vision_api_key or self.api_key
+        """Get API key for Vision endpoint (explicit key, else account bearer)."""
+        return self._key_or_account_bearer(
+            self.vision_api_key or self.api_key, self.vision_endpoint
+        )
+
+    # Provider whose signed-in account may back requests to a given REST host.
+    # ``openai`` is listed so the identity-only warning fires (the token itself
+    # is never returned for api.openai.com -- see ``account_auth.resolve_bearer``).
+    _ACCOUNT_HOSTS: ClassVar[dict[str, str]] = {"api.x.ai": "xai", "api.openai.com": "openai"}
+    _account_warned: ClassVar[set[str]] = set()
+
+    @classmethod
+    def _key_or_account_bearer(cls, explicit_key: str, endpoint: str) -> str:
+        """Explicit key wins. Without one, fall back to a signed-in account token
+        when ``endpoint`` is on a host that accepts it (``api.x.ai``). For
+        ``api.openai.com`` the account token is identity-only: warn once and
+        return the empty key so callers keep their "no key" behaviour.
+        """
+        if explicit_key:
+            return explicit_key
+        try:
+            host = (urlsplit(endpoint).hostname or "").lower()
+        except ValueError:
+            return ""
+        provider = cls._ACCOUNT_HOSTS.get(host)
+        if provider is None:
+            return ""
+        from .account_auth import AccountAuthError, resolve_bearer
+
+        try:
+            resolution = resolve_bearer(provider, "")
+        except AccountAuthError:
+            return ""
+        if resolution.warning and provider not in cls._account_warned:
+            import warnings
+
+            cls._account_warned.add(provider)
+            warnings.warn(resolution.warning, UserWarning, stacklevel=3)
+        return resolution.bearer if resolution.usable else ""
+
+    def get_tts_api_key(self) -> str:
+        """Explicit key fallback, or account bearer for the actual TTS host."""
+        return self._key_or_account_bearer(
+            self.tts_api_key or self.stt_api_key or self.api_key, self.get_tts_endpoint()
+        )
+
+    def get_tts_endpoint(self) -> str:
+        """TTS endpoint: explicit, else xAI's when the STT provider is xAI, else empty."""
+        if self.tts_endpoint:
+            return self.tts_endpoint
+        if self._endpoint_provider(self.stt_endpoint) == "xai":
+            return XAI_TTS_ENDPOINT
+        return ""
+
+    def get_stt_live_endpoint(self) -> str:
+        """Live STT websocket: explicit, else derived from the STT endpoint host."""
+        if self.stt_live_endpoint:
+            return self.stt_live_endpoint
+        provider = self._endpoint_provider(self.stt_endpoint)
+        if provider == "xai":
+            return XAI_STT_LIVE_ENDPOINT
+        if provider == "libraxis":
+            return LIBRAXIS_STT_LIVE_ENDPOINT
+        return ""
+
+    def get_stt_live_api_key(self) -> str:
+        """Resolve account access against the actual WebSocket destination."""
+        return self._key_or_account_bearer(
+            self.stt_api_key or self.api_key, self.get_stt_live_endpoint()
+        )
 
     def has_stt_fallback(self) -> bool:
         """True when a complete, opt-in STT fallback endpoint is configured."""
@@ -308,7 +457,7 @@ class ScreenScribeConfig:
             endpoint_provider = self._endpoint_provider(endpoint)
 
             if (
-                declared_provider in {"libraxis", "openai"}
+                declared_provider in {"libraxis", "openai", "xai"}
                 and endpoint_provider != declared_provider
             ):
                 errors.append(
@@ -321,9 +470,10 @@ class ScreenScribeConfig:
             if not key or declared_provider == "custom":
                 continue
             key_provider = self._key_provider(key)
-            if endpoint_provider == "openai" and key_provider == "libraxis":
+            if endpoint_provider in {"openai", "xai"} and key_provider == "libraxis":
+                target = "OpenAI" if endpoint_provider == "openai" else "xAI"
                 errors.append(
-                    f"{label} provider mismatch: a LibraxisAI API key would be sent to OpenAI.\n"
+                    f"{label} provider mismatch: a LibraxisAI API key would be sent to {target}.\n"
                     "  No request was sent. Run `screenscribe config setup` and choose LibraxisAI."
                 )
             elif endpoint_provider == "libraxis" and provider in self.openai_env_key_slots:
@@ -344,7 +494,7 @@ class ScreenScribeConfig:
     def recognized_provider(self) -> str:
         """Return the declared or consistently inferred provider identity."""
         declared = self.provider.lower().strip()
-        if declared in {"libraxis", "openai", "custom"}:
+        if declared in {"libraxis", "openai", "xai", "custom"}:
             return declared
         inferred = {
             self._endpoint_provider(endpoint)
@@ -386,6 +536,8 @@ class ScreenScribeConfig:
             return "libraxis"
         if host == "openai.com" or host.endswith(".openai.com"):
             return "openai"
+        if host == "x.ai" or host.endswith(".x.ai"):
+            return "xai"
         return None
 
     @staticmethod
@@ -444,6 +596,8 @@ class ScreenScribeConfig:
                 detail = f"an OpenAI-style API key is configured for the {ep_provider} endpoint"
             elif ep_provider == "openai" and key_provider == "libraxis":
                 detail = "a LibraxisAI API key is configured for the openai.com endpoint"
+            elif ep_provider == "xai" and key_provider == "libraxis":
+                detail = "a LibraxisAI API key is configured for the api.x.ai endpoint"
             elif ep_provider == "openai" and key_provider is None:
                 detail = "a non-OpenAI-style API key is configured for the openai.com endpoint"
             else:
@@ -552,6 +706,11 @@ class ScreenScribeConfig:
             "SCREENSCRIBE_STT_FALLBACK_ENDPOINT": "stt_fallback_endpoint",
             "SCREENSCRIBE_STT_FALLBACK_API_KEY": "stt_fallback_api_key",  # pragma: allowlist secret
             "SCREENSCRIBE_STT_FALLBACK_MODEL": "stt_fallback_model",
+            # Text-to-speech (xAI) and live STT websocket gateway
+            "SCREENSCRIBE_TTS_ENDPOINT": "tts_endpoint",
+            "SCREENSCRIBE_TTS_API_KEY": "tts_api_key",  # pragma: allowlist secret
+            "SCREENSCRIBE_TTS_VOICE": "tts_voice",
+            "SCREENSCRIBE_STT_LIVE_ENDPOINT": "stt_live_endpoint",
             # Models
             "SCREENSCRIBE_STT_MODEL": "stt_model",
             "SCREENSCRIBE_LLM_MODEL": "llm_model",
@@ -561,6 +720,8 @@ class ScreenScribeConfig:
             "SCREENSCRIBE_LANGUAGE": "language",
             "SCREENSCRIBE_VISION": "use_vision_analysis",
             "SCREENSCRIBE_LLM_MERGE": "llm_merge_enabled",
+            "SCREENSCRIBE_AGENT_EGRESS": "agent_egress",
+            "SCREENSCRIBE_AGENT_PRIMARY_TRUST": "agent_primary_trust",
         }
 
         for env_key, attr in env_mapping.items():
@@ -603,6 +764,8 @@ class ScreenScribeConfig:
         "llm_endpoint",
         "vision_endpoint",
         "stt_fallback_endpoint",
+        "tts_endpoint",
+        "stt_live_endpoint",
     )
     _BOOL_ATTRS = ("use_vision_analysis", "llm_merge_enabled")
 
@@ -623,8 +786,17 @@ class ScreenScribeConfig:
             setattr(self, attr, value.lower() in ("true", "1", "yes"))
         elif attr == "llm_reasoning_effort":
             self.llm_reasoning_effort = self._normalize_reasoning_effort(value)
+        elif attr == "agent_egress":
+            self.agent_egress = self._normalize_agent_egress(value)
+        elif attr == "agent_primary_trust":
+            self.agent_primary_trust = value.strip().lower()
         else:
             setattr(self, attr, value)
+
+    @staticmethod
+    def _normalize_agent_egress(value: str) -> str:
+        raw = value.strip().lower()
+        return "allow" if raw == "allow" else "deny"
 
     def _apply_api_base(self, value: str) -> None:
         """Normalize an API base URL and derive endpoints still at their defaults."""
@@ -677,10 +849,27 @@ class ScreenScribeConfig:
             self.llm_reasoning_effort = self._normalize_reasoning_effort(value)
             return
 
+        if key_lower == "screenscribe_agent_egress":
+            self.agent_egress = self._normalize_agent_egress(value)
+            return
+
+        if key_lower == "screenscribe_agent_primary_trust":
+            self.agent_primary_trust = value.strip().lower()
+            return
+
         # STT fallback (checked first: "stt_fallback_api_key" also contains the
         # generic "api_key" substring, so it must win before the broader checks).
         if "stt_fallback_api_key" in key_lower:
             self.stt_fallback_api_key = value
+        # TTS + live STT (checked before the broader "api_key"/"stt_endpoint" substrings)
+        elif "tts_api_key" in key_lower:
+            self.tts_api_key = value
+        elif "tts_endpoint" in key_lower:
+            self.tts_endpoint = value.rstrip("/")
+        elif "tts_voice" in key_lower:
+            self.tts_voice = value
+        elif "stt_live_endpoint" in key_lower:
+            self.stt_live_endpoint = value.rstrip("/")
         elif "stt_fallback_endpoint" in key_lower:
             self.stt_fallback_endpoint = value.rstrip("/")
         elif "stt_fallback_model" in key_lower:
@@ -816,6 +1005,16 @@ class ScreenScribeConfig:
                 "whisper-1",
             ),
             "",
+            "# Live STT websocket gateway (xAI wss://api.x.ai/v1/stt or LibraxisAI stt-ws-v1)",
+            self._emit_optional(
+                "SCREENSCRIBE_STT_LIVE_ENDPOINT", self.stt_live_endpoint, "wss://api.x.ai/v1/stt"
+            ),
+            "",
+            "# TTS: Text-to-Speech (xAI only for now; key falls back to the STT key)",
+            self._emit_optional("SCREENSCRIBE_TTS_ENDPOINT", self.tts_endpoint, XAI_TTS_ENDPOINT),
+            self._emit_optional("SCREENSCRIBE_TTS_API_KEY", self.tts_api_key, "YOUR_TTS_KEY"),
+            self._emit_optional("SCREENSCRIBE_TTS_VOICE", self.tts_voice, XAI_TTS_VOICE),
+            "",
             "# LLM: Language Model (Responses API - supports previous_response_id chaining)",
             f"SCREENSCRIBE_LLM_ENDPOINT={self.llm_endpoint}",
             "",
@@ -845,8 +1044,11 @@ class ScreenScribeConfig:
             "",
             "# Reasoning effort for all text-LLM calls (pre-filter, text-only analysis,",
             "# summaries, merge):",
-            "# minimal | low | medium | high. Lower it (e.g. low) if detection fails after",
-            "# the model reasons for a long time without answering.",
+            "# none | low | medium | high | xhigh | max. The default depends on the",
+            "# provider: low for xAI, none for OpenAI/LibraxisAI, empty for custom.",
+            "# Empty custom effort omits the option until support is configured. Lower it",
+            "# (e.g. low) if detection fails after the model reasons for a long time",
+            "# without answering; none turns reasoning off on providers that support it.",
             f"SCREENSCRIBE_LLM_REASONING_EFFORT={self.get_llm_reasoning_effort()}",
             "",
             sep,
@@ -854,6 +1056,20 @@ class ScreenScribeConfig:
             sep,
             f"SCREENSCRIBE_LANGUAGE={self.language}",
             f"SCREENSCRIBE_VISION={str(self.use_vision_analysis).lower()}",
+            "",
+            sep,
+            "# REVIEW AGENT CHAT (screen recordings contain secrets)",
+            sep,
+            "# deny = skip providers whose trust is external (default).",
+            "# allow = send the report (and thus the recording's contents) to external hosts.",
+            "# Hosts already used for STT/LLM/vision are trust=processor and stay allowed.",
+            "# SCREENSCRIBE_AGENT_PRIMARY_TRUST=external opts the analysis host out.",
+            f"SCREENSCRIBE_AGENT_EGRESS={self._normalize_agent_egress(self.agent_egress)}",
+            self._emit_optional(
+                "SCREENSCRIBE_AGENT_PRIMARY_TRUST",
+                self.agent_primary_trust,
+                "internal",
+            ),
             "",
         ]
         content = "\n".join(lines)

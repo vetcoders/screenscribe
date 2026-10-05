@@ -33,7 +33,7 @@ repos:
   # network on every commit, reports metrics upstream, and fans out one
   # semgrep-core process per CPU core. The local set runs offline in <1s.
   - repo: https://github.com/semgrep/semgrep
-    rev: v1.146.0
+    rev: v1.179.0
     hooks:
       - id: semgrep
         args: [--config, semgrep.yml, --error, --metrics=off]

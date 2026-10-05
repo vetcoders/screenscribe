@@ -94,7 +94,8 @@ product owners capturing feedback walkthroughs.
   - Shared Mac: if your account cannot modify the Homebrew prefix, ask the
     Homebrew owner or an administrator to run `brew install ffmpeg`. Do not
     change ownership of the Homebrew prefix.
-- An **API key** for an OpenAI-compatible provider (covers STT + LLM + vision).
+- An **API key** for an OpenAI-compatible provider, or a signed-in xAI account
+  configured through `screenscribe config setup` (covers STT + LLM + vision).
   The self-serve path is to bring your own key from **OpenAI** (or any other
   OpenAI-compatible provider) and point the endpoints at that provider — see
   [Providers](#providers). LibraxisAI is the built-in default endpoint.
@@ -106,8 +107,8 @@ product owners capturing feedback walkthroughs.
 ```bash
 uv tool install screenscribe
 
-# choose LibraxisAI, OpenAI, or a custom OpenAI-compatible provider;
-# the API key is entered through a hidden prompt
+# choose LibraxisAI, OpenAI, xAI, or a custom OpenAI-compatible provider;
+# keys use a hidden prompt; signed-in xAI accounts can supply the bearer
 screenscribe config setup
 
 # FFmpeg is required before the first video run (see Requirements above)
@@ -172,11 +173,18 @@ The self-serve path is the provider setup wizard:
 screenscribe config setup
 ```
 
-Choose **LibraxisAI**, **OpenAI**, or a **Custom OpenAI-compatible provider
-(advanced)**. The custom path asks for a base URL and provider-specific STT,
-LLM, and vision model names, with an example beside every prompt.
-The wizard reads the API key through a hidden prompt and atomically writes one
-coherent set of key, endpoints, and compatible models. A known OpenAI↔LibraxisAI
+Choose **LibraxisAI**, **OpenAI**, **xAI**, or a **Custom OpenAI-compatible
+provider (advanced)**. The custom path asks for a base URL and provider-specific
+STT, LLM, and vision model names, with an example beside every prompt. The xAI
+preset routes STT to `https://api.x.ai/v1/stt` (word-level timing, no model
+name), LLM/vision to `https://api.x.ai/v1/responses` (`grok-4.6`), and enables
+`screenscribe tts` and `screenscribe transcribe --live`.
+For account-based xAI access, run `screenscribe auth login xai` first, then
+choose xAI in `screenscribe config setup` and accept the signed-in account.
+No API key is needed for that path. Signing in alone leaves the current
+provider configuration unchanged.
+The wizard reads API keys through a hidden prompt when needed and atomically writes one
+coherent set of credentials, endpoints, and compatible models. A known OpenAI↔LibraxisAI
 mismatch blocks before any request is sent. Custom endpoints remain available
 with a warning when provider compatibility cannot be verified.
 
@@ -241,7 +249,7 @@ earlier context instead of starting cold.
 
 ## Commands
 
-screenscribe ships **7 commands**. In a source checkout, prefix copy-paste
+screenscribe ships **9 commands**. In a source checkout, prefix copy-paste
 commands with `uv run` as shown below. If you installed the package or activated
 its virtualenv, the bare `screenscribe` command is equivalent. Running
 `screenscribe` with no command opens an interactive prompt; running
@@ -255,6 +263,8 @@ its virtualenv, the bare `screenscribe` command is equivalent. Running
 | `preprocess` | Build a transcript-first artifact bundle for downstream review. |
 | `keywords` | Manage keywords passed to the AI as hints during detection. |
 | `config` | Manage configuration and API keys. |
+| `auth` | Sign in to a provider account and inspect or remove its stored session. |
+| `tts` | Synthesize speech with the configured xAI provider. |
 | `version` | Show version information. |
 
 ### `screenscribe review`
@@ -274,10 +284,18 @@ report and opens the HTML report in your browser. Key options:
 
 - `--lang / -l` — transcription language (default `en`; pass `--lang pl` for Polish).
 - `--no-serve` — write the report without starting the browser server.
+- `--transcript-source auto|audio|ocr` — where transcript segments come from:
+  audio STT when an audio track exists, or VLM OCR of frames otherwise.
+  `auto` (default) picks per video, so silent recordings are analyzed instead
+  of rejected; `--no-audio` is the shortcut for `ocr`, and `--frame-interval`
+  sets the seconds between OCR'd frames (default 5).
 - `--no-vision` (alias `--no-vlm`) — skip the visual/screenshot (VLM) step; the
   semantic LLM detection still runs.
 - `--keywords-file` — per-run keywords file. Keywords are always-on AI hints
   (see [Keywords](#screenscribe-keywords) below); an empty or missing file is safe.
+- `--preset` — switch the whole analysis profile (keyword dictionary, finding
+  categories, prompt focus): `programming` (default), `casual`, `medical`,
+  `veterinary`, or `custom` (requires `--keywords-file`).
 - `--resume` / `--force` — resume from a checkpoint, or overwrite a prior screenscribe
   review (never a folder screenscribe does not own).
 
@@ -313,6 +331,15 @@ Transcribe a video's audio to plain text, with no analysis.
 uv run screenscribe transcribe demo.mov                 # print to stdout
 uv run screenscribe transcribe demo.mov -o transcript.txt
 uv run screenscribe transcribe demo.mov --local --lang en
+```
+
+### `screenscribe tts`
+
+Synthesize speech from text through xAI TTS (`POST /v1/tts`). Requires the xAI
+preset or `SCREENSCRIBE_TTS_ENDPOINT` + `SCREENSCRIBE_TTS_API_KEY`.
+
+```bash
+screenscribe tts "Dzień dobry" --out hello.mp3 --language pl --voice eve
 ```
 
 ### `screenscribe preprocess`
@@ -439,14 +466,17 @@ OpenAI or any compatible provider.
 export SCREENSCRIBE_STT_MODEL=whisper-1
 export SCREENSCRIBE_LLM_MODEL=gpt-4o          # provider-specific
 export SCREENSCRIBE_VISION_MODEL=gpt-4o       # provider-specific
-export SCREENSCRIBE_LLM_REASONING_EFFORT=medium  # minimal|low|medium|high for text-LLM calls
+export SCREENSCRIBE_LLM_REASONING_EFFORT=none  # none|low|medium|high|xhigh|max for text-LLM calls
 ```
 
 Defaults: STT `whisper-1`, LLM and vision `programmer` (the LibraxisAI
 default — change these to your provider's model names, e.g. `gpt-4o`).
-All text-LLM Responses API calls (pre-filter, text-only analysis, summaries,
-merge) send reasoning effort `medium`; lower it to `low` if detection fails after the model
-reasons for a long time without answering.
+Text-LLM Responses API calls (pre-filter, text-only analysis, summaries,
+merge) use a configured reasoning effort. When unset, the default is `low`
+for xAI and `none` for OpenAI/LibraxisAI; custom endpoints omit the option
+until you explicitly configure support.
+Lower it to `low` if detection fails after the model reasons for a long time
+without answering.
 
 ### Processing options
 
