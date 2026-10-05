@@ -10,10 +10,9 @@
 
 - **Changed: reasoning-effort default is now per provider preset; `minimal`
   removed, `xhigh`/`max` added.** `SCREENSCRIBE_LLM_REASONING_EFFORT` accepts
-  `none|low|medium|high|xhigh|max`. `minimal` was never supported by any
-  provider (OpenAI rejects it with a 400, xAI silently aliases it to `low`), so
-  it is now simply invalid — it warns and falls back like any other unknown
-  value, with no deprecation shim. When no effort is configured, the default
+  `none|low|medium|high|xhigh|max`. The CLI no longer accepts `minimal`: it
+  warns and falls back like any other unknown value, with no deprecation
+  shim. When no effort is configured, the default
   is resolved from the provider preset: `low` for xAI (which rejects `none`
   with a 400), `none` for LibraxisAI and OpenAI. Unknown custom providers omit
   the option until explicitly configured.
