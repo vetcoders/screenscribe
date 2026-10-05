@@ -44,6 +44,13 @@ restarts from the last completed stage rather than the top.
 Orchestration for this whole chain lives in `review_pipeline.py::run_review`
 (audio -> transcribe -> detection -> screenshots -> unified analysis -> report),
 which also owns checkpoint restore/save and the empty-state / failure handling.
+The default transcript source is `auto`: an audio track uses STT, while a
+recording without one uses interval-based frame OCR. `transcript_sources.py`
+validates/resolves this choice; its protocol registry is an extension helper,
+not the runtime dispatcher. OCR is screen evidence, not narrator instructions.
+Checkpoint schema v3 binds the source/interval, preset, vocabulary and prompt.
+OCR cache entries are private and bind frame content, endpoint, model and
+effective prompt.
 The `analyze` mode is frame-driven instead of transcript-driven: the user marks
 moments in the browser and the server runs the same unified analysis per marker
 (see the servers section).
@@ -63,6 +70,8 @@ moments in the browser and the server runs the same unified analysis per marker
 | `preprocess.py` | Optional video/audio preprocessing before a run. |
 | `vtt_generator.py` | WebVTT subtitle generation for the report player. |
 | `checkpoint.py` | Resume/checkpointing of long runs (atomic writes, per-stage completion). |
+| `frame_ocr.py`, `transcript_sources.py` | Frame OCR and validated audio/OCR source selection. |
+| `presets/` | Programming, casual, medical, veterinary and custom vocabularies/prompts. |
 
 ### Analysis engine (`unified/`)
 
@@ -104,6 +113,14 @@ but each registers its own routes.
   a few routes — `GET /`, `GET /video`, `POST /api/stt` — still exist in both
   servers and must be kept in sync when patched).
 - `server_security.py` — session token, authorization, and CORS for both servers.
+- `agent/` — report-seeded chat, guarded tools, provider fallback and SSE.
+  The browser applies proposed edits through the existing review state/save
+  path and records the exact applied user request in reviewer notes. Cursor
+  identity is bound to provider/protocol/host; report finding IDs do not become
+  a shared conversation head.
+- `processing_provenance.llm` records an actually successful semantic request.
+  Agent processor trust uses this receipt, not the currently configured
+  endpoint list. Missing/legacy receipts establish no processor trust.
 
 ## Report and HTML layer
 
@@ -126,7 +143,14 @@ The report is a single self-contained HTML file: all CSS/JS/fonts are inlined as
 `cli_serve.py`.
 
 Commands: `review`, `analyze`, `transcribe`, `preprocess`, `keywords`, `config`,
-`version`. See [../USAGE.md](../USAGE.md) for the full flag reference.
+`auth`, `tts`, `version`. `account_auth/` implements device-code sign-in and
+private token storage; xAI accounts can supply the API bearer, while OpenAI
+account sign-in remains identity-only. See [../USAGE.md](../USAGE.md).
+
+The report/ZIP handoff keeps source segments, source kind, reviewer notes and
+review state alongside model proposals. `source_role=screen_text` distinguishes
+OCR from narrator feedback. Shared `count_report_categories` powers active
+preset counts without replacing the legacy JSON summary keys.
 
 ## Internationalization: three sources
 

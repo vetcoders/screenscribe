@@ -9,8 +9,8 @@
   it is now simply invalid — it warns and falls back like any other unknown
   value, with no deprecation shim. When no effort is configured, the default
   is resolved from the provider preset: `low` for xAI (which rejects `none`
-  with a 400), `none` for LibraxisAI, OpenAI, and custom providers — restoring
-  the reasoning-off behavior `main` always shipped for those providers.
+  with a 400), `none` for LibraxisAI and OpenAI. Unknown custom providers omit
+  the option until explicitly configured.
   Invalid configured values fall back to that provider default instead of
   blindly `medium`, and `config setup` writes the preset's default into the
   generated `config.env` explicitly, so a fresh setup never starts with a
@@ -64,13 +64,13 @@
   configured LLM Responses endpoint (`previous_response_id` chaining); Anthropic
   is an optional fallback extra. Screen recordings are treated as secrets:
   `SCREENSCRIBE_AGENT_EGRESS` defaults to `deny` for `trust=external` hosts.
-  xAI is external unless `SCREENSCRIBE_AGENT_PRIMARY_TRUST=internal`. The JSON
-  report now stores `analysis_passes.unified_analysis.response_id` so the next
-  review can resume the last VLM pass for free.
+  A successful semantic request records `processing_provenance.llm` and
+  establishes processor trust for that report; configured endpoints alone
+  do not. Finding response IDs remain evidence, not a shared chat cursor.
 - **Added: floating screenscribe agent chat on the HTML review report.** A
   collapsed 『s』 chip docks in the corner; expanding it places a draggable
   panel beside the player (never over it) and streams `POST /api/agent/chat/stream`.
-  Offline file:// reports show "run `screenscribe serve`" instead of a console
+  Offline file:// reports show the supported `review` / `analyze` commands instead of a console
   error. Tool calls `seek` and `show_frame` jump the player and highlight the
   matching finding. Cut `w1-05-agent-floating`.
 
@@ -80,13 +80,11 @@
   beside the player (or docks as a side sheet that shrinks `.app-container`
   when no clear spot fits); an error turn paints the assistant bubble instead
   of leaving an empty one.
-  A host that already analyzed the recording (STT/LLM/vision) is
-  `trust=processor` and is kept under that default, so the xAI preset chats
-  without an extra env var. `SCREENSCRIBE_AGENT_PRIMARY_TRUST=external` remains
+  A recorded successful semantic host is `trust=processor` and is kept under
+  that default. `SCREENSCRIBE_AGENT_PRIMARY_TRUST=external` remains
   the opt-out; a fallback on a different host (e.g. Anthropic) is still skipped
-  under `deny`. The JSON report now stores
-  `analysis_passes.unified_analysis.response_id` so the next review can resume
-  the last VLM pass for free.
+  under `deny`. Chat cursors bind the actual provider/protocol/host and are
+  cleared on fallback/error; every turn keeps the report seed/instructions.
 - **Added: review-patch write tools on the review agent.** The agent can
   `set_verdict`, `set_severity`, `edit_finding`, and `add_finding`, or
   `propose_review` a plan for a broad request. Tools never write `report.json`;
@@ -104,6 +102,26 @@
   into the chat. Offline `file://` reports announce that patches cannot be saved
   and never apply silently. Save 409/network failures show a Retry instead of
   looping. Merge ops stay unsupported. Cut `w2-02-review-panel`.
+
+- **Fixed: review and agent handoffs preserve source authority.** TODO and ZIP
+  exports include the complete timestamped source, per-finding source evidence,
+  reviewer state/notes and separate model proposals. OCR is labelled screen text,
+  never narrator instructions. Applied agent edits preserve the exact user
+  request in notes and confirm only after save. Summary/category/action overrides
+  survive reload, merges and export.
+- **Fixed: OCR and resume bind effective inputs.** Private OCR cache keys include
+  frame/model/endpoint/prompt; malformed entries are misses and temporary frames
+  are removed. Checkpoint v3 binds source/interval/preset/vocabulary/prompt.
+  Preset category IDs are validated before paid work and custom category counts
+  include explicit zeros without replacing legacy JSON summary keys.
+- **Fixed: review interaction and agent streaming.** Annotation moves preserve
+  geometry at image edges, legacy IDs remain stable, text overlays track layout,
+  and manual captures wait for seeking. The panel fits narrow screens, accepts
+  CRLF SSE and clears stale cursors. Responses tool-call IDs and Anthropic
+  continuations preserve their protocol contracts; fallback never combines a
+  partial response from one provider with another.
+- **Fixed: signed-in xAI setup can use its account bearer without a pasted key.**
+  API-key setup remains available through the same wizard.
 
 - **Internal: refresh runtime and development dependencies.** Updated the lockfile
   to the latest compatible releases, including mypy 2.3.1 and Rich 15.0.0.
@@ -198,9 +216,10 @@
   the default LLM reasoned in a loop for 11-20 minutes, emitted no text and
   ended with `response.failed`. All text-LLM Responses API requests (pre-filter,
   text-only finding analysis, executive summaries, LLM merge) now send
-  `reasoning.effort`, default `medium`,
-  configurable with the new `SCREENSCRIBE_LLM_REASONING_EFFORT`
-  (`minimal`/`low`/`medium`/`high`); Chat Completions endpoints and the vision
+  `reasoning.effort` using the provider default (`low` for xAI, `none` for
+  verified OpenAI/Libraxis presets; omitted for unconfigured custom providers),
+  configurable with `SCREENSCRIBE_LLM_REASONING_EFFORT`
+  (`none`/`low`/`medium`/`high`/`xhigh`/`max`); Chat Completions endpoints and the vision
   request are unchanged. An in-stream provider error is retried only if it
   arrives before the model streamed any output, so such a failure is reported
   once (with a hint to lower the effort) instead of being retried for close to
