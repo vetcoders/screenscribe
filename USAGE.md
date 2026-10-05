@@ -135,13 +135,14 @@ The transcript is an abstraction over where timestamped segments come from:
   chaining) works unchanged. OCR uses the vision credentials/endpoint, so it
   also works under `--no-vision` (which only skips VLM *analysis*).
 - `auto` (default) — `audio` when the recording has an audio track, `ocr`
-  otherwise. A silent recording therefore reaches semantic analysis instead
+  otherwise. A recording without an audio track reaches semantic analysis instead
   of failing at the audio gate. `--no-audio` is a shortcut for
   `--transcript-source ocr`.
 
 `--prompt` instructions reach the OCR stage and all analysis stages either
-way. OCR results are cached per frame content hash, so re-runs and `--resume`
-never re-pay for a frame that was already read.
+way. Private OCR cache entries bind frame content, model, endpoint and the
+effective prompt. Matching re-runs reuse them; changing those inputs triggers
+fresh OCR. Checkpoints also bind the source/interval, preset and vocabulary.
 
 ```bash
 uv run screenscribe review silent-demo.mov --no-audio --prompt "No audio; the explanations are written on screen"
@@ -185,9 +186,9 @@ uv run screenscribe review demo.mov --lang en --prompt "Focus on accessibility i
 uv run screenscribe review demo.mov --estimate            # just the time estimate
 ```
 
-> `review` and `transcribe` expect an **audio track** by default — but `review`
-> no longer fails on silent recordings: the default `auto` transcript source
-> routes them to frame OCR. Only an explicit `--transcript-source audio` keeps
+> `transcribe` requires an **audio track**. `review` uses the default `auto`
+> transcript source: audio STT when a track exists, frame OCR otherwise.
+> Only an explicit `--transcript-source audio` keeps
 > the fail-fast behavior, pointing you to `uv run screenscribe analyze`
 > (vision-only). See [Troubleshooting](#no-audio-track).
 
@@ -412,6 +413,11 @@ uv run screenscribe auth status           # never prints tokens
 uv run screenscribe auth logout xai
 ```
 
+For xAI account access, follow sign-in with `screenscribe config setup`,
+choose xAI, and accept the signed-in account instead of entering an API key.
+This writes a coherent xAI preset with empty key fields; requests resolve the
+stored account token. Sign-in by itself does not reroute an existing setup.
+
 Tokens are stored in `~/.config/screenscribe/accounts.json` (mode 0600) and
 refreshed automatically when a refresh token is present.
 
@@ -566,7 +572,7 @@ moving to a new provider.
 | `SCREENSCRIBE_STT_MODEL` | `whisper-1` | OpenAI-Whisper-compatible. |
 | `SCREENSCRIBE_LLM_MODEL` | `programmer` | LibraxisAI default — change to your provider's model (e.g. `gpt-4o`). |
 | `SCREENSCRIBE_VISION_MODEL` | `programmer` | LibraxisAI default — change to your provider's vision model. |
-| `SCREENSCRIBE_LLM_REASONING_EFFORT` | per provider | Reasoning effort sent with all text-LLM Responses API calls (pre-filter, text-only analysis, summaries, merge): `none`, `low`, `medium`, `high`, `xhigh`, or `max`. Not sent to Chat Completions endpoints or to the vision request. When unset, the default is resolved per provider preset: `low` for xAI (which rejects `none`), `none` for LibraxisAI, OpenAI, and custom providers. An invalid value warns and falls back to that provider default. Lower it to `low` if detection fails after the model reasons for a long time without answering; `none` turns reasoning off on providers that support it. |
+| `SCREENSCRIBE_LLM_REASONING_EFFORT` | per provider | Reasoning effort for text-LLM Responses API calls (pre-filter, text-only analysis, summaries, merge): `none`, `low`, `medium`, `high`, `xhigh`, or `max`. Not sent to Chat Completions or vision requests. When unset: `low` for xAI, `none` for LibraxisAI/OpenAI, omitted for custom providers until explicitly configured. An invalid value warns and resolves the final provider's default regardless of config key order. |
 
 ### Processing options
 
@@ -578,20 +584,36 @@ moving to a new provider.
 
 ### Review agent chat
 
-The review server exposes `POST /api/agent/chat` and `POST /api/agent/chat/stream` (SSE). Screen recordings contain secrets, so **external** providers are skipped unless you opt in. A host that already ran STT, LLM, or vision for this config is `trust=processor` and is kept under `deny`.
+The review server exposes `POST /api/agent/chat` and `POST /api/agent/chat/stream` (SSE). Under `deny`, external providers are skipped. A successful semantic LLM request records its host/protocol/provider in `processing_provenance.llm`; only that recorded analysis host qualifies as a processor. Merely configuring an endpoint does not prove that it processed this report. Legacy reports without a receipt do not establish processor trust.
 
 The agent can propose edits to findings. Write tools (`set_verdict`, `set_severity`, `edit_finding`, `add_finding`, `propose_review`) **do not write** `report.json`. They validate against the loaded report and return a `review_patch` (or a `review_plan` for broad requests). The browser is the single writer: the panel applies the patch to `reportState` and saves through the existing `/api/save` lock. The agent uses the same credential as `screenscribe auth login xai` / `review` — `ScreenScribeConfig.get_llm_api_key()` already falls back to the signed-in xAI account bearer; there is no extra key. Never treat a tool result as a saved edit; the panel confirms with `review_applied`.
+
+After an applied patch, the panel appends the exact user chat request to the
+affected finding/manual-frame notes, preserving existing notes. Read-only or
+no-op chat does not modify review data. The panel reports `review_applied:`
+only after a successful save; a failed save remains visibly unconfirmed.
 
 `merge_findings` / `unmerge_finding` currently return `{"unsupported": true}` — merge is a client-only fold (`mergeFindings` in the report UI) with no patch-callable API.
 
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `SCREENSCRIBE_AGENT_EGRESS` | `deny` | `deny` skips providers whose trust is `external`. `allow` sends the loaded report (and therefore the recording's contents) to those hosts. Analysis hosts (`processor`) are always kept. |
-| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from the LLM host | `local` / `internal` / `processor` / `external`. localhost is `local`; `api.libraxis.cloud` is `internal`; a host matching STT/LLM/vision is `processor`. **xAI (`api.x.ai`) is `processor` on the xAI preset.** Set `external` to opt that host out under `deny`. |
+| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from host and report receipt | `local` / `internal` / `processor` / `external`. localhost is `local`; `api.libraxis.cloud` is `internal`; a recorded successful semantic LLM host is `processor`. Set `external` to exclude that host under `deny`. |
 
 Optional Anthropic fallback (skipped when unset): `ANTHROPIC_API_KEY` or `SCREENSCRIBE_AGENT_FALLBACK_API_KEY`. Install the extra with `pip install 'screenscribe[anthropic]'`.
 
-SSE events (UI contract): `token`, `tool_call`, `tool_result`, `done`, `error`. Request body: `{"message": str, "history": [{role, content}], "previous_response_id": str|null}`. The first turn resumes `analysis_passes.unified_analysis.response_id` when present; otherwise the agent is seeded from the report JSON.
+SSE events: `token`, `tool_call`, `tool_result`, `done`, `error`. Text uses
+round-buffered delivery: the backend sends it after each provider round
+completes, then emits tool events. It does not deliver individual tokens as
+the provider generates them. Requests
+contain `message`, `history`, and an optional cursor bundle:
+`previous_response_id`, `previous_response_provider`,
+`previous_response_protocol`, `previous_response_host`. The cursor is reused
+only when the complete identity matches the primary Responses provider;
+otherwise the backend uses full history and the report seed. `done` includes
+`response_id`, `provider`, `protocol`, `host`. Fallback, errors, incomplete
+streams and identity changes clear the cursor. Finding response IDs are
+evidence, not a shared conversation head.
 
 ### xAI, TTS and live STT
 
@@ -828,6 +850,31 @@ the video; with `-o <existing folder>` it is `<folder>/<video>_review`):
 - Captured screenshots for each finding.
 - `TODO_<video>.md` — a Markdown task list you can export from the interactive
   HTML report ("Export TODO"), handy for dropping findings into a sprint.
+
+### Handoff to a coding agent
+
+Review the findings, add scope limits in the reviewer notes, then export TODO
+or the reviewed ZIP. TODO includes the complete timestamped narration, the
+source excerpt for each finding when available, review state, components,
+model proposals and evidence-frame references. The ZIP includes the same TODO,
+reviewed JSON, images, `transcript.txt` and `agent_manifest.json`.
+
+Narration and reviewer notes are the source of user intent. Later corrections,
+scope limits and retractions apply even when they occur outside a finding's
+timestamp. A model's summary, suggested fix and action items are proposals.
+Confirming that an issue exists does not approve every proposed implementation.
+Unreviewed findings are labelled accordingly. Human summary/action overrides
+are reflected in the exported view and retained separately in reviewed data.
+
+The manifest records `source_segments`, timestamps, `review_verdict`,
+`reviewer_notes` and `user_said_source`. Older reports without transcript
+segments retain detection text with `user_said_source: "detection"`; that text
+may be paraphrased and is not presented as a guaranteed transcript quotation.
+
+`transcript_source` distinguishes audio narration from OCR screen text.
+OCR exports use `source_role: "screen_text"` and retain the text as evidence,
+never as `user_said`. A screen label is not a spoken instruction. An absent
+source kind remains unknown rather than proving who authored the transcript.
 
 ### Preprocess bundle
 
