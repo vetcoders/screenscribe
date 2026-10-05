@@ -2049,7 +2049,7 @@ def _finding_card_stubs() -> str:
                 if (sel === '.finding-summary') return summaryEl;
                 return null;
             },
-            querySelectorAll(sel) { return String(sel).includes('verdict') ? radios : []; },
+            querySelectorAll(sel) { return sel === '.radio-group input[type="radio"]' ? radios : []; },
             appendChild() {},
             scrollIntoView() {},
         };

@@ -330,6 +330,35 @@ def test_todo_respects_human_summary_and_action_overrides() -> None:
     )
 
 
+def test_empty_saved_overrides_preserve_generated_summary_in_handoffs() -> None:
+    setup = """
+        reportState.findings = {
+            a: {
+                verdict: 'accepted', annotations: [], notes: 'Only copy.',
+                summary_override: '', category_override: '', action_items: '',
+            },
+        };
+        reportState.merges = [];
+    """
+    _run_todo(
+        setup,
+        """
+        if (!md.includes('Save button unresponsive'))
+            throw new Error('empty saved override erased the generated summary');
+        """,
+        findings=[_FINDINGS[0]],
+    )
+    _run_manifest(
+        setup,
+        """
+        const manifest = JSON.parse(files['agent_manifest.json'].data);
+        if (manifest.findings[0].title !== 'Save button unresponsive')
+            throw new Error('empty saved override erased manifest summary');
+        """,
+        findings=[_FINDINGS[0]],
+    )
+
+
 def test_manifest_preserves_source_verdict_and_full_transcript_reference() -> None:
     """The structured handoff identifies actual transcript evidence and review state."""
     _run_manifest(
