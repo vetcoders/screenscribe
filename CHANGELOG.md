@@ -14,6 +14,9 @@
   a parent (`<folder>/<video>_review`, re-runs version inside it), matching
   batch mode, instead of creating a `<folder>_2` sibling. A path that does not
   exist, or a real previous review, behaves as before.
+- **Hardened: review ownership markers never follow symlinks.** Report files and
+  `.screenscribe_cache/` prove ownership only as real entries, so `--force`
+  cannot write through a foreign marker symlink into its target.
 - **Fixed: an output directory that cannot be created is a clear error.**
   Permission denied, read-only volumes and file-in-the-way paths now print an
   "Output Directory Error" with the path and reason and exit with code 1,
@@ -21,13 +24,14 @@
 - **Fixed: `review` never writes into a folder screenscribe does not own.** An
   existing file or non-empty non-review folder at `<video>_review` is skipped
   (the next free `_2`, `_3`, … is used, without the overwrite/resume prompt),
-  a version slot is used only when missing or empty, and running out of
+  a version slot is used only when missing (an existing empty directory may be
+  another process's live claim and is skipped), and running out of
   versions prints an "Output Directory Error" instead of a traceback.
   `--force` refuses (exit 1, nothing changed) when the target is a file or a
   non-empty folder that is not a screenscribe review, and a checkpoint cache it
   cannot remove is reported as an error instead of a traceback. The output
   folder is reserved right before use (created exclusively, re-checked, and
-  probed for writability), so a slot taken in the meantime or a read-only
+  reselected after a lost `mkdir` race), so a slot taken in the meantime or a read-only
   folder stops with an error instead of being written into or crashing.
 - **Fixed: semantic pre-filter failures name the real cause.** Provider error
   events inside a 200 response stream (`error`, `response.failed`,

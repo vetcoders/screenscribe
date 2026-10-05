@@ -708,14 +708,16 @@ def test_version_slot_skips_ordinary_non_empty_folder(tmp_path: Path) -> None:
     )
 
 
-def test_version_slot_reuses_empty_folder(tmp_path: Path) -> None:
+def test_version_slot_skips_empty_folder(tmp_path: Path) -> None:
     base = _completed_base(tmp_path)
-    (tmp_path / "demo_review_2").mkdir()
+    empty = tmp_path / "demo_review_2"
+    empty.mkdir()
 
     assert cli_module._find_next_review_path(base, video_stem="demo") == (
-        tmp_path / "demo_review_2",
-        2,
+        tmp_path / "demo_review_3",
+        3,
     )
+    assert list(empty.iterdir()) == []
 
 
 def test_version_slot_skips_existing_file(tmp_path: Path) -> None:
@@ -788,11 +790,15 @@ def test_foreign_base_and_foreign_second_slot_allocates_third(tmp_path: Path) ->
     )
 
 
-def test_empty_base_folder_is_used(tmp_path: Path) -> None:
+def test_empty_base_folder_is_skipped(tmp_path: Path) -> None:
     base = tmp_path / "demo_review"
     base.mkdir()
 
-    assert cli_module._find_next_review_path(base, video_stem="demo") == (base, None)
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (
+        tmp_path / "demo_review_2",
+        2,
+    )
+    assert list(base.iterdir()) == []
 
 
 def test_foreign_base_file_is_skipped_by_allocator(tmp_path: Path) -> None:
@@ -891,6 +897,37 @@ def test_force_refuses_foreign_file(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert blocker.read_bytes() == b"a file"
 
 
+def test_force_refuses_empty_unowned_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    empty = tmp_path / "demo_review"
+    empty.mkdir()
+
+    result = _run_default(runner, video_path, "--force")
+
+    _assert_force_refused(result)
+    assert list(empty.iterdir()) == []
+
+
+def test_force_refuses_symlinked_report_marker_without_touching_target(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner, video_path, _ = _success_harness(monkeypatch, tmp_path)
+    target = tmp_path / "outside.json"
+    target.write_bytes(b"foreign bytes")
+    review = tmp_path / "demo_review"
+    review.mkdir()
+    marker = review / "demo_report.json"
+    marker.symlink_to(target)
+
+    result = _run_default(runner, video_path, "--force")
+
+    _assert_force_refused(result)
+    assert marker.is_symlink()
+    assert target.read_bytes() == b"foreign bytes"
+
+
 def test_force_overwrites_own_complete_review(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -961,6 +998,34 @@ def test_reserve_moves_on_when_slot_is_taken_after_classification(tmp_path: Path
 
     assert reserved == tmp_path / "demo_review_3"
     assert chosen.read_bytes() == b"someone else"
+    assert reserved.is_dir()
+
+
+def test_reserve_moves_on_when_empty_slot_wins_mkdir_race(tmp_path: Path) -> None:
+    """A process that loses mkdir never accepts the winner's still-empty folder."""
+    from screenscribe.cli_paths import reserve_review_output_slot
+
+    chosen = tmp_path / "demo_review_2"
+    real_mkdir = Path.mkdir
+
+    def racing_mkdir(self: Path, *args: object, **kwargs: object) -> None:
+        if self == chosen and not chosen.exists():
+            real_mkdir(chosen)
+        real_mkdir(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    base = tmp_path / "demo_review"
+    base.mkdir()
+    (base / "demo_report.json").write_text("{}")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "mkdir", racing_mkdir)
+        reserved = reserve_review_output_slot(
+            chosen,
+            "demo",
+            reselect=lambda: cli_module._find_next_review_path(base, video_stem="demo")[0],
+        )
+
+    assert reserved == tmp_path / "demo_review_3"
+    assert list(chosen.iterdir()) == []
     assert reserved.is_dir()
 
 

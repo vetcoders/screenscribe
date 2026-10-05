@@ -91,7 +91,7 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 | `--embed-video` | off | Embed the video as base64 in the HTML report (only for files < 50 MB). |
 | `--keywords-file`, `-k` | global file | Per-run keywords YAML. Keywords are always-on AI hints (never replace the LLM, safe when empty); overrides the global `~/.config/screenscribe/keywords.yaml`. |
 | `--resume` | off | Resume from a previous checkpoint if available. |
-| `--force` | off | Force reprocessing and overwrite the existing review instead of versioning. Only a screenscribe review folder (or a missing/empty one) can be overwritten; if the target is a file or a non-empty folder screenscribe does not own, `review` stops with an error and changes nothing. |
+| `--force` | off | Force reprocessing and overwrite the existing review instead of versioning. Only a screenscribe review folder (or a missing target) can be overwritten; if the target is a file or a folder screenscribe does not own, `review` stops with an error and changes nothing. |
 | `--estimate` | off | Show a time estimate (from video duration) without processing. |
 | `--dry-run` | off | **Not free.** Still runs paid transcription (STT, unless `--local`) and LLM issue detection, then stops before writing reports. For a zero-cost preview use `--estimate` instead. |
 | `--skip-validation` | off | Skip the model-availability check (faster start, may fail mid-pipeline). |
@@ -596,8 +596,8 @@ uv run screenscribe review demo.mov
 screenscribe transcribes, finds actionable moments, captures screenshots,
 confirms them with the vision model, writes JSON/Markdown/HTML reports, and
 opens the HTML report in your browser. Re-running preserves the prior report as
-`_2`, `_3`, … (the first slot that does not exist or is an empty folder; an
-existing non-empty `_N` is never written into); pass `--force` to overwrite
+`_2`, `_3`, … (the first slot that does not exist; an existing `_N`, including
+an empty directory another process may have claimed, is never written into); pass `--force` to overwrite
 instead.
 
 screenscribe never writes into a folder it does not own. If `<video>_review`
@@ -606,8 +606,9 @@ review, the run moves on to the next free `_2`, `_3`, … slot and leaves that
 folder untouched. When no free slot is left below the version limit, `review`
 stops with an "Output Directory Error" asking for a new `-o` folder.
 
-A folder counts as a previous review only when it holds a `.screenscribe_cache/`
-checkpoint or this video's own `<video>_report.{json,md,html}` (legacy
+A folder counts as a previous review only when it holds a real, non-symlink
+`.screenscribe_cache/` checkpoint or this video's own non-symlink
+`<video>_report.{json,md,html}` (legacy
 `report.json` / `report.html` also count). Unrelated files such as someone
 else's `notes_report.md` never do, so `review demo.mov -o ~/Downloads` writes
 `~/Downloads/demo_review` instead of versioning `~/Downloads` itself.

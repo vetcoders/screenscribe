@@ -169,6 +169,23 @@ def test_is_review_directory_rule(tmp_path: Path) -> None:
     assert not is_review_directory(a_file, "demo")
 
 
+def test_review_ownership_markers_must_not_be_symlinks(tmp_path: Path) -> None:
+    """Foreign symlinks never prove that a folder belongs to screenscribe."""
+    target_file = tmp_path / "outside.json"
+    target_file.write_text("foreign")
+    report_dir = tmp_path / "report-link"
+    report_dir.mkdir()
+    (report_dir / "demo_report.json").symlink_to(target_file)
+    assert not is_review_directory(report_dir, "demo")
+
+    target_cache = tmp_path / "outside-cache"
+    target_cache.mkdir()
+    checkpoint_dir = tmp_path / "checkpoint-link"
+    checkpoint_dir.mkdir()
+    (checkpoint_dir / ".screenscribe_cache").symlink_to(target_cache, target_is_directory=True)
+    assert not is_review_directory(checkpoint_dir, "demo")
+
+
 def test_find_next_versioned_path_skips_consecutive_bundles(tmp_path: Path) -> None:
     """When _2 also holds a bundle, the next free slot is _3."""
     base = tmp_path / "out"
