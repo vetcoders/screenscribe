@@ -129,6 +129,55 @@ class TestLLMModelValidation:
             result = _check_llm_model(config, config.llm_model, "LLM")
             assert result is False
 
+    def test_provider_failure_body_redacts_urls_and_escapes_markup(
+        self, config: ScreenScribeConfig, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Provider-controlled 200-body text cannot leak URL secrets or Rich markup."""
+        with patch("screenscribe.validation.httpx.Client") as mock_client:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                "status": "failed",
+                "error": {
+                    "message": (
+                        "[bold]denied[/bold] at "
+                        "https://user:secret@example.com/v1?api_key=secret#fragment"  # pragma: allowlist secret
+                    )
+                },
+            }
+            mock_client.return_value.__enter__.return_value.post.return_value = mock_response
+
+            assert _check_llm_model(config, config.llm_model, "LLM") is False
+
+        output = capsys.readouterr().out
+        assert "secret" not in output
+        assert "user" not in output
+        assert "https://***@example.com/v1?api_key=***" in output
+        assert "[bold]denied[/bold]" in output
+
+    def test_503_model_error_body_redacts_urls(self, config: ScreenScribeConfig) -> None:
+        """A raised body-derived validation error contains only the redacted URL."""
+        with patch("screenscribe.validation.httpx.Client") as mock_client:
+            mock_response = MagicMock()
+            mock_response.status_code = 503
+            mock_response.json.return_value = {
+                "error": {
+                    "message": (
+                        "model unavailable at "
+                        "https://user:secret@example.com/v1?api_key=secret#fragment"  # pragma: allowlist secret
+                    )
+                }
+            }
+            mock_client.return_value.__enter__.return_value.post.return_value = mock_response
+
+            with pytest.raises(ModelValidationError) as exc_info:
+                _check_llm_model(config, config.llm_model, "LLM")
+
+        message = str(exc_info.value)
+        assert "secret" not in message
+        assert "user" not in message
+        assert "https://***@example.com/v1?api_key=***" in message
+
     def test_model_not_found_404(self, config: ScreenScribeConfig) -> None:
         """404 response means model not found."""
         with patch("screenscribe.validation.httpx.Client") as mock_client:

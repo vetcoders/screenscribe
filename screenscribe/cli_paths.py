@@ -44,7 +44,7 @@ def _is_dir(path: Path) -> bool:
 
 def _is_file(path: Path) -> bool:
     try:
-        return path.is_file()
+        return not path.is_symlink() and path.is_file()
     except OSError:
         return False
 
@@ -104,7 +104,8 @@ def is_review_directory(path: Path, video_stem: str | None = None) -> bool:
     """
     if not _is_dir(path):
         return False
-    if _is_dir(path / CHECKPOINT_DIR_NAME):
+    checkpoint_dir = path / CHECKPOINT_DIR_NAME
+    if not checkpoint_dir.is_symlink() and _is_dir(checkpoint_dir):
         return True
     return has_review_report_bundle(path, video_stem)
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: model-validation messages redact provider-supplied URLs.** Both
+  streaming failure bodies and model-unavailable errors remove URL credentials
+  and query values; validation warnings also escape Rich markup.
+
 - **Fixed: `review -o <existing folder>` no longer mistakes an ordinary folder
   for a previous review.** A folder is a previous review only when it holds a
   `.screenscribe_cache/` checkpoint or this video's own `<video>_report.*`
@@ -31,6 +35,9 @@
 - **Fixed: `review --estimate` is read-only.** It prints the time table before
   any output-folder handling, so it no longer creates an empty output directory,
   shows the rerun prompt, or refuses a `--force` target.
+- **Hardened: review ownership markers never follow symlinks.** Report files and
+  `.screenscribe_cache/` prove ownership only as real entries, so `--force`
+  cannot write through a foreign marker symlink into its target.
 - **Fixed: an output directory that cannot be created is a clear error.**
   Permission denied, read-only volumes and file-in-the-way paths now print an
   "Output Directory Error" with the path and reason and exit with code 1,
@@ -45,8 +52,8 @@
   non-empty folder that is not a screenscribe review, and a checkpoint cache it
   cannot remove is reported as an error instead of a traceback. The output
   folder is reserved right before use (created exclusively, re-checked, and
-  probed for writability), so a slot taken in the meantime or a read-only
-  folder stops with an error instead of being written into or crashing.
+  reselected after a lost `mkdir` race), so a slot taken in the meantime or a
+  read-only folder stops with an error instead of being written into or crashing.
 - **Fixed: semantic pre-filter failures name the real cause.** Provider error
   events inside a 200 response stream (`error`, `response.failed`,
   `response.incomplete`) are captured and shown with their message and code
