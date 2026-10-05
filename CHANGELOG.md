@@ -2,6 +2,15 @@
 
 ## [0.1.20.dev0] - Unreleased
 
+- **Fixed: legacy screenshot references in reviewed ZIPs are portable.**
+  `findings[].screenshot_path` now points to the same bundled original image
+  as `screenshot_original`, including merged findings. Inherited image-path
+  fields are rebuilt only for files actually written to the archive, so
+  text-only findings cannot retain stale source-report image references.
+  Auto-merged evidence frames are also bundled and rewritten in reviewed JSON
+  and the manifest. Original images retain their media type in the filename
+  extension and their exact bytes, including PNG and other non-JPEG frames.
+
 - **Fixed: review-agent exception details stay in server logs.** Unexpected
   provider and tool failures no longer expose exception text to SSE clients,
   tool consumers or the non-streaming HTTP route. Configuration and explicit
