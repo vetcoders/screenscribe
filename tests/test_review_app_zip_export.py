@@ -464,6 +464,98 @@ def test_zip_merged_findings_rewrite_legacy_image_paths() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("media_type", "extension"),
+    [
+        ("image/jpeg", "jpg"),
+        ("image/png", "png"),
+        ("image/png;charset=UTF-8", "png"),
+        ("image/webp", "webp"),
+        ("image/gif", "gif"),
+    ],
+)
+def test_zip_original_image_extension_matches_media_type(media_type: str, extension: str) -> None:
+    """Consumers can select their decoder from the bundled filename."""
+    _run_export(
+        f"""
+        const reviewed = JSON.parse(files['report_reviewed_demo.json'].data);
+        const finding = reviewed.findings[0];
+        if (!finding.screenshot_original.endsWith('.{extension}'))
+            throw new Error('image media type lost: ' + finding.screenshot_original);
+        if (finding.screenshot_path !== finding.screenshot_original)
+            throw new Error('legacy alias differs from original');
+        if (files[finding.screenshot_original].data !== 'QUJD')
+            throw new Error('original image bytes changed');
+        const manifest = JSON.parse(files['agent_manifest.json'].data);
+        if (manifest.findings[0].screenshot !== finding.screenshot_original)
+            throw new Error('manifest image differs from reviewed image');
+        """,
+        findings=[{**_FINDINGS[0], "screenshot": f"data:{media_type};base64,QUJD"}],
+    )
+
+
+@pytest.mark.parametrize("human_merge", [False, True])
+def test_zip_bundles_auto_merged_evidence_without_source_paths(human_merge: bool) -> None:
+    """Auto-merged evidence survives export and a later human merge portably."""
+    evidence = [
+        {
+            "id": "e1",
+            "timestamp_formatted": "01:16",
+            "text": "another view of the same broken save button",
+            "screenshot": "data:image/png;base64,UE5H",
+            "screenshot_path": "source-frame.png",
+            "screenshot_original": "old-original.png",
+            "screenshot_annotated": "old-annotated.png",
+        },
+        {
+            "id": "e2",
+            "timestamp_formatted": "01:17",
+            "text": "evidence extraction failed",
+            "screenshot": "",
+            "screenshot_path": "missing-frame.jpg",
+        },
+    ]
+    findings = (
+        [{**f, "merged_frames": evidence if f["id"] == "f3" else []} for f in _MERGE_FINDINGS]
+        if human_merge
+        else [{**_FINDINGS[0], "merged_frames": evidence}]
+    )
+    _run_export(
+        """
+        const reviewed = JSON.parse(files['report_reviewed_demo.json'].data);
+        const finding = reviewed.findings.find((f) => (f.merged_frames || []).length);
+        if (!finding || finding.merged_frames.length !== 2)
+            throw new Error('merged evidence metadata lost');
+        const image = finding.merged_frames[0];
+        const missing = finding.merged_frames[1];
+        if (image.id !== 'e1' || image.timestamp_formatted !== '01:16'
+            || image.text !== 'another view of the same broken save button')
+            throw new Error('merged evidence identity or narration changed');
+        for (const key of ['screenshot', 'screenshot_path', 'screenshot_original']) {
+            if (!image[key] || !(image[key] in files))
+                throw new Error('merged evidence has dangling ' + key + ': ' + image[key]);
+            if (!image[key].endsWith('.png') || files[image[key]].data !== 'UE5H')
+                throw new Error('merged evidence media type or bytes changed');
+        }
+        if ('screenshot_annotated' in image)
+            throw new Error('old annotated evidence reference leaked');
+        for (const key of ['screenshot', 'screenshot_path', 'screenshot_original', 'screenshot_annotated']) {
+            if (key in missing) throw new Error('missing evidence retains ' + key);
+        }
+        const manifest = JSON.parse(files['agent_manifest.json'].data);
+        const entry = manifest.findings.find((f) => (f.merged_frames || []).length);
+        if (!entry || entry.merged_frames[0].screenshot !== image.screenshot)
+            throw new Error('manifest lost merged evidence reference');
+        for (const name of ['report_reviewed_demo.json', 'agent_manifest.json']) {
+            if (files[name].data.includes('data:image/') || files[name].data.includes('source-frame.png'))
+                throw new Error('embedded image or source path leaked into ' + name);
+        }
+        """,
+        findings=findings,
+        review_setup=_MERGE_REVIEW_SETUP if human_merge else _DEFAULT_REVIEW_SETUP,
+    )
+
+
 # Two findings: f1 accepted (with a severity override low->critical + a note),
 # f2 rejected as a false positive (carries a reviewer note). This is the
 # decision-persistence shape the audit flagged as uncovered: the suspected bug is

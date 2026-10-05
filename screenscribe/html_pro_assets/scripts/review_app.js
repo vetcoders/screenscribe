@@ -2866,6 +2866,21 @@ async function exportReviewedZIP() {
         const annotatedFolder = zip.folder('annotated');
         const manualFolder = zip.folder('manual_frames');
         const screenshotsFolder = zip.folder('screenshots');
+        const bundleScreenshot = (dataUrl, filenameStem) => {
+            if (typeof dataUrl !== 'string') return null;
+            const image = /^data:image\/([a-z0-9.+-]+)(?:;[^,;]+)*;base64,([\s\S]+)$/i.exec(dataUrl);
+            if (!image) return null;
+            const mediaType = image[1].toLowerCase();
+            const extension = {
+                jpeg: 'jpg',
+                'svg+xml': 'svg',
+                'x-icon': 'ico',
+                'vnd.microsoft.icon': 'ico'
+            }[mediaType] || mediaType;
+            const filename = `${filenameStem}.${extension}`;
+            screenshotsFolder.file(filename, image[2], {base64: true});
+            return `screenshots/${filename}`;
+        };
 
         const reviewedFindings = [];
         const manifestFindings = [];
@@ -2902,6 +2917,7 @@ async function exportReviewedZIP() {
                 screenshot_path: _sourceScreenshotPath,
                 screenshot_original: _sourceScreenshotOriginal,
                 screenshot_annotated: _sourceScreenshotAnnotated,
+                merged_frames: mergedFrames,
                 ...findingWithoutBase64
             } = f;
             const annotations = review.annotations || [];
@@ -2961,17 +2977,9 @@ async function exportReviewedZIP() {
             const fIdx = String(findingIndex).padStart(2, '0');
             const tsClean = (f.timestamp_formatted || '00-00').replace(/[:.]/g, '-');
             const cat = f.category || 'unknown';
-            const screenshotFilename = 'F' + fIdx + '_' + cat + '_' + tsClean + '.jpg';
-            const screenshotRelPath = 'screenshots/' + screenshotFilename;
-
-            let screenshotWritten = false;
-            if (screenshot && screenshot.startsWith('data:image')) {
-                const imgBase64 = screenshot.split(',')[1];
-                if (imgBase64) {
-                    screenshotsFolder.file(screenshotFilename, imgBase64, {base64: true});
-                    screenshotWritten = true;
-                }
-            }
+            const screenshotStem = 'F' + fIdx + '_' + cat + '_' + tsClean;
+            const screenshotRelPath = bundleScreenshot(screenshot, screenshotStem);
+            const screenshotWritten = Boolean(screenshotRelPath);
 
             // Only reference a screenshot that was actually written to the ZIP.
             // Text-only / extraction-failed findings carry no data-URL frame, so
@@ -2983,6 +2991,33 @@ async function exportReviewedZIP() {
             if (screenshotWritten) {
                 result.screenshot_path = screenshotRelPath;
                 result.screenshot_original = screenshotRelPath;
+            }
+            // Server-side merges retain distinct evidence frames. Keep their
+            // identity/narration, but replace embedded data and source paths
+            // with references to each frame's actual archive member.
+            if (Array.isArray(mergedFrames)) {
+                result.merged_frames = mergedFrames.map((frame, index) => {
+                    if (!frame || typeof frame !== 'object') return frame;
+                    const {
+                        screenshot: frameScreenshot,
+                        screenshot_path: _frameSourcePath,
+                        screenshot_original: _frameSourceOriginal,
+                        screenshot_annotated: _frameSourceAnnotated,
+                        ...frameMetadata
+                    } = frame;
+                    const path = bundleScreenshot(
+                        frameScreenshot,
+                        `${screenshotStem}_merged_${String(index + 1).padStart(2, '0')}`
+                    );
+                    return {
+                        ...frameMetadata,
+                        ...(path ? {
+                            screenshot: path,
+                            screenshot_path: path,
+                            screenshot_original: path
+                        } : {})
+                    };
+                });
             }
 
             // Build the manifest entry: priority, action items, and a testable
@@ -3039,6 +3074,9 @@ async function exportReviewedZIP() {
                     ? 'ocr_frames' : 'transcript_segments';
             }
             evidencePaths[normId(f.id)] = manifestEntry.screenshot;
+            if (Array.isArray(result.merged_frames)) {
+                manifestEntry.merged_frames = result.merged_frames;
+            }
             // Provenance trail for a folded merge group: surface the absorbed
             // finding ids (and an explicit count) so the coding agent sees this
             // entry stands in for many.
