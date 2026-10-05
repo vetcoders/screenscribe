@@ -1,10 +1,13 @@
 """Tests for model validation (fail fast)."""
 
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 
+from screenscribe.account_auth import AccountTokens, store_account_tokens
 from screenscribe.config import ScreenScribeConfig
 from screenscribe.validation import (
     APIKeyError,
@@ -47,6 +50,33 @@ class TestAPIKeyValidation:
         with pytest.raises(APIKeyError) as exc_info:
             validate_models(config_no_key, use_vision=True)
         assert "No API key configured" in str(exc_info.value)
+
+    def test_signed_in_xai_account_passes_without_api_key(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """A signed-in xAI account backs the pre-flight without any SCREENSCRIBE_*_API_KEY.
+
+        Regression: the presence gate used to read the raw key fields, so the
+        `config --show` READY state (account bearer) died at the first `review`
+        with "No API key configured".
+        """
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        store_account_tokens(
+            "xai",
+            AccountTokens(access_token="at-xai", expires_at=None),  # noqa: S106 -- fixture token
+        )
+        cfg = ScreenScribeConfig.provider_preset("xai", api_key="")
+        assert cfg.api_key == ""
+
+        with patch("screenscribe.validation.httpx.Client") as mock_client:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_client.return_value.__enter__.return_value.post.return_value = mock_response
+
+            validate_models(cfg, use_vision=False, validate_stt=False)
+
+        headers = mock_client.return_value.__enter__.return_value.post.call_args.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer at-xai"
 
     def test_api_key_present_passes(self, config: ScreenScribeConfig) -> None:
         """Present API key should not raise on key check."""

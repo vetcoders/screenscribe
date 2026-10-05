@@ -243,7 +243,11 @@ def main() -> None:
         embed_video=False,
         language=LANGUAGE,
         static_demo=True,
+        transcript_source="audio",
     )
+    # Match the repository's whitespace hooks so copying this artifact into
+    # site/demo remains byte-identical after a normal commit.
+    html = "\n".join(line.rstrip() for line in html.splitlines()) + "\n"
     (OUT_DIR / "example_report.html").write_text(html, encoding="utf-8")
 
     print("Wrote examples/example_report.json, example_transcript.vtt, example_report.html")

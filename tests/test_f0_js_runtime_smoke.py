@@ -181,7 +181,8 @@ def test_f0_review_app_loads_without_referenceerror() -> None:
         """
         for (const name of [
             'buildTodoMarkdown', 'buildReviewData', 'handleChangeEvent',
-            'normalizeVerdict', 'unmergeFindings', 'resetReview'
+            'normalizeVerdict', 'unmergeFindings', 'resetReview',
+            'applyReviewPatch'
         ]) {
             if (typeof eval(name) !== 'function') {
                 console.error('missing top-level function: ' + name);
@@ -761,6 +762,37 @@ def test_f3_local_draft_reload_enriches_manual_frame_image_from_server() -> None
         const persisted = JSON.stringify(buildPersistableState(reportState.modified));
         if (persisted.includes('frameDataUrl') || persisted.includes('data:image')) {
             console.error('enriched image leaked back into persistable localStorage state: ' + persisted);
+            process.exitCode = 1;
+        }
+        """
+    )
+
+
+def test_f3_enrichment_adds_durable_path_without_replacing_live_pixels() -> None:
+    """An old live tab keeps its pixels but learns the server's durable frame_path."""
+    _run_review_app_smoke(
+        """
+        renderManualFrames = () => {};
+        reportState.manualFrames = [{
+            marker_id: 'm1',
+            timestamp: 5,
+            frameDataUrl: 'data:image/jpeg;base64,LIVE',
+            notes: 'local',
+        }];
+        const changed = enrichManualFrameImagesFromServerState({
+            manualFrames: [{
+                marker_id: 'm1',
+                frame_path: 'manual_frames/m1.jpg',
+                frameDataUrl: 'data:image/jpeg;base64,DISK',
+            }],
+        });
+        const frame = reportState.manualFrames[0];
+        if (!changed || frame.frame_path !== 'manual_frames/m1.jpg') {
+            console.error('durable path not enriched: ' + JSON.stringify(frame));
+            process.exitCode = 1;
+        }
+        if (frame.frameDataUrl !== 'data:image/jpeg;base64,LIVE') {
+            console.error('server enrichment replaced live pixels: ' + frame.frameDataUrl);
             process.exitCode = 1;
         }
         """
@@ -1995,4 +2027,254 @@ def test_f0_manual_frame_note_patch_rejection_does_not_desync() -> None:
             process.exitCode = 1;
         }
         """
+    )
+
+
+def _finding_card_stubs() -> str:
+    return textwrap.dedent(
+        """
+        {
+        showNotification = () => {};
+        flashReviewFeedback = () => {};
+        activateTab = () => {};
+        scheduleSharedStateSync = () => {};
+        updateReviewMeta = () => {};
+        renderManualFrames = () => {};
+        const radios = [
+            { value: 'accepted', checked: false },
+            { value: 'rejected', checked: false },
+        ];
+        const select = { value: '' };
+        const textarea = { value: '' };
+        const overrideBox = {
+            className: '',
+            firstChild: null,
+            children: [],
+            parentNode: null,
+            querySelector() { return null; },
+            appendChild(child) { this.children.push(child); this.firstChild = this.firstChild || child; return child; },
+            removeChild(child) {
+                this.children = this.children.filter((c) => c !== child);
+                this.firstChild = this.children[0] || null;
+                return child;
+            },
+        };
+        const humanReview = {
+            firstChild: null,
+            insertBefore(node) { this.firstChild = node; return node; },
+        };
+        let summaryOverride = null;
+        const summaryEl = {
+            querySelector(sel) { return sel === '.ss-summary-override' ? summaryOverride : null; },
+            appendChild(node) { summaryOverride = node; node.parentNode = this; return node; },
+            removeChild(node) { if (summaryOverride === node) summaryOverride = null; return node; },
+        };
+        const article = {
+            dataset: { findingId: '3', verdict: '' },
+            classList: { add() {}, remove() {} },
+            querySelector(sel) {
+                if (sel === '.severity-select') return select;
+                if (sel === '.notes textarea') return textarea;
+                if (sel === '.ss-reviewer-overrides') return overrideBox.firstChild ? overrideBox : null;
+                if (sel === '.human-review') return humanReview;
+                if (sel === '.finding-summary') return summaryEl;
+                return null;
+            },
+            querySelectorAll(sel) { return sel === '.radio-group input[type="radio"]' ? radios : []; },
+            appendChild() {},
+            scrollIntoView() {},
+        };
+        document.querySelector = (sel) => String(sel).includes('data-finding-id') ? article : null;
+        document.querySelectorAll = (sel) => sel === '.finding' ? [article] : [];
+        document.createElement = (tag) => {
+            const node = {
+                tagName: String(tag).toUpperCase(),
+                className: '',
+                textContent: '',
+                children: [],
+                firstChild: null,
+                appendChild(child) { this.children.push(child); this.firstChild = this.firstChild || child; return child; },
+                removeChild(child) {
+                    this.children = this.children.filter((c) => c !== child);
+                    this.firstChild = this.children[0] || null;
+                    return child;
+                },
+            };
+            return node;
+        };
+        reportState.findings = { '3': createDefaultFindingState() };
+        window.__screenscribeHostArticle = article;
+        window.__screenscribeHostSelect = select;
+        window.__screenscribeHostTextarea = textarea;
+        window.__screenscribeHostRadios = radios;
+        window.__screenscribeHostSummary = summaryEl;
+        }
+        """
+    )
+
+
+def test_f0_apply_review_patch_ops_paint_card() -> None:
+    """applyReviewPatch writes verdict/severity/notes/overrides onto reportState and the card."""
+    _run_review_app_smoke(
+        _finding_card_stubs()
+        + textwrap.dedent(
+            """
+            const article = window.__screenscribeHostArticle;
+            const select = window.__screenscribeHostSelect;
+            const textarea = window.__screenscribeHostTextarea;
+            const radios = window.__screenscribeHostRadios;
+
+            await applyReviewPatch([
+                { op: 'set_verdict', finding_id: '3', verdict: 'accepted' },
+                { op: 'set_severity', finding_id: '3', severity: 'high' },
+                { op: 'edit_finding', finding_id: '3', fields: {
+                    notes: 'sprawdzić na Safari',
+                    action_items: 'otworzyć Safari',
+                    summary_override: 'Safari clip',
+                    category_override: 'ui',
+                }},
+                { op: 'nope_unknown', finding_id: '3' },
+            ], 'Zmień tylko finding 3, bez dopisywania nowych problemów.');
+
+            const state = reportState.findings['3'];
+            if (state.verdict !== 'accepted') {
+                console.error('verdict: ' + state.verdict); process.exitCode = 1;
+            }
+            if (state.severity !== 'high') {
+                console.error('severity: ' + state.severity); process.exitCode = 1;
+            }
+            if (!state.notes.startsWith('sprawdzić na Safari')
+                || !state.notes.includes('Zmień tylko finding 3, bez dopisywania nowych problemów.')) {
+                console.error('notes: ' + state.notes); process.exitCode = 1;
+            }
+            if ((state.notes.match(/Zmień tylko finding 3/g) || []).length !== 1) {
+                console.error('raw instruction duplicated: ' + state.notes); process.exitCode = 1;
+            }
+            if (state.actionItems !== 'otworzyć Safari') {
+                console.error('actionItems: ' + state.actionItems); process.exitCode = 1;
+            }
+            if (state.summary_override !== 'Safari clip') {
+                console.error('summary_override'); process.exitCode = 1;
+            }
+            if (article.dataset.verdict !== 'accepted') {
+                console.error('dom verdict: ' + article.dataset.verdict); process.exitCode = 1;
+            }
+            if (select.value !== 'high') {
+                console.error('dom severity: ' + select.value); process.exitCode = 1;
+            }
+            if (!textarea.value.startsWith('sprawdzić na Safari')
+                || !textarea.value.includes('Zmień tylko finding 3')) {
+                console.error('dom notes: ' + textarea.value); process.exitCode = 1;
+            }
+            if (!radios[0].checked) {
+                console.error('accepted radio not checked'); process.exitCode = 1;
+            }
+            if (!window.__screenscribeHostSummary.querySelector('.ss-summary-override')) {
+                console.error('summary override was not painted'); process.exitCode = 1;
+            }
+            await applyReviewPatch([{ op: 'edit_finding', finding_id: '3', fields: {
+                summary_override: '', category_override: 'ui'
+            }}]);
+            if (window.__screenscribeHostSummary.querySelector('.ss-summary-override')) {
+                console.error('cleared summary override stayed visible'); process.exitCode = 1;
+            }
+            const payload = buildReviewData();
+            const finding = (payload.findings || []).find((f) => String(f.id) === '3');
+            if (finding && finding.human_review) {
+                if (finding.human_review.severity_override !== 'high') {
+                    console.error('save payload severity'); process.exitCode = 1;
+                }
+                if (finding.human_review.summary_override !== '') {
+                    console.error('save payload summary_override'); process.exitCode = 1;
+                }
+                if (!finding.human_review.notes.includes('Zmień tylko finding 3')) {
+                    console.error('save payload lost raw instruction'); process.exitCode = 1;
+                }
+            }
+            if (!reportState.modified) {
+                console.error('report should be marked modified'); process.exitCode = 1;
+            }
+            """
+        )
+    )
+
+
+def test_f0_agent_finding_lookup_does_not_build_css_from_report_ids() -> None:
+    """Report finding ids are data, never raw CSS selector fragments."""
+    source = REVIEW_APP_JS.read_text(encoding="utf-8")
+    runtime = source[source.index("function showAgentFrame") :]
+    assert 'querySelectorAll(`input[name="verdict-${' not in source
+    assert 'querySelector(`.finding[data-finding-id="${' not in runtime
+    assert 'querySelector(`[data-finding-id="${' not in runtime
+    assert 'querySelector(`.notes-mic-status[data-finding-id="${' not in runtime
+    assert "dataset?.findingId" in runtime
+
+
+def test_f0_apply_review_patch_add_finding_local_and_merge_unsupported() -> None:
+    _run_review_app_smoke(
+        _finding_card_stubs()
+        + textwrap.dedent(
+            """
+            const results = await applyReviewPatch([
+                { op: 'add_finding', timestamp: 12.5, summary: 'Safari overlay', severity: 'high', category: 'bug' },
+                { op: 'merge_findings', survivor_id: '3', member_ids: ['1'] },
+            ], 'Dodaj dokładnie ten jeden problem przy 12.5 s.');
+            const add = results.find((row) => row.op === 'add_finding');
+            const merge = results.find((row) => row.op === 'merge_findings' || row.unsupported);
+            if (!add || !add.markerId) {
+                console.error('add_finding missing: ' + JSON.stringify(results)); process.exitCode = 1;
+            }
+            if (!merge || !merge.unsupported) {
+                console.error('merge should stay unsupported: ' + JSON.stringify(results)); process.exitCode = 1;
+            }
+            const frame = reportState.manualFrames.find((f) => f.notes.includes('Safari overlay'));
+            if (!frame || !frame.notes.includes('Dodaj dokładnie ten jeden problem przy 12.5 s.')) {
+                console.error('manual frame not upserted: ' + JSON.stringify(reportState.manualFrames));
+                process.exitCode = 1;
+            }
+            """
+        )
+    )
+
+
+def test_f0_add_finding_waits_for_seeked_before_frame_capture() -> None:
+    _run_review_app_smoke(
+        _finding_card_stubs()
+        + textwrap.dedent(
+            """
+            let seeked = false;
+            globalThis.HTMLVideoElement = class HTMLVideoElement {};
+            const listeners = {};
+            const video = {
+                currentTime: 0,
+                seeking: false,
+                addEventListener(name, fn) { listeners[name] = fn; },
+                removeEventListener(name) { delete listeners[name]; },
+            };
+            window.player = {
+                video,
+                seekTo(timestamp) {
+                    video.currentTime = timestamp;
+                    video.seeking = true;
+                    setTimeout(() => {
+                        video.seeking = false;
+                        seeked = true;
+                        if (listeners.seeked) listeners.seeked();
+                    }, 0);
+                },
+                async captureCurrentFrame() {
+                    if (!seeked) throw new Error('captured stale pre-seek frame');
+                    return { timestamp: video.currentTime, frameBase64: 'AA==', frameDataUrl: 'data:image/jpeg;base64,AA==' };
+                },
+            };
+            reportState.manualFrames = [{ marker_id: 'm-seek' }];
+            markManualFrame = async () => 'm-seek';
+            const result = await addFindingFromPatch({
+                timestamp: 12.5, summary: 'after seek', severity: 'high', category: 'bug'
+            });
+            if (!result.captured || !seeked) {
+                console.error('seeked capture failed: ' + JSON.stringify(result)); process.exitCode = 1;
+            }
+            """
+        )
     )

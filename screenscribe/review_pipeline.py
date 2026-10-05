@@ -27,7 +27,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from . import __version__
-from .api_utils import APIError, endpoint_host, redact_error_message
+from .api_utils import APIError, endpoint_host, is_chat_completions_endpoint, redact_error_message
 from .checkpoint import (
     PipelineCheckpoint,
     checkpoint_valid_for_video,
@@ -63,8 +63,10 @@ from .cli_paths import (
 from .config import ScreenScribeConfig
 from .detect import format_timestamp
 from .keywords import KeywordsConfig
+from .presets import Preset
 from .screenshots import extract_screenshots_for_detections
 from .semantic_filter import (
+    POI_CATEGORIES,
     SemanticFilterResult,
     deduplicate_pois,
     pois_to_detections,
@@ -78,6 +80,7 @@ from .transcribe import (
     transcript_last_segment_end,
     validate_audio_quality,
 )
+from .transcript_sources import response_id_can_chain
 from .unified_analysis import (
     UnifiedFinding,
     analyze_all_findings_unified,
@@ -96,6 +99,45 @@ def _stdin_is_tty() -> bool:
     invoke, so patching this is more reliable than patching ``sys.stdin``).
     """
     return sys.stdin.isatty()
+
+
+def _transcription_context_id(
+    transcription_response_id: str,
+    batch_context_response_id: str,
+    *,
+    source: str,
+    config: ScreenScribeConfig,
+) -> str:
+    """Return only a response ID the semantic endpoint can safely replay."""
+    if not response_id_can_chain(config.llm_endpoint, config.llm_endpoint):
+        return ""
+    if (
+        source == "ocr"
+        and transcription_response_id
+        and not response_id_can_chain(config.vision_endpoint, config.llm_endpoint)
+    ):
+        return batch_context_response_id
+    return transcription_response_id or batch_context_response_id
+
+
+def _llm_processing_receipt(config: ScreenScribeConfig) -> dict[str, str] | None:
+    """Safe identity of the semantic LLM endpoint that just completed.
+
+    Call this only after ``semantic_prefilter`` returned a successful parsed
+    result. The receipt deliberately contains no URL, model, credential, or
+    response id; its only purpose is proving which host already received the
+    transcript/report context.
+    """
+    host = endpoint_host(config.llm_endpoint).strip().lower()
+    if not host or host == "unknown host":
+        return None
+    return {
+        "host": host,
+        "protocol": (
+            "chat_completions" if is_chat_completions_endpoint(config.llm_endpoint) else "responses"
+        ),
+        "provider": config.recognized_provider(),
+    }
 
 
 def _prompt_rerun_action(base_output: Path, console: Any, *, allow_resume: bool) -> str:
@@ -214,17 +256,45 @@ def run_review(
     dry_run: bool,
     serve: bool,
     port: int,
+    transcript_source: str = "auto",
+    frame_interval: float = 5.0,
+    preset: "Preset | None" = None,
 ) -> None:
     """Run the per-video review pipeline for one or more videos.
 
     ``cli.review`` performs input/config/model validation and builds ``config``
     first, then delegates the entire stage orchestration here.
+
+    ``transcript_source`` (``auto``|``audio``|``ocr``) is resolved per video:
+    the audio source keeps the historical two-stage extract+STT path, while
+    ``ocr`` skips audio extraction and builds the transcript from VLM-OCR'd
+    frames taken every ``frame_interval`` seconds.
+
+    ``preset`` is the active analysis preset (``None`` = historical default).
+    Its categories become the detection vocabulary and, for non-default
+    presets, are recorded in the JSON report under a ``preset`` key.
     """
     # Break the cli<->review_pipeline cycle and keep the monkeypatch surface:
     # every patchable step below is called as cli.<name>.
     import screenscribe.cli as cli
 
     console = cli.console
+
+    # Active finding-category vocabulary (default six unless a preset with its
+    # own categories is running) and the report metadata for non-default
+    # presets. Default preset runs must stay bit-for-bit identical, so
+    # preset_meta is only emitted for non-default presets.
+    preset_categories: tuple[str, ...] | None = preset.categories if preset else None
+    active_categories: tuple[str, ...] = (
+        tuple(preset_categories) if preset_categories else POI_CATEGORIES
+    )
+    preset_meta: dict[str, Any] | None = None
+    if preset is not None and preset.name != "programming":
+        preset_meta = {"name": preset.name, "categories": list(preset.categories)}
+
+    # The semantic prefilter receives ``keywords`` directly, while unified
+    # analysis reads the active vocabulary from the shared run config.
+    config.keywords = keywords
 
     # Detection is ALWAYS the LLM semantic prefilter. Keywords are injected into
     # that prefilter prompt as vocabulary hints (see semantic_prefilter); there
@@ -408,6 +478,22 @@ def run_review(
 
         duration = _read_video_duration(cli, console, video)
 
+        # Resolve before checkpoint validation: resumable artifacts are only
+        # valid for the exact source/interval/preset contract that produced them.
+        source = cli.resolve_transcript_source(
+            transcript_source, video, has_audio=cli.has_audio_stream
+        )
+        analysis_inputs: dict[str, Any] = {
+            "transcript_source": source,
+            "frame_interval": frame_interval if source == "ocr" else None,
+            "preset": preset.name if preset is not None else "programming",
+            "categories": list(active_categories),
+            "keywords": {
+                category: keywords.get_keywords(category) for category in keywords.active_categories
+            },
+            "analysis_prompt_override": config.analysis_prompt_override,
+        }
+
         # Handle --force: delete existing checkpoint
         if force:
             cache_dir = video_output / ".screenscribe_cache"
@@ -426,7 +512,13 @@ def run_review(
         checkpoint: PipelineCheckpoint | None = None
         if effective_resume and not force:
             checkpoint = load_checkpoint(video_output)
-            if checkpoint and checkpoint_valid_for_video(checkpoint, video, video_output, language):
+            if checkpoint and checkpoint_valid_for_video(
+                checkpoint,
+                video,
+                video_output,
+                language,
+                analysis_inputs=analysis_inputs,
+            ):
                 console.print(
                     f"[green]Resuming from checkpoint:[/] "
                     f"{len(checkpoint.completed_stages)} stages complete"
@@ -438,7 +530,9 @@ def run_review(
 
         # Create new checkpoint if not resuming
         if checkpoint is None:
-            checkpoint = create_checkpoint(video, video_output, language)
+            checkpoint = create_checkpoint(
+                video, video_output, language, analysis_inputs=analysis_inputs
+            )
 
         # Initialize variables from checkpoint or fresh
         transcription = None
@@ -471,8 +565,13 @@ def run_review(
         executive_summary = checkpoint.executive_summary
         visual_summary = checkpoint.visual_summary
 
-        # Step 1: Extract audio
-        if not checkpoint.is_stage_complete("audio"):
+        # Step 1: Extract audio (audio transcript source only; OCR skips it)
+        audio_path: Path | None = None
+        if source == "ocr":
+            console.rule("[bold]Step 1: Audio Extraction[/]")
+            console.print("[dim]Skipped - transcript source is OCR; no audio track is used[/]")
+            console.print()
+        elif not checkpoint.is_stage_complete("audio"):
             console.rule("[bold]Step 1: Audio Extraction[/]")
             audio_path = cli._extract_audio_or_exit(video)
             checkpoint.mark_stage_complete("audio")
@@ -486,87 +585,129 @@ def run_review(
 
         # Step 2: Transcribe
         if not checkpoint.is_stage_complete("transcription"):
-            console.rule("[bold]Step 2: Transcription[/]")
-            try:
-                # Chunked entry point: single-shot for short audio, silence-aware
-                # chunking for long recordings (keeps STT timestamps accurate).
-                transcription = cli.transcribe_audio_chunked(
-                    audio_path,
-                    language=language,
-                    use_local=local,
-                    api_key=config.get_stt_api_key(),
-                    stt_endpoint=config.stt_endpoint,
-                    stt_model=config.stt_model,
-                )
-            except (
-                httpx.HTTPStatusError,
-                httpx.RequestError,
-                APIError,
-                ValueError,
-                RuntimeError,
-            ) as exc:
-                # Primary STT failed (e.g. 429 capacity limit, or an unexpected
-                # payload shape raised as RuntimeError in transcribe.py). If the
-                # user opted into a fallback STT provider, try it before giving up.
-                transcription = None
-                if config.has_stt_fallback():
-                    status = (
-                        exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            if source == "ocr":
+                console.rule("[bold]Step 2: Transcription (frame OCR)[/]")
+                try:
+                    transcription = cli.transcribe_video_ocr(
+                        video,
+                        config,
+                        frame_interval=frame_interval,
                     )
-                    short = f"HTTP {status}" if status else type(exc).__name__
-                    console.print()
-                    console.print(
-                        f"[yellow]Primary STT failed ({short}); "
-                        "trying configured fallback endpoint...[/]"
-                    )
-                    try:
-                        transcription = cli.transcribe_audio_chunked(
-                            audio_path,
-                            language=language,
-                            use_local=False,
-                            api_key=config.get_stt_fallback_api_key(),
-                            stt_endpoint=config.stt_fallback_endpoint,
-                            stt_model=config.get_stt_fallback_model(),
-                        )
-                    except (
-                        httpx.HTTPStatusError,
-                        httpx.RequestError,
-                        APIError,
-                        ValueError,
-                        RuntimeError,
-                    ) as fallback_exc:
-                        exc = fallback_exc  # report the fallback's failure
-                        transcription = None
-
-                if transcription is None:
-                    # Surface actionable guidance instead of a raw traceback, and
-                    # keep the checkpoint so --resume can retry without re-extracting.
+                except (
+                    httpx.HTTPStatusError,
+                    httpx.RequestError,
+                    APIError,
+                    ValueError,
+                    RuntimeError,
+                ) as exc:
+                    # Mirror the STT failure path: actionable panel, keep the
+                    # checkpoint, skip the video -- never crash the batch.
                     console.print()
                     console.print(
                         Panel(
-                            cli._build_transcription_failure_message(exc),
+                            "Frame OCR transcription failed: "
+                            f"{escape(redact_error_message(exc))}\n\n"
+                            "The OCR transcript source reads frames with the vision "
+                            "model. Check the vision credentials/endpoint "
+                            "(SCREENSCRIBE_VISION_API_KEY / SCREENSCRIBE_VISION_ENDPOINT), "
+                            "then re-run with --resume to retry.",
                             title="[bold red]Transcription Failed[/]",
                             border_style="red",
                         )
                     )
                     console.print(
-                        "[yellow]Skipping this video.[/] Extracted audio is kept; "
-                        "re-run with [bold]--resume[/] to retry."
+                        "[yellow]Skipping this video.[/] Re-run with [bold]--resume[/] to retry."
                     )
                     continue  # Skip to next video in batch
-            # Drop no-speech hallucinations (outros Whisper invents on music /
-            # silence) before they reach the transcript, checkpoint and report.
-            # Runs once here so the checkpoint stores the cleaned transcript and
-            # --resume stays consistent (FW-09).
-            transcription = filter_hallucinated_segments(
-                transcription,
-                duration if duration > 0 else None,
-                verbose=config.verbose,
-            )
-            checkpoint.transcription = serialize_transcription(transcription)
-            checkpoint.mark_stage_complete("transcription")
-            save_checkpoint(checkpoint, video_output)
-            # Transcript is now embedded in the MD report (no separate file)
+                checkpoint.transcription = serialize_transcription(transcription)
+                checkpoint.mark_stage_complete("transcription")
+                save_checkpoint(checkpoint, video_output)
+            else:
+                console.rule("[bold]Step 2: Transcription[/]")
+                if audio_path is None:
+                    raise RuntimeError("Audio transcript source has no extracted audio path")
+                try:
+                    # Chunked entry point: single-shot for short audio, silence-aware
+                    # chunking for long recordings (keeps STT timestamps accurate).
+                    transcription = cli.transcribe_audio_chunked(
+                        audio_path,
+                        language=language,
+                        use_local=local,
+                        api_key=config.get_stt_api_key(),
+                        stt_endpoint=config.stt_endpoint,
+                        stt_model=config.stt_model,
+                    )
+                except (
+                    httpx.HTTPStatusError,
+                    httpx.RequestError,
+                    APIError,
+                    ValueError,
+                    RuntimeError,
+                ) as primary_exc:
+                    # Primary STT failed (e.g. 429 capacity limit, or an unexpected
+                    # payload shape raised as RuntimeError in transcribe.py). If the
+                    # user opted into a fallback STT provider, try it before giving up.
+                    transcription = None
+                    if config.has_stt_fallback():
+                        status = (
+                            primary_exc.response.status_code
+                            if isinstance(primary_exc, httpx.HTTPStatusError)
+                            else None
+                        )
+                        short = f"HTTP {status}" if status else type(primary_exc).__name__
+                        console.print()
+                        console.print(
+                            f"[yellow]Primary STT failed ({short}); "
+                            "trying configured fallback endpoint...[/]"
+                        )
+                        try:
+                            transcription = cli.transcribe_audio_chunked(
+                                audio_path,
+                                language=language,
+                                use_local=False,
+                                api_key=config.get_stt_fallback_api_key(),
+                                stt_endpoint=config.stt_fallback_endpoint,
+                                stt_model=config.get_stt_fallback_model(),
+                            )
+                        except (
+                            httpx.HTTPStatusError,
+                            httpx.RequestError,
+                            APIError,
+                            ValueError,
+                            RuntimeError,
+                        ) as fallback_exc:
+                            primary_exc = fallback_exc  # report the fallback's failure
+                            transcription = None
+
+                    if transcription is None:
+                        # Surface actionable guidance instead of a raw traceback, and
+                        # keep the checkpoint so --resume can retry without re-extracting.
+                        console.print()
+                        console.print(
+                            Panel(
+                                cli._build_transcription_failure_message(primary_exc),
+                                title="[bold red]Transcription Failed[/]",
+                                border_style="red",
+                            )
+                        )
+                        console.print(
+                            "[yellow]Skipping this video.[/] Extracted audio is kept; "
+                            "re-run with [bold]--resume[/] to retry."
+                        )
+                        continue  # Skip to next video in batch
+                # Drop no-speech hallucinations (outros Whisper invents on music /
+                # silence) before they reach the transcript, checkpoint and report.
+                # Runs once here so the checkpoint stores the cleaned transcript and
+                # --resume stays consistent (FW-09).
+                transcription = filter_hallucinated_segments(
+                    transcription,
+                    duration if duration > 0 else None,
+                    verbose=config.verbose,
+                )
+                checkpoint.transcription = serialize_transcription(transcription)
+                checkpoint.mark_stage_complete("transcription")
+                save_checkpoint(checkpoint, video_output)
+                # Transcript is now embedded in the MD report (no separate file)
         else:
             console.print("[dim]Step 2: Transcription - skipped (cached)[/]")
             if transcription is None and checkpoint.transcription:
@@ -576,66 +717,78 @@ def run_review(
             console.print("[red]Error: No transcription available[/]")
             continue  # Skip to next video in batch
 
-        # Validate audio quality before proceeding
-        is_valid, validation_message, is_warning = validate_audio_quality(transcription)
-        if validation_message:
-            console.print()
-            if is_valid and is_warning:
-                console.print(
-                    Panel(
-                        validation_message,
-                        title="[bold yellow]Audio Quality Warning[/]",
-                        border_style="yellow",
-                    )
-                )
+        # Audio-quality validation and the STT timeline-coverage guard are
+        # audio-source concepts: they inspect Whisper no_speech metadata and
+        # probe the extracted audio tail. OCR transcripts carry exact frame
+        # timestamps and no audio, so both checks are skipped for that source
+        # (an empty OCR transcript flows to the normal empty-state report).
+        if source == "audio":
+            if audio_path is None:
+                raise RuntimeError("Audio transcript source has no extracted audio path")
+            # Validate audio quality before proceeding
+            is_valid, validation_message, is_warning = validate_audio_quality(transcription)
+            if validation_message:
                 console.print()
-            elif not is_valid:
-                console.print(
-                    Panel(
-                        validation_message,
-                        title="[bold red]Audio Quality Issue[/]",
-                        border_style="red",
+                if is_valid and is_warning:
+                    console.print(
+                        Panel(
+                            validation_message,
+                            title="[bold yellow]Audio Quality Warning[/]",
+                            border_style="yellow",
+                        )
                     )
-                )
-                console.print()
-                console.print(
-                    "[yellow]Processing stopped.[/] Please fix the audio issue and try again."
-                )
-                console.print("[dim]If you believe this is a false positive, please report it.[/]")
-                delete_checkpoint(video_output)
-                continue  # Skip to next video in batch
+                    console.print()
+                elif not is_valid:
+                    console.print(
+                        Panel(
+                            validation_message,
+                            title="[bold red]Audio Quality Issue[/]",
+                            border_style="red",
+                        )
+                    )
+                    console.print()
+                    console.print(
+                        "[yellow]Processing stopped.[/] Please fix the audio issue and try again."
+                    )
+                    console.print(
+                        "[dim]If you believe this is a false positive, please report it.[/]"
+                    )
+                    delete_checkpoint(video_output)
+                    continue  # Skip to next video in batch
 
-        coverage = calculate_transcript_timeline_coverage(transcription, duration)
-        if (
-            duration > MIN_TIMELINE_GUARD_VIDEO_SECONDS
-            and coverage is not None
-            and coverage < MIN_TRANSCRIPT_TIMELINE_COVERAGE
-        ):
-            # Low coverage on a long video has two very different causes:
-            #   (a) the narrator simply stopped talking before the video ended
-            #       -> transcript is complete for the spoken part, screenshots align;
-            #   (b) STT dropped/compressed the tail -> end-of-video screenshots drift.
-            # The audio tail tells them apart. Either way we keep going (and keep the
-            # checkpoint) rather than discarding a completed transcription.
-            last_end = transcript_last_segment_end(transcription) or 0.0
-            console.print()
-            if cli.tail_is_silent(audio_path, last_end, duration) is True:
-                silent_tail = format_timestamp(duration - last_end)
-                narration_end = format_timestamp(last_end)
-                console.print(
-                    f"[dim]Note: last {silent_tail} of audio is silent "
-                    f"(narration ended at {narration_end}). "
-                    "Screenshots cover the narrated portion.[/]"
-                )
-            else:
-                console.print(
-                    Panel(
-                        cli._build_transcript_timeline_coverage_message(transcription, duration),
-                        title="[bold yellow]Transcript Timeline Warning[/]",
-                        border_style="yellow",
+            coverage = calculate_transcript_timeline_coverage(transcription, duration)
+            if (
+                duration > MIN_TIMELINE_GUARD_VIDEO_SECONDS
+                and coverage is not None
+                and coverage < MIN_TRANSCRIPT_TIMELINE_COVERAGE
+            ):
+                # Low coverage on a long video has two very different causes:
+                #   (a) the narrator simply stopped talking before the video ended
+                #       -> transcript is complete for the spoken part, screenshots align;
+                #   (b) STT dropped/compressed the tail -> end-of-video screenshots drift.
+                # The audio tail tells them apart. Either way we keep going (and keep the
+                # checkpoint) rather than discarding a completed transcription.
+                last_end = transcript_last_segment_end(transcription) or 0.0
+                console.print()
+                if cli.tail_is_silent(audio_path, last_end, duration) is True:
+                    silent_tail = format_timestamp(duration - last_end)
+                    narration_end = format_timestamp(last_end)
+                    console.print(
+                        f"[dim]Note: last {silent_tail} of audio is silent "
+                        f"(narration ended at {narration_end}). "
+                        "Screenshots cover the narrated portion.[/]"
                     )
-                )
-            console.print()
+                else:
+                    console.print(
+                        Panel(
+                            cli._build_transcript_timeline_coverage_message(
+                                transcription, duration
+                            ),
+                            title="[bold yellow]Transcript Timeline Warning[/]",
+                            border_style="yellow",
+                        )
+                    )
+                console.print()
 
         # Step 3: Issue Detection -- ALWAYS the LLM semantic prefilter.
         # Active keywords are injected into the prefilter prompt as vocabulary
@@ -646,13 +799,23 @@ def run_review(
             console.rule("[bold]Step 3: Issue Detection[/]")
 
             console.print("[cyan]Using semantic pre-filter (analyzing entire transcript)[/]")
+            # A receipt proves a completed semantic request, not a configured
+            # endpoint. An incomplete stage must not retain an older receipt.
+            if checkpoint.processing_provenance.pop("llm", None) is not None:
+                save_checkpoint(checkpoint, video_output)
             # Chain from STT → semantic filter → VLM
-            stt_context = transcription.response_id or batch_context_response_id
+            stt_context = _transcription_context_id(
+                transcription.response_id,
+                batch_context_response_id,
+                source=source,
+                config=config,
+            )
             filter_result: SemanticFilterResult = cli.semantic_prefilter(
                 transcription,
                 config,
                 previous_response_id=stt_context,
                 keywords=keywords,
+                categories=preset_categories,
             )
 
             if filter_result.failed:
@@ -682,6 +845,15 @@ def run_review(
                 )
                 continue  # Skip to next video in batch
 
+            # With usable transcript text, a non-failed result is reachable only
+            # after semantic_prefilter completed and parsed the request sent to
+            # config.llm_endpoint. Empty transcripts short-circuit without I/O and
+            # therefore intentionally receive no processor receipt.
+            if any(segment.text.strip() for segment in transcription.segments):
+                receipt = _llm_processing_receipt(config)
+                if receipt is not None:
+                    checkpoint.processing_provenance["llm"] = receipt
+
             pois = filter_result.pois
             # Deduplicate similar POIs before VLM analysis
             if pois and len(pois) > 1:
@@ -694,7 +866,7 @@ def run_review(
                 batch_context_response_id = filter_result.response_id
             if pois:
                 # Convert POIs to Detection objects for compatibility
-                detections = pois_to_detections(pois, transcription)
+                detections = pois_to_detections(pois, transcription, categories=active_categories)
                 console.print(
                     f"[green]Semantic pre-filter identified {len(detections)} findings[/]"
                 )
@@ -761,6 +933,9 @@ def run_review(
                 json_report=json_report,
                 markdown_report=markdown_report,
                 html_report=html_report,
+                preset_meta=preset_meta,
+                processing_provenance=checkpoint.processing_provenance,
+                transcript_source=source,
             )
 
             console.print()
@@ -768,7 +943,10 @@ def run_review(
                 Panel(empty_summary, title="[bold]Executive Summary[/]", border_style="yellow")
             )
             console.print()
-            cli.print_report(detections, screenshots, video)
+            if preset_meta is not None:
+                cli.print_report(detections, screenshots, video, categories=active_categories)
+            else:
+                cli.print_report(detections, screenshots, video)
 
             delete_checkpoint(video_output)
 
@@ -792,9 +970,15 @@ def run_review(
         if dry_run:
             console.rule("[bold]Dry Run Results[/]")
             console.print(f"\n[green]Found {len(detections)} issues:[/]")
-            console.print(f"  • {sum(1 for d in detections if d.category == 'bug')} bugs")
-            console.print(f"  • {sum(1 for d in detections if d.category == 'change')} changes")
-            console.print(f"  • {sum(1 for d in detections if d.category == 'ui')} UI issues")
+            if tuple(active_categories) != POI_CATEGORIES:
+                # A preset with its own vocabulary: count per preset category.
+                for category in active_categories:
+                    count = sum(1 for d in detections if d.category == category)
+                    console.print(f"  • {count} {category}")
+            else:
+                console.print(f"  • {sum(1 for d in detections if d.category == 'bug')} bugs")
+                console.print(f"  • {sum(1 for d in detections if d.category == 'change')} changes")
+                console.print(f"  • {sum(1 for d in detections if d.category == 'ui')} UI issues")
 
             console.print("\n[bold]Sample detections:[/]")
             for i, d in enumerate(detections[:5], 1):
@@ -866,6 +1050,9 @@ def run_review(
                 errors=[],
                 transcript=transcription.text if transcription else "",
                 transcript_segments=transcription.segments if transcription else None,
+                preset_meta=preset_meta,
+                processing_provenance=checkpoint.processing_provenance,
+                transcript_source=source,
             )
             console.print("[dim]Basic JSON report saved (AI analysis pending)[/]")
 
@@ -1163,6 +1350,9 @@ def run_review(
             json_report=json_report,
             markdown_report=markdown_report,
             html_report=html_report,
+            preset_meta=preset_meta,
+            processing_provenance=checkpoint.processing_provenance,
+            transcript_source=source,
         )
 
         # Show errors summary if any
@@ -1182,7 +1372,10 @@ def run_review(
             console.print()
 
         # Print summary to console
-        cli.print_report(detections, screenshots, video)
+        if preset_meta is not None:
+            cli.print_report(detections, screenshots, video, categories=active_categories)
+        else:
+            cli.print_report(detections, screenshots, video)
 
         # Clean up checkpoint on success -- but keep it when vision was skipped
         # for a missing key, or when the unified VLM stage hard-failed: either

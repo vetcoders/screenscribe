@@ -1,0 +1,22 @@
+# NOTICE
+
+Screenscribe ships two **public** OAuth client identifiers so that
+`screenscribe auth login <provider>` works without the user registering an
+application. Neither value is a secret; both are published by their vendors
+for desktop/CLI clients and can be overridden with an environment variable.
+
+| Provider | Client id | Published by | Override |
+|---|---|---|---|
+| `openai` | `app_EMoamEEZ73f0CkXaXp7hrann` | OpenAI, Codex CLI (device flow on `https://auth.openai.com`) | `SCREENSCRIBE_OPENAI_OAUTH_CLIENT_ID` |
+| `xai` | `b1a00492-073a-47ea-816f-4c329264a828` | xAI, Grok CLI (RFC 8628 device flow on `https://auth.x.ai`) | `SCREENSCRIBE_XAI_OAUTH_CLIENT_ID` |
+
+Issuer base URLs can be overridden with `SCREENSCRIBE_OPENAI_OAUTH_ISSUER` /
+`SCREENSCRIBE_XAI_OAUTH_ISSUER` (hermetic tests, emergency operations).
+
+The device-code and PKCE flows in `screenscribe/account_auth/` are a port of
+the Codescribe `core/llm/account_auth` module, whose OpenAI portions derive
+from openai/codex (Apache-2.0). The xAI RFC 8628 path follows the OpenCode
+`XaiAuthPlugin` shape.
+
+Account tokens are stored in `~/.config/screenscribe/accounts.json` (mode
+0600) and are never printed or logged.

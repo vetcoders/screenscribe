@@ -225,6 +225,7 @@ def test_stylesheets_speak_one_token_language() -> None:
         "report-pro.css": load_css(),
         "screenscribe-theme.css": load_css_screenscribe_theme(),
         "analyze_dashboard.css": assets.load_css_analyze_dashboard(),
+        "agent_panel.css": assets.load_css_agent_panel(),
     }
 
     offenders = [

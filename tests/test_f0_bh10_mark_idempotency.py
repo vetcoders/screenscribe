@@ -26,7 +26,14 @@ def test_bh10_concurrent_mark_creates_one_marker_one_fetch() -> None:
         let fetchCalls = 0;
         fetch = async () => {
             fetchCalls += 1;
-            return { ok: true, status: 200, json: async () => ({ marker_id: 'm1' }) };
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    marker_id: 'm1',
+                    frame_path: 'manual_frames/m1.jpg',
+                }),
+            };
         };
 
         const current = { timestamp: 1, frameBase64: 'x', frameDataUrl: 'data:,' };
@@ -46,6 +53,10 @@ def test_bh10_concurrent_mark_creates_one_marker_one_fetch() -> None:
         const rows = reportState.manualFrames.filter((f) => f.marker_id === 'm1');
         if (rows.length !== 1) {
             console.error('duplicate manual-frame rows created: ' + rows.length);
+            process.exitCode = 1;
+        }
+        if (rows[0].frame_path !== 'manual_frames/m1.jpg') {
+            console.error('durable frame_path not recorded in client state: ' + rows[0].frame_path);
             process.exitCode = 1;
         }
         if (current.marker_id !== 'm1') {

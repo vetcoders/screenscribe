@@ -233,7 +233,7 @@ def _two_paraphrases() -> list[UnifiedFinding]:
 @pytest.mark.parametrize(
     ("endpoint", "effort", "expected_reasoning"),
     [
-        (None, None, {"summary": "auto", "effort": "medium"}),
+        (None, None, {"summary": "auto", "effort": "none"}),
         (None, "low", {"summary": "auto", "effort": "low"}),
         ("https://api.example.com/v1/chat/completions", "low", None),
     ],

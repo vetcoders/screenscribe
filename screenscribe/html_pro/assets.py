@@ -111,6 +111,16 @@ def load_js_analyze_dashboard() -> str:
     return load_asset("scripts/analyze_dashboard.js")
 
 
+def load_css_agent_panel() -> str:
+    """Load the floating agent chat stylesheet (review report only)."""
+    return load_asset("styles/agent_panel.css")
+
+
+def load_js_agent_panel() -> str:
+    """Load the floating agent chat controller (review report only)."""
+    return load_asset("scripts/agent_panel.js")
+
+
 @lru_cache(maxsize=1)
 def load_favicon_data_uri() -> str:
     """Return the screenscribe favicon as a self-contained data URI.

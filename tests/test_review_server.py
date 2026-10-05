@@ -441,6 +441,54 @@ def test_review_state_hydrates_session_manual_frame_image(
     assert frame_base64 in data_url
 
 
+def test_review_state_exposes_summary_and_category_overrides(
+    review_workspace: tuple[Path, Path, Path],
+) -> None:
+    """review_finding_state hydrates additive summary/category overrides.
+
+    Older reports omit those keys; they must still load, with empty strings.
+    """
+    import json
+
+    output_dir, report_file, video_path = review_workspace
+    json_path = output_dir / "screen_report.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "video": "screen.mov",
+                "findings": [{"id": 1}, {"id": 2}],
+                "human_review": {
+                    "findings": {
+                        "1": {
+                            "verdict": "accepted",
+                            "notes": "rewritten",
+                            "summary_override": "Safari clip is the real bug",
+                            "category_override": "ui",
+                        },
+                        "2": {
+                            "verdict": "none",
+                            "notes": "",
+                        },
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    client = TestClient(app)
+    state = client.get("/api/review-state").json()
+    finding_one = state["findings"]["1"]
+    finding_two = state["findings"]["2"]
+    assert finding_one["summary_override"] == "Safari clip is the real bug"
+    assert finding_one["category_override"] == "ui"
+    assert finding_one["verdict"] == "accepted"
+    assert finding_two["summary_override"] == ""
+    assert finding_two["category_override"] == ""
+    assert finding_two["verdict"] == "none"
+
+
 def test_review_server_delete_manual_frame_purges_session(
     review_workspace: tuple[Path, Path, Path],
 ) -> None:
@@ -937,7 +985,7 @@ def test_review_server_save_merges_human_review(
                 "id": 1,
                 "human_review": {
                     "verdict": "accepted",
-                    "notes": "real bug",
+                    "notes": "real bug\n\nUser chat request: Change only finding 1.",
                     "severity_override": None,
                 },
             },
@@ -959,10 +1007,17 @@ def test_review_server_save_merges_human_review(
     human = saved["human_review"]
     assert human["reviewer"] == "alex"
     assert human["findings"]["1"]["verdict"] == "accepted"
+    assert human["findings"]["1"]["notes"].endswith("User chat request: Change only finding 1.")
     assert human["findings"]["2"]["verdict"] == "rejected"
     assert human["rejected_ids"] == [2]
     # The canonical findings list is untouched — rejection is a marker, not a deletion.
     assert len(saved["findings"]) == 2
+
+    reloaded = client.get("/api/review-state")
+    assert reloaded.status_code == 200
+    assert reloaded.json()["findings"]["1"]["notes"].endswith(
+        "User chat request: Change only finding 1."
+    )
 
 
 def test_review_server_reset_returns_to_generated_report_state(
@@ -1598,9 +1653,167 @@ def test_manual_frame_survives_cold_load_from_disk(
     assert frames, "cold-load review-state did not restore the manual frame"
     data_url = frames[0].get("frameDataUrl", "")
     assert data_url.startswith("data:image/"), data_url
+    assert frames[0]["frame_path"] == f"manual_frames/{marker_id}.jpg"
     # The restored image is the real stored JPEG, not the original posted base64
     # string verbatim (it is re-encoded off disk), so just assert it is renderable.
     assert len(data_url) > len("data:image/jpeg;base64,") + 10
+
+    # The new process must restore the durable marker into its mutable session,
+    # not only render pixels from report.json. Otherwise its next save rewrites
+    # manual_review.markers to [] and loses the only frame_path reference.
+    patch = fresh_client.patch(
+        f"/api/manual-mark/{marker_id}",
+        json={"notes": "typed after restart"},
+    )
+    assert patch.status_code == 200, patch.text
+
+    # Reproduce an old tab that stayed open through the server restart: it still
+    # owns live pixels but predates the frame_path field. The restored session
+    # must stamp the durable path back into the next canonical snapshot.
+    second_save = {
+        **save_body,
+        "manual_frames": [
+            {
+                **save_body["manual_frames"][0],
+                "notes": "typed after restart",
+            }
+        ],
+    }
+    assert fresh_client.post("/api/save", json=second_save).status_code == 200
+    saved_again = json.loads(json_path.read_text(encoding="utf-8"))
+    saved_frame = saved_again["human_review"]["manual_frames"][0]
+    assert saved_frame["frame_path"] == f"manual_frames/{marker_id}.jpg"
+    assert saved_again["manual_review"]["markers"][0]["frame_path"] == (
+        f"manual_frames/{marker_id}.jpg"
+    )
+
+    restarted_again = TestClient(
+        create_review_app(output_dir, report_file.name, video_path, _config())
+    )
+    final_state = restarted_again.get("/api/review-state").json()
+    final_frame = next(
+        frame for frame in final_state["manualFrames"] if frame["marker_id"] == marker_id
+    )
+    assert final_frame["frameDataUrl"].startswith("data:image/")
+    assert final_frame["frame_path"] == f"manual_frames/{marker_id}.jpg"
+
+
+def test_pathless_manual_frame_recovers_owned_image_and_repairs_on_save(
+    review_workspace: tuple[Path, Path, Path],
+) -> None:
+    """A legacy/broken snapshot can recover its exact server-owned marker JPG.
+
+    Recovery is bounded to ``manual_frames/<marker_id>.jpg|png`` plus the normal
+    image magic gate. The canonical JSON is repaired only by the regular save
+    endpoint; startup never edits it behind the browser writer.
+    """
+    import json
+
+    output_dir, report_file, video_path = review_workspace
+    marker_id = "pathless-clean-add"
+    frames_dir = output_dir / "manual_frames"
+    frames_dir.mkdir()
+    (frames_dir / f"{marker_id}.jpg").write_bytes(base64.b64decode(_TINY_JPEG_B64))
+    json_path = output_dir / "screen_report.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "video": "screen.mov",
+                "findings": [],
+                "human_review": {
+                    "reviewer": "qa",
+                    "findings": {},
+                    "manual_frames": [
+                        {
+                            "marker_id": marker_id,
+                            "timestamp": 5.0,
+                            "timestamp_formatted": "00:05.000",
+                            "transcript": "",
+                            "notes": "clean add, no VLM",
+                            "result": None,
+                            "annotations": [],
+                        }
+                    ],
+                },
+                "manual_review": {"markers": [], "results": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    client = TestClient(create_review_app(output_dir, report_file.name, video_path, _config()))
+    state = client.get("/api/review-state").json()
+    frame = next(item for item in state["manualFrames"] if item["marker_id"] == marker_id)
+    assert frame["frame_path"] == f"manual_frames/{marker_id}.jpg"
+    assert frame["frameDataUrl"].startswith("data:image/")
+
+    save_body = {
+        "video": "screen.mov",
+        "reviewer": "qa",
+        "reviewed_at": "2026-10-05T00:00:00Z",
+        "findings": [],
+        "manual_frames": state["manualFrames"],
+    }
+    assert client.post("/api/save", json=save_body).status_code == 200
+    repaired = json.loads(json_path.read_text(encoding="utf-8"))
+    assert repaired["human_review"]["manual_frames"][0]["frame_path"] == (
+        f"manual_frames/{marker_id}.jpg"
+    )
+    assert repaired["manual_review"]["markers"][0]["frame_path"] == (
+        f"manual_frames/{marker_id}.jpg"
+    )
+    assert (frames_dir / f"{marker_id}.jpg").is_file()
+
+
+def test_cold_start_restores_result_evidence_without_guessing_chain_head(
+    review_workspace: tuple[Path, Path, Path],
+) -> None:
+    """A cached result response_id is evidence, not a reusable shared cursor."""
+    import json
+
+    output_dir, report_file, video_path = review_workspace
+    marker_id = "cached-result-marker"
+    frames_dir = output_dir / "manual_frames"
+    frames_dir.mkdir()
+    frame_path = f"manual_frames/{marker_id}.jpg"
+    (output_dir / frame_path).write_bytes(base64.b64decode(_TINY_JPEG_B64))
+    (output_dir / "screen_report.json").write_text(
+        json.dumps(
+            {
+                "video": "screen.mov",
+                "findings": [],
+                "human_review": {
+                    "reviewer": "qa",
+                    "findings": {},
+                    "manual_frames": [
+                        {
+                            "marker_id": marker_id,
+                            "timestamp": 5.0,
+                            "frame_path": frame_path,
+                            "transcript": "",
+                            "notes": "cached",
+                            "result": {
+                                "category": "manual_capture",
+                                "severity": "low",
+                                "summary": "cached result",
+                                "issues_detected": [],
+                                "suggested_fix": "",
+                                "affected_components": [],
+                                "response_id": "opaque-old-provider-id",
+                            },
+                            "annotations": [],
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    session = _reach_review_session(app)
+    assert session.results[marker_id].response_id == "opaque-old-provider-id"
+    assert session.last_response_id == ""
 
 
 def test_manual_frame_missing_file_does_not_crash_review_state(

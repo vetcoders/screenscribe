@@ -135,7 +135,7 @@ function snapshotFindingReview(state) {
         severity: source.severity || null,
         notes: source.notes || '',
         annotations: Array.isArray(source.annotations)
-            ? source.annotations.map((annotation) => ({ ...annotation }))
+            ? ensureAnnotationsHaveIds(source.annotations.map((annotation) => cloneAnnotation(annotation)))
             : [],
     };
 }
@@ -200,6 +200,11 @@ function migrateFindingStates(findings) {
         }
         if ('confirmed' in state) {
             delete state.confirmed;
+        }
+        if (Array.isArray(state.annotations)) {
+            // Migrate the canonical hydrated records, not a throw-away editor
+            // clone, so IDs remain stable even when the lightbox is never opened.
+            ensureAnnotationsHaveIds(state.annotations);
         }
     }
     return findings;
@@ -642,27 +647,36 @@ function enrichManualFrameImagesFromServerState(snapshot) {
         return false;
     }
 
-    const serverFrameImages = new Map();
+    const serverFrames = new Map();
     snapshot.manualFrames.forEach((frame) => {
         if (!frame || typeof frame !== 'object' || frame.marker_id === undefined || frame.marker_id === null) {
             return;
         }
-        if (frame.frameDataUrl) {
-            serverFrameImages.set(String(frame.marker_id), frame.frameDataUrl);
-        }
+        serverFrames.set(String(frame.marker_id), frame);
     });
 
     let enriched = false;
     reportState.manualFrames = reportState.manualFrames.map((frame) => {
-        if (!frame || typeof frame !== 'object' || frame.frameDataUrl) {
+        if (!frame || typeof frame !== 'object') {
             return frame;
         }
-        const frameDataUrl = serverFrameImages.get(String(frame.marker_id));
-        if (!frameDataUrl) {
+        const serverFrame = serverFrames.get(String(frame.marker_id));
+        if (!serverFrame) {
             return frame;
         }
+        const durablePath = !frame.frame_path && serverFrame.frame_path
+            ? serverFrame.frame_path
+            : null;
+        const frameDataUrl = !frame.frameDataUrl && serverFrame.frameDataUrl
+            ? serverFrame.frameDataUrl
+            : null;
+        if (!durablePath && !frameDataUrl) return frame;
         enriched = true;
-        return { ...frame, frameDataUrl };
+        return {
+            ...frame,
+            ...(durablePath ? { frame_path: durablePath } : {}),
+            ...(frameDataUrl ? { frameDataUrl } : {}),
+        };
     });
 
     if (enriched) {
@@ -1158,7 +1172,7 @@ function restoreUIFromState() {
 
         const verdict = normalizeVerdict(state.verdict);
         article.dataset.verdict = verdict === 'none' ? '' : verdict;
-        article.querySelectorAll(`input[name="verdict-${findingId}"]`).forEach((radio) => {
+        article.querySelectorAll('.radio-group input[type="radio"]').forEach((radio) => {
             radio.checked = radio.value === verdict;
         });
 
@@ -1176,6 +1190,7 @@ function restoreUIFromState() {
             // value into notes once, then ignore it.
             textarea.value = state.notes || state.actionItems || '';
         }
+        paintReviewerOverrides(article, state);
     });
     updateReviewMeta();
 }
@@ -1797,10 +1812,14 @@ function buildMergedReviewEntry(merged) {
     const { screenshot, ...rest } = merged;
     // Inherit the reviewer state of the WHOLE group, not just the survivor's.
     const r = reconcileMergedReview(merged.id, merged.merged_from_ids);
+    const survivorState = reportState.findings[normId(merged.id)] || {};
     const human_review = {
         verdict: r.verdict,
         severity_override: r.severity || null,
         notes: r.notes || '',
+        action_items: survivorState.actionItems || survivorState.action_items || '',
+        summary_override: survivorState.summary_override || '',
+        category_override: survivorState.category_override || '',
         annotations: r.annotations,
         reviewer: reportState.reviewer,
         reviewed_at: new Date().toISOString(),
@@ -2405,6 +2424,9 @@ function buildReviewData() {
                 verdict: normalizeVerdict(review.verdict),
                 severity_override: review.severity || null,
                 notes: review.notes || '',
+                action_items: review.actionItems || review.action_items || '',
+                summary_override: review.summary_override || '',
+                category_override: review.category_override || '',
                 annotations: annotations,
                 reviewer: reportState.reviewer,
                 reviewed_at: new Date().toISOString()
@@ -2479,11 +2501,57 @@ function describeAnnotations(annotations) {
     return desc;
 }
 
-function buildTodoMarkdown(originalFindings, videoName, reviewer) {
+function transcriptSourceKind() {
+    const source = document.body.dataset.transcriptSource;
+    return source === 'audio' || source === 'ocr' ? source : 'unknown';
+}
+
+function sourceTranscriptSegments(finding = null) {
+    const segments = Array.isArray(window.TRANSCRIPT_SEGMENTS) ? window.TRANSCRIPT_SEGMENTS : [];
+    const start = finding ? Number(finding.timestamp_start ?? finding.timestamp) : null;
+    const end = finding ? Number(finding.timestamp_end ?? start) : null;
+    return segments.flatMap((segment) => {
+        if (!segment || typeof segment.text !== 'string') return [];
+        const segmentEnd = segment.end ?? segment.start;
+        if (!Number.isFinite(segment.start) || !Number.isFinite(segmentEnd)) return [];
+        return [{ start: segment.start, end: segmentEnd, text: segment.text }];
+    }).filter((segment) => {
+        if (!segment) return false;
+        return !finding || (
+            Number.isFinite(start) && Number.isFinite(end)
+            && segment.end >= start && segment.start <= end
+        );
+    }).map(({ start, end, text }) => ({ start, end, text }));
+}
+
+function effectiveExportAnalysis(finding, review) {
+    const unified = { ...(finding.unified_analysis || {}) };
+    if (typeof review.summary_override === 'string' && review.summary_override.trim()) {
+        unified.summary = review.summary_override;
+    }
+    if (typeof review.category_override === 'string' && review.category_override.trim()) {
+        unified.category = review.category_override;
+    }
+    if (Array.isArray(review.action_items)) unified.action_items = review.action_items;
+    return unified;
+}
+
+function buildTodoMarkdown(originalFindings, videoName, reviewer, evidencePaths = null) {
     let md = `# TODO: ${videoName}\n`;
     md += `> ${t('review.todoReviewerLabel')}: ${reviewer} | ${t('review.todoDateLabel')}: ${new Date().toISOString().split('T')[0]}\n\n`;
+    const sourceKind = transcriptSourceKind();
+    md += `${t(sourceKind === 'ocr' ? 'review.todoOcrAuthorityRule' : 'review.todoAuthorityRule')}\n\n`;
+    const sourceSegments = sourceTranscriptSegments();
+    if (sourceSegments.length) {
+        md += `## ${t(sourceKind === 'ocr' ? 'review.todoOcrSourceSection' : 'review.todoSourceSection')}\n\n`;
+        md += sourceSegments.map((segment) =>
+            `> [${formatPreciseTime(segment.start)}] ${segment.text.replace(/\r?\n/g, '\n> ')}`
+        ).join('\n');
+        md += '\n\n';
+    }
 
-    // ===== AI findings (severity-grouped, accepted only; rejected listed below) =====
+    // Unreviewed proposals stay visible, explicitly labelled; rejected findings
+    // are excluded from the actionable list and recorded separately below.
     const bySeverity = { critical: [], high: [], medium: [], low: [] };
 
     // Collapse human-merge groups so the TODO carries one richer item per merge
@@ -2502,7 +2570,7 @@ function buildTodoMarkdown(originalFindings, videoName, reviewer) {
         const review = isMerged
             ? reconcileMergedReview(f.id, f.merged_from_ids)
             : (reportState.findings[f.id] || {});
-        const unified = f.unified_analysis || {};
+        const unified = effectiveExportAnalysis(f, review);
         const severity = review.severity || unified.severity || 'medium';
         const verdict = normalizeVerdict(review.verdict);
 
@@ -2514,7 +2582,32 @@ function buildTodoMarkdown(originalFindings, videoName, reviewer) {
         const actionItems = unified.action_items || [];
 
         let item = `- ${checkbox} **#${idx + 1}** [${severity.toUpperCase()}] ${summary}`;
+        item += `\n  - ${t('review.todoReviewStateLabel')}: ${t(verdict === 'accepted' ? 'review.todoConfirmed' : 'review.todoUnreviewed')}`;
+        const timestamp = Number(f.timestamp_start ?? f.timestamp);
+        if (f.timestamp_formatted || Number.isFinite(timestamp)) {
+            item += `\n  - ${t('review.todoTimestampLabel')}: ${f.timestamp_formatted || formatPreciseTime(timestamp)}`;
+        }
+        const source = sourceTranscriptSegments(f);
+        if (source.length) {
+            const sourceLabel = sourceKind === 'audio' ? 'review.todoSourceQuoteLabel'
+                : sourceKind === 'ocr' ? 'review.todoOcrSourceLabel' : 'review.todoUnknownSourceLabel';
+            item += `\n  - ${t(sourceLabel)}: ${source.map((segment) => segment.text).join(' ')}`;
+        } else if (f.text) {
+            item += `\n  - ${t('review.todoDetectionLabel')}: ${f.text}`;
+        }
+        const originalScreenshot = typeof f.screenshot_path === 'string'
+            ? f.screenshot_path.split(/[\\/]/).pop() : '';
+        const evidencePath = evidencePaths
+            ? evidencePaths[normId(f.id)]
+            : (originalScreenshot ? `screenshots/${originalScreenshot}` : null);
+        if (evidencePath) item += `\n  - ${t('review.todoEvidenceLabel')}: ${evidencePath}`;
         if (notes) item += `\n  - ${t('review.todoNotesLabel')}: ${notes}`;
+        if (unified.affected_components?.length) {
+            item += `\n  - ${t('review.todoComponentsLabel')}: ${unified.affected_components.join(', ')}`;
+        }
+        if (unified.suggested_fix) {
+            item += `\n  - ${t('review.todoSuggestedFixLabel')}: ${unified.suggested_fix}`;
+        }
         if (actionItems.length > 0) {
             item += `\n  - ${t('review.todoActionsLabel')}: ${actionItems.slice(0, 3).join(', ')}`;
         }
@@ -2632,6 +2725,7 @@ async function saveReviewToDisk() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(buildReviewData()),
         });
+        const status = response.status;
         await fetchJsonOrThrow(response, 'Failed to save review to disk.');
         showNotification(t('review.reviewSaved'));
 
@@ -2641,10 +2735,17 @@ async function saveReviewToDisk() {
         } catch (e) {}
         reportState.modified = false;
         persistSharedState();
+        return { ok: true, status };
 
     } catch (error) {
         if (DEBUG) console.error('Save to disk failed:', error);
         showNotification(t('review.saveFailed', { message: error.message }));
+        const statusMatch = String(error && error.message || '').match(/HTTP (\d+)/);
+        return {
+            ok: false,
+            status: statusMatch ? Number(statusMatch[1]) : 0,
+            message: error && error.message ? error.message : String(error),
+        };
     }
 }
 
@@ -2768,6 +2869,7 @@ async function exportReviewedZIP() {
 
         const reviewedFindings = [];
         const manifestFindings = [];
+        const evidencePaths = {};
         let findingIndex = 0;
 
         // Collapse human-merge groups so the handoff bundle (report_reviewed JSON
@@ -2801,6 +2903,9 @@ async function exportReviewedZIP() {
                 human_review: {
                     verdict: normalizeVerdict(review.verdict),
                     severity_override: review.severity || null,
+                    summary_override: review.summary_override ?? null,
+                    category_override: review.category_override ?? null,
+                    action_items: Array.isArray(review.action_items) ? review.action_items : null,
                     notes: review.notes || '',
                     annotations: annotations,
                     reviewer: reportState.reviewer,
@@ -2816,7 +2921,7 @@ async function exportReviewedZIP() {
             if (annotations.length > 0) {
                 try {
                     const tool = annotationTools.get(String(f.id));
-                    const thumb = document.querySelector(`[data-finding-id="${f.id}"] .thumbnail`);
+                    const thumb = findingArticle(f.id)?.querySelector('.thumbnail');
                     let dataUrl = null;
                     if (tool && typeof tool.getMergedDataURL === 'function') {
                         dataUrl = await tool.getMergedDataURL();
@@ -2872,7 +2977,7 @@ async function exportReviewedZIP() {
 
             // Build the manifest entry: priority, action items, and a testable
             // acceptance criterion so an agent can verify the fix.
-            const unified = f.unified_analysis || {};
+            const unified = effectiveExportAnalysis(f, review);
             const severity = review.severity || unified.severity || 'medium';
             const priorityMap = {critical: 'P0', high: 'P0', medium: 'P1', low: 'P2'};
             const priority = priorityMap[severity] || 'P1';
@@ -2899,7 +3004,15 @@ async function exportReviewedZIP() {
                 severity: severity,
                 title: title,
                 user_said: f.text || '',
+                user_said_source: 'detection',
+                source_role: transcriptSourceKind() === 'ocr' ? 'screen_text'
+                    : transcriptSourceKind() === 'audio' ? 'narration' : 'unknown',
                 context: f.context || '',
+                timestamp: f.timestamp_start ?? f.timestamp ?? null,
+                timestamp_formatted: f.timestamp_formatted || null,
+                source_segments: sourceTranscriptSegments(f),
+                review_verdict: normalizeVerdict(review.verdict),
+                reviewer_notes: review.notes || '',
                 screenshot: screenshotWritten ? screenshotRelPath : null,
                 annotated: result.screenshot_annotated || null,
                 annotations: annotationSummary,
@@ -2909,6 +3022,13 @@ async function exportReviewedZIP() {
                 verify: verify,
                 status: 'pending'
             };
+            if (manifestEntry.source_segments.length) {
+                manifestEntry.source_text = manifestEntry.source_segments.map((segment) => segment.text).join(' ');
+                manifestEntry.user_said = transcriptSourceKind() === 'ocr' ? '' : manifestEntry.source_text;
+                manifestEntry.user_said_source = transcriptSourceKind() === 'ocr'
+                    ? 'ocr_frames' : 'transcript_segments';
+            }
+            evidencePaths[normId(f.id)] = manifestEntry.screenshot;
             // Provenance trail for a folded merge group: surface the absorbed
             // finding ids (and an explicit count) so the coding agent sees this
             // entry stands in for many.
@@ -2956,11 +3076,15 @@ async function exportReviewedZIP() {
             // the JSON must stay lightweight + referential — mirroring the strip in
             // exportReviewedJSON (de41ef1). Without this the ZIP's JSON balloons
             // ~100x (one frame's data URL is ~500KB) and stores each image 3x.
-            const { frameDataUrl, ...frameWithoutBase64 } = frame;
+            const { frameDataUrl, frame_path: _diskFramePath, ...frameWithoutBase64 } = frame;
+            const portableScreenshotPath = screenshotFile
+                ? `manual_frames/${screenshotFile}`
+                : null;
             manualFramesOutput.push({
                 ...frameWithoutBase64,
                 annotations,
-                screenshot_file: screenshotFile ? `manual_frames/${screenshotFile}` : null,
+                ...(portableScreenshotPath ? { frame_path: portableScreenshotPath } : {}),
+                screenshot_file: portableScreenshotPath,
                 screenshot_data_url: screenshotFile ? null : screenshotDataUrl,
             });
 
@@ -3019,7 +3143,11 @@ async function exportReviewedZIP() {
                 reviewer: reportState.reviewer,
                 total_findings: manifestFindings.length,
                 total_manual_frames: manualManifestFrames.length,
-                unpack_to: '.screenscribe/reviews/' + baseName + '/'
+                unpack_to: '.screenscribe/reviews/' + baseName + '/',
+                transcript_source: transcriptSourceKind(),
+                source_guidance: t(transcriptSourceKind() === 'ocr'
+                    ? 'review.todoOcrAuthorityRule' : 'review.todoAuthorityRule'),
+                ...(sourceTranscriptSegments().length ? { transcript_file: 'transcript.txt' } : {})
             },
             findings: manifestFindings,
             manual_frames: manualManifestFrames
@@ -3027,7 +3155,7 @@ async function exportReviewedZIP() {
 
         const reviewedJsonName = 'report_reviewed_' + baseName + '.json';
         const todoFilename = 'TODO_' + baseName + '.md';
-        const todoMarkdown = buildTodoMarkdown(originalFindings, videoName, reportState.reviewer);
+        const todoMarkdown = buildTodoMarkdown(originalFindings, videoName, reportState.reviewer, evidencePaths);
 
         zip.file(reviewedJsonName, JSON.stringify(output, null, 2));
         zip.file(todoFilename, todoMarkdown);
@@ -3036,7 +3164,7 @@ async function exportReviewedZIP() {
         // Full timestamped transcript for agent context. A coding agent picking
         // up the handoff bundle benefits from reading the complete narration
         // before working through individual findings.
-        const transcriptSegments = window.TRANSCRIPT_SEGMENTS || [];
+        const transcriptSegments = sourceTranscriptSegments();
         if (transcriptSegments.length > 0) {
             const transcriptLines = transcriptSegments.map(s => {
                 const mm = String(Math.floor(s.start / 60)).padStart(2, '0');
@@ -3101,6 +3229,359 @@ function seekToTimestamp(seconds) {
         autoplay: true,
     });
 }
+
+function showAgentFrame(input) {
+    const payload = input && typeof input === 'object' ? input : {};
+    const findingId = payload.finding_id != null ? String(payload.finding_id) : '';
+    const timestamp = Number(payload.timestamp);
+    document.querySelectorAll('.ss-agent-highlight').forEach((node) => {
+        node.classList.remove('ss-agent-highlight');
+    });
+    let target = null;
+    if (findingId) {
+        target = findingArticle(findingId);
+    }
+    if (!target && Number.isFinite(timestamp)) {
+        const metas = document.querySelectorAll('.finding .finding-meta[data-timestamp]');
+        let bestDelta = Infinity;
+        metas.forEach((meta) => {
+            const value = Number(meta.dataset.timestamp);
+            if (!Number.isFinite(value)) return;
+            const delta = Math.abs(value - timestamp);
+            const article = meta.closest('.finding');
+            if (article && delta < bestDelta) {
+                bestDelta = delta;
+                target = article;
+            }
+        });
+    }
+    if (target) {
+        activateTab('findings');
+        target.classList.add('ss-agent-highlight');
+        const thumb = target.querySelector('.annotation-container');
+        if (thumb) thumb.classList.add('ss-agent-highlight');
+        if (typeof target.scrollIntoView === 'function') {
+            target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+    if (Number.isFinite(timestamp)) {
+        seekToTimestamp(timestamp);
+    }
+}
+
+function ensureFindingReviewState(findingId) {
+    const id = normId(findingId);
+    if (!id) return '';
+    if (!reportState.findings[id]) {
+        reportState.findings[id] = createDefaultFindingState();
+    }
+    return id;
+}
+
+function findingArticle(findingId) {
+    const id = normId(findingId);
+    if (!id) return null;
+    return Array.from(document.querySelectorAll('.finding')).find(
+        (article) => normId(article?.dataset?.findingId) === id
+    ) || null;
+}
+
+function actionItemsText(value) {
+    if (Array.isArray(value)) {
+        return value.map((item) => String(item || '').trim()).filter(Boolean).join('\n');
+    }
+    return value == null ? '' : String(value);
+}
+
+function paintReviewerOverrides(article, state) {
+    if (!article || !state) return;
+    const summary = String(state.summary_override || '');
+    const category = String(state.category_override || '');
+    const actions = actionItemsText(state.actionItems || state.action_items);
+    const summaryEl = article.querySelector('.finding-summary');
+    const oldSummaryOverride = summaryEl
+        ? summaryEl.querySelector('.ss-summary-override')
+        : null;
+    if (!summary && oldSummaryOverride?.parentNode) {
+        oldSummaryOverride.parentNode.removeChild(oldSummaryOverride);
+    }
+    let box = article.querySelector('.ss-reviewer-overrides');
+    if (!summary && !category && !actions) {
+        if (box && box.parentNode) box.parentNode.removeChild(box);
+        return;
+    }
+    if (!box) {
+        box = document.createElement('div');
+        box.className = 'ss-reviewer-overrides';
+        const review = article.querySelector('.human-review');
+        if (review) review.insertBefore(box, review.firstChild);
+        else article.appendChild(box);
+    }
+    while (box.firstChild) box.removeChild(box.firstChild);
+    const heading = document.createElement('strong');
+    heading.className = 'ss-reviewer-overrides-label';
+    heading.textContent = t('review.agentOverrideLabel');
+    box.appendChild(heading);
+    const addLine = (labelKey, value, className) => {
+        if (!value) return;
+        const line = document.createElement('p');
+        line.className = className;
+        const label = document.createElement('span');
+        label.textContent = t(labelKey) + ': ';
+        line.appendChild(label);
+        const valueNode = document.createElement('span');
+        valueNode.textContent = value;
+        line.appendChild(valueNode);
+        box.appendChild(line);
+    };
+    addLine('review.agentOverrideSummary', summary, 'ss-reviewer-override-summary');
+    addLine('review.agentOverrideCategory', category, 'ss-reviewer-override-category');
+    addLine('review.agentOverrideActions', actions, 'ss-reviewer-override-actions');
+
+    if (summaryEl && summary) {
+        let override = summaryEl.querySelector('.ss-summary-override');
+        if (!override) {
+            override = document.createElement('span');
+            override.className = 'ss-summary-override';
+            summaryEl.appendChild(override);
+        }
+        override.textContent = ' ' + summary;
+    }
+}
+
+function paintFindingReview(findingId) {
+    const id = ensureFindingReviewState(findingId);
+    const article = findingArticle(id);
+    if (!article) return null;
+    const state = reportState.findings[id];
+    const verdict = normalizeVerdict(state.verdict);
+    article.dataset.verdict = verdict === 'none' ? '' : verdict;
+    article.querySelectorAll('.radio-group input[type="radio"]').forEach((radio) => {
+        radio.checked = radio.value === verdict;
+    });
+    const select = article.querySelector('.severity-select');
+    if (select) {
+        select.value = state.severity && state.severity !== 'none' ? state.severity : '';
+    }
+    const textarea = article.querySelector('.notes textarea');
+    if (textarea) {
+        textarea.value = state.notes || '';
+    }
+    paintReviewerOverrides(article, state);
+    return article;
+}
+
+function applyVerdictOp(op) {
+    const id = ensureFindingReviewState(op.finding_id);
+    const verdict = normalizeVerdict(op.verdict);
+    reportState.findings[id].verdict = verdict;
+    const article = paintFindingReview(id);
+    if (article && (verdict === 'accepted' || verdict === 'rejected')) {
+        flashReviewFeedback(article, verdict);
+    }
+    return { op: 'set_verdict', findingId: id, reversible: false };
+}
+
+function applySeverityOp(op) {
+    const id = ensureFindingReviewState(op.finding_id);
+    const raw = String(op.severity || '').toLowerCase();
+    const allowed = { critical: true, high: true, medium: true, low: true, none: true };
+    const severity = allowed[raw] ? raw : '';
+    reportState.findings[id].severity = !severity || severity === 'none' ? null : severity;
+    paintFindingReview(id);
+    return { op: 'set_severity', findingId: id, reversible: false };
+}
+
+function applyEditFindingOp(op) {
+    const id = ensureFindingReviewState(op.finding_id);
+    const fields = op.fields && typeof op.fields === 'object' ? op.fields : {};
+    const state = reportState.findings[id];
+    if (fields.notes != null) state.notes = String(fields.notes);
+    if (fields.action_items != null) state.actionItems = actionItemsText(fields.action_items);
+    if (fields.summary_override != null) state.summary_override = String(fields.summary_override);
+    if (fields.category_override != null) state.category_override = String(fields.category_override);
+    paintFindingReview(id);
+    return { op: 'edit_finding', findingId: id, reversible: false };
+}
+
+async function seekPlayerBeforeFrameCapture(timestamp) {
+    const activePlayer = window.player;
+    if (!activePlayer || typeof activePlayer.seekTo !== 'function' || !Number.isFinite(timestamp)) {
+        return;
+    }
+    const video = activePlayer.video;
+    if (!video || typeof video.addEventListener !== 'function') {
+        activePlayer.seekTo(timestamp, false);
+        return;
+    }
+
+    await new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            if (typeof video.removeEventListener === 'function') {
+                video.removeEventListener('seeked', finish);
+            }
+            resolve();
+        };
+        const timer = setTimeout(finish, 2000);
+        video.addEventListener('seeked', finish, { once: true });
+        activePlayer.seekTo(timestamp, false);
+        if (!video.seeking && Math.abs(Number(video.currentTime) - timestamp) < 0.001) {
+            if (typeof requestAnimationFrame === 'function') requestAnimationFrame(finish);
+            else setTimeout(finish, 0);
+        }
+    });
+}
+
+async function addFindingFromPatch(op) {
+    const timestamp = Number(op.timestamp);
+    const summary = String(op.summary || '');
+    const severity = String(op.severity || '');
+    const category = String(op.category || '');
+    if (Number.isFinite(timestamp)) {
+        seekToTimestamp(timestamp);
+    }
+    let captured = null;
+    if (
+        !isStaticDemo()
+        && window.player
+        && typeof window.player.captureCurrentFrame === 'function'
+    ) {
+        try {
+            await seekPlayerBeforeFrameCapture(timestamp);
+            captured = await window.player.captureCurrentFrame();
+        } catch (_error) {
+            captured = null;
+        }
+    }
+    if (captured && captured.frameBase64) {
+        const frame = {
+            timestamp: Number.isFinite(captured.timestamp) ? captured.timestamp : timestamp,
+            frameBase64: captured.frameBase64,
+            frameDataUrl: captured.frameDataUrl,
+        };
+        const markerId = await markManualFrame(frame, '', summary);
+        if (markerId) {
+            const stored = reportState.manualFrames.find(
+                (entry) => String(entry.marker_id) === String(markerId)
+            );
+            if (stored) {
+                stored.notes = summary;
+                stored.category = category;
+                if (severity) stored.severity = severity === 'none' ? 'none' : severity;
+            }
+            renderManualFrames();
+            return { op: 'add_finding', markerId, captured: true, reversible: false };
+        }
+    }
+    const markerId = `agent-${String(Number.isFinite(timestamp) ? timestamp : 0)}-${Date.now()}`;
+    upsertManualFrame({
+        marker_id: markerId,
+        timestamp: Number.isFinite(timestamp) ? timestamp : 0,
+        timestamp_formatted: formatPreciseTime(Number.isFinite(timestamp) ? timestamp : 0),
+        transcript: '',
+        notes: summary,
+        category,
+        severity: severity === 'none' ? 'none' : severity,
+        frameDataUrl: '',
+        result: { summary, severity, category },
+    });
+    renderManualFrames();
+    return { op: 'add_finding', markerId, captured: false, reversible: false };
+}
+
+async function applyOneReviewOp(op) {
+    if (!op || typeof op !== 'object') {
+        return { skipped: true, unknown: true, op: '' };
+    }
+    const kind = String(op.op || '');
+    if (kind === 'set_verdict') return applyVerdictOp(op);
+    if (kind === 'set_severity') return applySeverityOp(op);
+    if (kind === 'edit_finding') return applyEditFindingOp(op);
+    if (kind === 'add_finding') return addFindingFromPatch(op);
+    if (kind === 'merge_findings' || kind === 'unmerge_finding') {
+        return {
+            skipped: true,
+            unsupported: true,
+            op: kind,
+            reason: 'merge/unmerge is a client-only fold (mergeFindings / unmergeFindingGroup). Apply it from the report merge controls.',
+        };
+    }
+    return { skipped: true, unknown: true, op: kind };
+}
+
+function appendAppliedChatInstruction(existingNotes, instruction) {
+    const raw = instruction == null ? '' : String(instruction);
+    if (!raw.trim()) return existingNotes || '';
+    const entry = `${t('review.chatInstructionLabel')}: ${raw}`;
+    const current = String(existingNotes || '');
+    if (current === entry || current.includes(`\n\n${entry}`)) return current;
+    if (!current) return entry;
+    return current + (current.endsWith('\n') ? '\n' : '\n\n') + entry;
+}
+
+function attachAppliedChatInstruction(results, instruction) {
+    if (!String(instruction || '').trim()) return;
+    const findingIds = new Set();
+    const markerIds = new Set();
+    (results || []).forEach((row) => {
+        if (!row || row.skipped) return;
+        if (row.findingId) findingIds.add(normId(row.findingId));
+        if (row.markerId) markerIds.add(String(row.markerId));
+    });
+    findingIds.forEach((id) => {
+        if (!id || !reportState.findings[id]) return;
+        reportState.findings[id].notes = appendAppliedChatInstruction(
+            reportState.findings[id].notes,
+            instruction
+        );
+        paintFindingReview(id);
+    });
+    markerIds.forEach((markerId) => {
+        const frame = reportState.manualFrames.find(
+            (candidate) => String(candidate?.marker_id) === markerId
+        );
+        if (frame) frame.notes = appendAppliedChatInstruction(frame.notes, instruction);
+    });
+}
+
+async function applyReviewPatch(ops, userInstruction = '') {
+    const list = Array.isArray(ops) ? ops : [];
+    const results = [];
+    for (const op of list) {
+        results.push(await applyOneReviewOp(op));
+    }
+    const applied = results.filter((row) => !row.skipped);
+    if (applied.length) {
+        attachAppliedChatInstruction(applied, userInstruction);
+        reportState.modified = true;
+        scheduleSharedStateSync();
+        updateReviewMeta();
+        const lastId = applied.map((row) => row.findingId).filter(Boolean).pop();
+        if (lastId) {
+            const article = findingArticle(lastId);
+            if (article) {
+                activateTab('findings');
+                article.classList.add('ss-agent-highlight');
+                if (typeof article.scrollIntoView === 'function') {
+                    article.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+            }
+        }
+    }
+    return results;
+}
+
+window.__screenscribeAgentHost = {
+    seek: seekToTimestamp,
+    showFrame: showAgentFrame,
+    applyReviewPatch,
+    saveReview: saveReviewToDisk,
+    addFindingFromPatch,
+};
 
 function exportTodoList() {
     const originalFindings = getOriginalFindingsList();
@@ -3735,6 +4216,7 @@ async function markManualFrame(current, transcript, notes) {
             current.marker_id = markPayload.marker_id;
             upsertManualFrame({
                 marker_id: markPayload.marker_id,
+                frame_path: markPayload.frame_path || '',
                 timestamp: current.timestamp,
                 timestamp_formatted: formatPreciseTime(current.timestamp),
                 transcript,
@@ -4000,14 +4482,16 @@ function setVoiceNoteUi(button, findingId, recording, statusText = '') {
         ? `🎤 ${t('review.voiceRecording')}`
         : `🎤 ${t('review.voiceNote')}`;
 
-    const statusEl = document.querySelector(`.notes-mic-status[data-finding-id="${findingId}"]`);
+    const statusEl = Array.from(document.querySelectorAll('.notes-mic-status')).find(
+        (node) => normId(node?.dataset?.findingId) === normId(findingId)
+    );
     if (statusEl) {
         statusEl.textContent = statusText;
     }
 }
 
 function appendVoiceTextToNotes(findingId, text) {
-    const article = document.querySelector(`[data-finding-id="${findingId}"]`);
+    const article = findingArticle(findingId);
     if (!article) return;
     const textarea = article.querySelector('.notes textarea');
     if (!textarea) return;
@@ -4457,6 +4941,300 @@ function getActualImageRect(img) {
     };
 }
 
+const ANNOTATION_HANDLE_SIZE = 0.018;
+const ANNOTATION_HIT_SLOP = 0.02;
+
+function newAnnotationId() {
+    try {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+    } catch (error) {
+        console.debug('newAnnotationId: crypto.randomUUID failed', error);
+    }
+    return `ann-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function ensureAnnotationId(ann) {
+    if (!ann || typeof ann !== 'object') return ann;
+    if (!ann.id) ann.id = newAnnotationId();
+    return ann;
+}
+
+function ensureAnnotationsHaveIds(annotations) {
+    if (!Array.isArray(annotations)) return [];
+    annotations.forEach(ensureAnnotationId);
+    return annotations;
+}
+
+function cloneAnnotation(ann) {
+    if (!ann || typeof ann !== 'object') return ann;
+    const copy = { ...ann };
+    if (Array.isArray(ann.points)) {
+        copy.points = ann.points.map((p) => ({ x: p.x, y: p.y }));
+    }
+    return copy;
+}
+
+function estimateTextWidth(ann) {
+    const fontSize = ann.fontSizeRel || 0.036;
+    const chars = (ann.text || '').length || 1;
+    return Math.max(fontSize, chars * fontSize * 0.55);
+}
+
+function annotationBounds(ann) {
+    if (!ann) return null;
+    if (ann.type === 'rect') return normalizeRect(ann);
+    if (ann.type === 'text') {
+        const fontSize = ann.fontSizeRel || 0.036;
+        return {
+            x: ann.x || 0,
+            y: ann.y || 0,
+            width: estimateTextWidth(ann),
+            height: fontSize * 1.25,
+        };
+    }
+    if (ann.type === 'arrow') {
+        const x = Math.min(ann.startX || 0, ann.endX || 0);
+        const y = Math.min(ann.startY || 0, ann.endY || 0);
+        return {
+            x,
+            y,
+            width: Math.abs((ann.endX || 0) - (ann.startX || 0)),
+            height: Math.abs((ann.endY || 0) - (ann.startY || 0)),
+        };
+    }
+    if (ann.type === 'pen' && Array.isArray(ann.points) && ann.points.length) {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        ann.points.forEach((p) => {
+            minX = Math.min(minX, p.x);
+            minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x);
+            maxY = Math.max(maxY, p.y);
+        });
+        return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+    }
+    return null;
+}
+
+function annotationHandles(ann) {
+    if (!ann) return [];
+    if (ann.type === 'rect') {
+        const r = normalizeRect(ann);
+        return [
+            { id: 'nw', x: r.x, y: r.y },
+            { id: 'ne', x: r.x + r.width, y: r.y },
+            { id: 'se', x: r.x + r.width, y: r.y + r.height },
+            { id: 'sw', x: r.x, y: r.y + r.height },
+        ];
+    }
+    if (ann.type === 'arrow') {
+        return [
+            { id: 'start', x: ann.startX, y: ann.startY },
+            { id: 'end', x: ann.endX, y: ann.endY },
+        ];
+    }
+    if (ann.type === 'text') {
+        const fontSize = ann.fontSizeRel || 0.036;
+        return [{ id: 'size', x: (ann.x || 0) + estimateTextWidth(ann), y: (ann.y || 0) + fontSize }];
+    }
+    return [];
+}
+
+function distToSegment(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    if (!len2) return Math.hypot(px - x1, py - y1);
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+function hitTestHandle(ann, x, y) {
+    const half = ANNOTATION_HANDLE_SIZE;
+    for (const handle of annotationHandles(ann)) {
+        if (Math.abs(x - handle.x) <= half && Math.abs(y - handle.y) <= half) {
+            return handle.id;
+        }
+    }
+    return null;
+}
+
+function hitTestAnnotation(ann, x, y) {
+    if (!ann) return false;
+    const slop = ANNOTATION_HIT_SLOP + (ann.strokeWidthRel || 0);
+    if (ann.type === 'rect') {
+        const r = normalizeRect(ann);
+        return x >= r.x - slop && x <= r.x + r.width + slop
+            && y >= r.y - slop && y <= r.y + r.height + slop;
+    }
+    if (ann.type === 'text') {
+        const bounds = annotationBounds(ann);
+        return bounds
+            && x >= bounds.x - slop && x <= bounds.x + bounds.width + slop
+            && y >= bounds.y - slop && y <= bounds.y + bounds.height + slop;
+    }
+    if (ann.type === 'arrow') {
+        return distToSegment(x, y, ann.startX, ann.startY, ann.endX, ann.endY) <= slop;
+    }
+    if (ann.type === 'pen' && Array.isArray(ann.points) && ann.points.length) {
+        if (ann.points.length === 1) {
+            return Math.hypot(x - ann.points[0].x, y - ann.points[0].y) <= slop;
+        }
+        for (let i = 1; i < ann.points.length; i += 1) {
+            const a = ann.points[i - 1];
+            const b = ann.points[i];
+            if (distToSegment(x, y, a.x, a.y, b.x, b.y) <= slop) return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+function hitTestTopAnnotation(annotations, x, y) {
+    const list = Array.isArray(annotations) ? annotations : [];
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+        if (hitTestAnnotation(list[i], x, y)) return list[i];
+    }
+    return null;
+}
+
+function moveAnnotationBy(ann, dx, dy) {
+    if (!ann) return ann;
+    const bounds = annotationBounds(ann);
+    if (bounds) {
+        const minDx = -bounds.x;
+        const maxDx = 1 - (bounds.x + bounds.width);
+        const minDy = -bounds.y;
+        const maxDy = 1 - (bounds.y + bounds.height);
+        if (minDx <= maxDx) dx = Math.min(maxDx, Math.max(minDx, dx));
+        else dx = 0;
+        if (minDy <= maxDy) dy = Math.min(maxDy, Math.max(minDy, dy));
+        else dy = 0;
+    }
+    if (ann.type === 'rect' || ann.type === 'text') {
+        ann.x = (ann.x || 0) + dx;
+        ann.y = (ann.y || 0) + dy;
+        return ann;
+    }
+    if (ann.type === 'arrow') {
+        ann.startX = (ann.startX || 0) + dx;
+        ann.startY = (ann.startY || 0) + dy;
+        ann.endX = (ann.endX || 0) + dx;
+        ann.endY = (ann.endY || 0) + dy;
+        return ann;
+    }
+    if (ann.type === 'pen' && Array.isArray(ann.points)) {
+        ann.points.forEach((p) => {
+            p.x += dx;
+            p.y += dy;
+        });
+    }
+    return ann;
+}
+
+function resizeAnnotationHandle(ann, handle, x, y) {
+    if (!ann || !handle) return ann;
+    if (ann.type === 'rect') {
+        const r = normalizeRect(ann);
+        let left = r.x;
+        let top = r.y;
+        let right = r.x + r.width;
+        let bottom = r.y + r.height;
+        if (handle === 'nw') { left = x; top = y; }
+        else if (handle === 'ne') { right = x; top = y; }
+        else if (handle === 'se') { right = x; bottom = y; }
+        else if (handle === 'sw') { left = x; bottom = y; }
+        const next = normalizeRect({ x: left, y: top, width: right - left, height: bottom - top });
+        ann.x = next.x;
+        ann.y = next.y;
+        ann.width = Math.max(0.008, next.width);
+        ann.height = Math.max(0.008, next.height);
+        return ann;
+    }
+    if (ann.type === 'arrow') {
+        if (handle === 'start') {
+            ann.startX = x;
+            ann.startY = y;
+        } else if (handle === 'end') {
+            ann.endX = x;
+            ann.endY = y;
+        }
+        return ann;
+    }
+    if (ann.type === 'text' && handle === 'size') {
+        const next = y - (ann.y || 0);
+        ann.fontSizeRel = Math.max(0.012, Math.min(0.2, next));
+    }
+    return ann;
+}
+
+function applyAnnotationProperties(ann, props) {
+    if (!ann || !props) return ann;
+    if (props.color != null) ann.color = props.color;
+    if (props.strokeWidthRel != null && ann.type !== 'text') {
+        ann.strokeWidthRel = props.strokeWidthRel;
+    }
+    if (props.fontSizeRel != null && ann.type === 'text') {
+        ann.fontSizeRel = props.fontSizeRel;
+    }
+    return ann;
+}
+
+function appendSelectionChrome(group, ann) {
+    if (!group || !ann) return;
+    const bounds = annotationBounds(ann);
+    if (bounds) {
+        const box = document.createElementNS(SVG_NS, 'rect');
+        box.setAttribute('x', String(bounds.x));
+        box.setAttribute('y', String(bounds.y));
+        box.setAttribute('width', String(Math.max(bounds.width, 0.004)));
+        box.setAttribute('height', String(Math.max(bounds.height, 0.004)));
+        box.setAttribute('fill', 'none');
+        box.setAttribute('stroke', ann.color || '#ffffff');
+        box.setAttribute('stroke-width', '0.004');
+        box.setAttribute('stroke-dasharray', '0.012 0.008');
+        box.setAttribute('pointer-events', 'none');
+        box.classList.add('annotation-selection-box');
+        group.appendChild(box);
+    }
+    annotationHandles(ann).forEach((handle) => {
+        const el = document.createElementNS(SVG_NS, 'rect');
+        const size = ANNOTATION_HANDLE_SIZE;
+        el.setAttribute('x', String(handle.x - size / 2));
+        el.setAttribute('y', String(handle.y - size / 2));
+        el.setAttribute('width', String(size));
+        el.setAttribute('height', String(size));
+        el.setAttribute('data-handle', handle.id);
+        el.classList.add('annotation-handle');
+        el.classList.add(`annotation-handle-${handle.id}`);
+        group.appendChild(el);
+    });
+}
+
+function overlayLayoutFromImage(img) {
+    if (!img || typeof img.getBoundingClientRect !== 'function') return null;
+    const imgRect = getActualImageRect(img);
+    const parent = img.parentElement;
+    const containerRect = parent && typeof parent.getBoundingClientRect === 'function'
+        ? parent.getBoundingClientRect()
+        : imgRect;
+    const baseWidth = img.naturalWidth || img.width || 1920;
+    const baseHeight = img.naturalHeight || img.height || 1080;
+    return {
+        imgRect,
+        offsetX: imgRect.left - containerRect.left,
+        offsetY: imgRect.top - containerRect.top,
+        scaleX: baseWidth ? imgRect.width / baseWidth : 1,
+        scaleY: baseHeight ? imgRect.height / baseHeight : 1,
+        baseWidth,
+        baseHeight,
+    };
+}
+
 function normalizeRect(ann) {
     const x1 = ann.x;
     const y1 = ann.y;
@@ -4584,7 +5362,7 @@ function createAnnotationElement(ann) {
     return null;
 }
 
-function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight = 1) {
+function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight = 1, options = {}) {
     if (!svg || !renderWidth || !renderHeight) return;
     while (svg.firstChild) {
         svg.firstChild.remove();
@@ -4594,11 +5372,23 @@ function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight 
     // 'meet' would preserve aspect ratio causing position drift on resize
     svg.setAttribute('preserveAspectRatio', 'none');
 
+    const selectedId = options && options.selectedId;
+    const showHandles = Boolean(options && options.showHandles);
     const group = document.createElementNS(SVG_NS, 'g');
+    let selectedAnn = null;
     (annotations || []).forEach(ann => {
         const el = createAnnotationElement(ann);
-        if (el) group.appendChild(el);
+        if (!el) return;
+        if (ann && ann.id) el.setAttribute('data-ann-id', ann.id);
+        if (selectedId && ann && ann.id === selectedId) {
+            el.classList.add('annotation-selected');
+            selectedAnn = ann;
+        }
+        group.appendChild(el);
     });
+    if (showHandles && selectedAnn) {
+        appendSelectionChrome(group, selectedAnn);
+    }
     svg.appendChild(group);
 }
 
@@ -4756,8 +5546,14 @@ class LightboxAnnotationTool {
         this.currentPath = [];
         this.draftEl = null;
         this.textDraft = null;
-        this.baseWidth = img.naturalWidth || img.width || 1920;
-        this.baseHeight = img.naturalHeight || img.height || 1080;
+        this.toolbarInteraction = false;
+        this.selectedId = null;
+        this.dragMode = null;
+        this.dragHandle = null;
+        this.dragOrigin = null;
+        this.dragSnapshot = null;
+        this.baseWidth = (img && (img.naturalWidth || img.width)) || 1920;
+        this.baseHeight = (img && (img.naturalHeight || img.height)) || 1080;
         this.resizeObserver = null;
         this.boundHandlers = [];
 
@@ -4768,48 +5564,99 @@ class LightboxAnnotationTool {
         this.syncOverlaySize();
         this.bindEvents();
         this.loadAnnotations();
-        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
-        // Don't auto-select tool - user must click toolbar to start drawing
-        // This prevents accidental annotations when just viewing
+        this.render();
+        this.setTool('select');
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => this.syncOverlaySize());
+        }
     }
 
     bindEvents() {
-        // Tool selection
-        this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
-            const handler = (e) => {
+        if (this.toolbar && this.toolbar.querySelectorAll) {
+            this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
+                const handler = (e) => {
+                    e.stopPropagation();
+                    this.selectTool(btn.dataset.tool);
+                };
+                btn.addEventListener('click', handler);
+                this.boundHandlers.push({ target: btn, event: 'click', handler });
+            });
+        }
+
+        const colorPicker = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.color-picker')
+            : null;
+        if (colorPicker) {
+            colorPicker.value = this.color;
+            const colorClick = (e) => e.stopPropagation();
+            const colorPointerDown = (e) => {
                 e.stopPropagation();
-                this.selectTool(btn.dataset.tool);
+                this.toolbarInteraction = true;
+                setTimeout(() => { this.toolbarInteraction = false; }, 0);
             };
-            btn.addEventListener('click', handler);
-            this.boundHandlers.push({ target: btn, event: 'click', handler });
-        });
+            const colorInput = (e) => {
+                this.color = e.target.value;
+                this.applyColorToActiveDraft();
+            };
+            colorPicker.addEventListener('pointerdown', colorPointerDown);
+            colorPicker.addEventListener('click', colorClick);
+            colorPicker.addEventListener('input', colorInput);
+            this.boundHandlers.push({ target: colorPicker, event: 'pointerdown', handler: colorPointerDown });
+            this.boundHandlers.push({ target: colorPicker, event: 'click', handler: colorClick });
+            this.boundHandlers.push({ target: colorPicker, event: 'input', handler: colorInput });
+        }
 
-        // Color picker
-        const colorPicker = this.toolbar.querySelector('.color-picker');
-        // Keep the picker's swatch in sync with the token-derived default so the
-        // HTML literal mirror and the logical default never diverge.
-        if (colorPicker) colorPicker.value = this.color;
-        const colorClick = (e) => e.stopPropagation();
-        // One colour source of truth (this.color) for ALL annotation types.
-        // Recolour any in-progress draft live so the picker affects the
-        // annotation being placed identically for shapes and text.
-        const colorInput = (e) => { this.color = e.target.value; this.applyColorToActiveDraft(); };
-        colorPicker.addEventListener('click', colorClick);
-        colorPicker.addEventListener('input', colorInput);
-        this.boundHandlers.push({ target: colorPicker, event: 'click', handler: colorClick });
-        this.boundHandlers.push({ target: colorPicker, event: 'input', handler: colorInput });
+        const strokeInput = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.stroke-width-input')
+            : null;
+        if (strokeInput) {
+            strokeInput.value = String(this.strokeWidth);
+            const strokeHandler = (e) => {
+                e.stopPropagation();
+                this.strokeWidth = Number(e.target.value) || this.strokeWidth;
+                this.applyPropertiesToSelected({ strokeWidthRel: this.strokeWidth });
+            };
+            strokeInput.addEventListener('input', strokeHandler);
+            this.boundHandlers.push({ target: strokeInput, event: 'input', handler: strokeHandler });
+        }
 
-        // Undo/Clear
-        const undoBtn = this.toolbar.querySelector('.undo-btn');
-        const clearBtn = this.toolbar.querySelector('.clear-btn');
-        const undoHandler = (e) => { e.stopPropagation(); this.undo(); };
-        const clearHandler = (e) => { e.stopPropagation(); this.clear(); };
-        undoBtn.addEventListener('click', undoHandler);
-        clearBtn.addEventListener('click', clearHandler);
-        this.boundHandlers.push({ target: undoBtn, event: 'click', handler: undoHandler });
-        this.boundHandlers.push({ target: clearBtn, event: 'click', handler: clearHandler });
+        const fontInput = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.font-size-input')
+            : null;
+        if (fontInput) {
+            const fontHandler = (e) => {
+                e.stopPropagation();
+                this.applyPropertiesToSelected({ fontSizeRel: Number(e.target.value) });
+            };
+            fontInput.addEventListener('input', fontHandler);
+            this.boundHandlers.push({ target: fontInput, event: 'input', handler: fontHandler });
+        }
 
-        // Drawing events (pointer)
+        const undoBtn = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.undo-btn')
+            : null;
+        const clearBtn = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.clear-btn')
+            : null;
+        const deleteBtn = this.toolbar && this.toolbar.querySelector
+            ? this.toolbar.querySelector('.delete-btn')
+            : null;
+        if (undoBtn) {
+            const undoHandler = (e) => { e.stopPropagation(); this.undo(); };
+            undoBtn.addEventListener('click', undoHandler);
+            this.boundHandlers.push({ target: undoBtn, event: 'click', handler: undoHandler });
+        }
+        if (clearBtn) {
+            const clearHandler = (e) => { e.stopPropagation(); this.clear(); };
+            clearBtn.addEventListener('click', clearHandler);
+            this.boundHandlers.push({ target: clearBtn, event: 'click', handler: clearHandler });
+        }
+        if (deleteBtn) {
+            const deleteHandler = (e) => { e.stopPropagation(); this.deleteSelected(); };
+            deleteBtn.addEventListener('click', deleteHandler);
+            this.boundHandlers.push({ target: deleteBtn, event: 'click', handler: deleteHandler });
+        }
+
         const start = (e) => this.startDraw(e);
         const move = (e) => this.draw(e);
         const end = (e) => this.endDraw(e);
@@ -4820,52 +5667,100 @@ class LightboxAnnotationTool {
         this.boundHandlers.push({ target: this.svg, event: 'pointermove', handler: move });
         this.boundHandlers.push({ target: window, event: 'pointerup', handler: end });
 
-        // Resize observer to keep overlay in sync with image size
+        const keyHandler = (e) => this.onKeyDown(e);
+        document.addEventListener('keydown', keyHandler);
+        this.boundHandlers.push({ target: document, event: 'keydown', handler: keyHandler });
+
+        const onViewportChange = () => {
+            this.syncOverlaySize();
+            this.render();
+            if (this.textDraft) {
+                if (this.textDraft.el && !this.textDraft.el.parentNode) {
+                    this.svg.appendChild(this.textDraft.el);
+                }
+                this.positionTextInput(this.textDraft.input, this.textDraft.pos);
+            }
+        };
+        window.addEventListener('scroll', onViewportChange, true);
+        window.addEventListener('resize', onViewportChange);
+        this.boundHandlers.push({ target: window, event: 'scroll', handler: onViewportChange, options: true });
+        this.boundHandlers.push({ target: window, event: 'resize', handler: onViewportChange });
+        const overlayHost = this.img && this.img.parentElement;
+        if (overlayHost && overlayHost.addEventListener) {
+            overlayHost.addEventListener('scroll', onViewportChange);
+            this.boundHandlers.push({ target: overlayHost, event: 'scroll', handler: onViewportChange });
+        }
+
         this.resizeObserver = new ResizeObserver(() => {
             this.syncOverlaySize();
-            // Always render with normalized coordinates (1, 1) - CSS transform handles scaling
-            renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
+            this.render();
         });
-        this.resizeObserver.observe(this.img);
+        if (this.img) this.resizeObserver.observe(this.img);
+    }
+
+    setTool(tool) {
+        this.tool = tool || null;
+        if (this.toolbar && this.toolbar.querySelectorAll) {
+            this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.tool === this.tool);
+            });
+        }
+        if (this.svg && this.svg.classList) {
+            const drawing = this.tool !== null && this.tool !== 'select';
+            this.svg.classList.toggle('drawing', drawing);
+            this.svg.classList.toggle('selecting', this.tool === 'select' || this.tool === null);
+        }
     }
 
     selectTool(tool) {
-        this.tool = this.tool === tool ? null : tool;
-        this.toolbar.querySelectorAll('.tool-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.tool === this.tool);
+        this.setTool(this.tool === tool ? null : tool);
+    }
+
+    render() {
+        if (!this.svg) return;
+        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1, {
+            selectedId: this.selectedId,
+            showHandles: Boolean(this.selectedId),
         });
-        this.svg.classList.toggle('drawing', this.tool !== null);
+    }
+
+    selectedAnnotation() {
+        if (!this.selectedId) return null;
+        return this.annotations.find((ann) => ann.id === this.selectedId) || null;
     }
 
     syncOverlaySize() {
-        // Use actual image rect to account for object-fit: contain
-        const imgRect = getActualImageRect(this.img);
-        const containerRect = this.img.parentElement.getBoundingClientRect();
-        const offsetX = imgRect.left - containerRect.left;
-        const offsetY = imgRect.top - containerRect.top;
-        // Position SVG over the actual visible image area
-        // viewBox is set by renderAnnotationsToSvg to 0 0 1 1 (normalized coordinates)
-        this.svg.style.width = `${this.baseWidth}px`;
-        this.svg.style.height = `${this.baseHeight}px`;
-        this.svg.style.left = `${offsetX}px`;
-        this.svg.style.top = `${offsetY}px`;
-        const scaleX = imgRect.width / this.baseWidth;
-        const scaleY = imgRect.height / this.baseHeight;
+        if (!this.img || !this.svg || typeof this.img.getBoundingClientRect !== 'function') return;
+        const layout = overlayLayoutFromImage(this.img);
+        if (!layout || !layout.imgRect || !layout.imgRect.width) return;
+        this.baseWidth = layout.baseWidth;
+        this.baseHeight = layout.baseHeight;
+        this.svg.style.width = `${layout.baseWidth}px`;
+        this.svg.style.height = `${layout.baseHeight}px`;
+        this.svg.style.left = `${layout.offsetX}px`;
+        this.svg.style.top = `${layout.offsetY}px`;
         this.svg.style.transformOrigin = 'top left';
-        this.svg.style.transform = `scale(${scaleX}, ${scaleY})`;
+        this.svg.style.transform = `scale(${layout.scaleX}, ${layout.scaleY})`;
     }
 
     getPosPct(e) {
-        // Use actual image rect to account for object-fit: contain
+        // Re-read the live image box on every pointer sample. Caching it at
+        // pointerdown (or only on ResizeObserver) is what drifted annotations
+        // after lightbox scroll / player layout change.
+        this.syncOverlaySize();
         const rect = getActualImageRect(this.img);
-        // Clamp to 0-1 range to prevent out-of-bounds annotations
         const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
         const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
         return { x, y, w: rect.width, h: rect.height };
     }
 
     startDraw(e) {
-        if (!this.tool) return;
+        const drawing = this.tool && this.tool !== 'select';
+        if (!drawing) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            this.beginSelectOrDrag(e);
+            return;
+        }
         e.stopPropagation();
         const pos = this.getPosPct(e);
         this.startX = pos.x;
@@ -4918,7 +5813,143 @@ class LightboxAnnotationTool {
         }
     }
 
+    beginSelectOrDrag(e) {
+        if (this.textDraft) return;
+        const pos = this.getPosPct(e);
+        const current = this.selectedAnnotation();
+        if (current) {
+            const handle = hitTestHandle(current, pos.x, pos.y);
+            if (handle) {
+                this.dragMode = 'resize';
+                this.dragHandle = handle;
+                this.dragOrigin = pos;
+                this.dragSnapshot = cloneAnnotation(current);
+                this.isDrawing = true;
+                if (this.svg && e && e.pointerId && this.svg.setPointerCapture) {
+                    this.svg.setPointerCapture(e.pointerId);
+                }
+                return;
+            }
+        }
+        const hit = this.selectAt(pos.x, pos.y);
+        if (hit) {
+            this.dragMode = 'move';
+            this.dragOrigin = pos;
+            this.dragSnapshot = cloneAnnotation(hit);
+            this.isDrawing = true;
+            if (this.svg && e && e.pointerId && this.svg.setPointerCapture) {
+                this.svg.setPointerCapture(e.pointerId);
+            }
+            return;
+        }
+        this.dragMode = null;
+        this.dragHandle = null;
+        this.dragSnapshot = null;
+        this.updatePropertyControls();
+        this.render();
+    }
+
+    selectAt(x, y) {
+        const hit = hitTestTopAnnotation(this.annotations, x, y);
+        this.selectedId = hit ? hit.id : null;
+        this.updatePropertyControls();
+        this.render();
+        return hit || null;
+    }
+
+    moveSelected(dx, dy) {
+        const ann = this.selectedAnnotation();
+        if (!ann) return null;
+        moveAnnotationBy(ann, dx, dy);
+        this.render();
+        return ann;
+    }
+
+    resizeSelected(handle, x, y) {
+        const ann = this.selectedAnnotation();
+        if (!ann) return null;
+        resizeAnnotationHandle(ann, handle, x, y);
+        this.render();
+        return ann;
+    }
+
+    deleteSelected() {
+        if (!this.selectedId) return false;
+        const before = this.annotations.length;
+        this.annotations = this.annotations.filter((ann) => ann.id !== this.selectedId);
+        const removed = this.annotations.length !== before;
+        this.selectedId = null;
+        this.dragMode = null;
+        this.updatePropertyControls();
+        this.render();
+        if (removed) this.saveAnnotations();
+        return removed;
+    }
+
+    applyPropertiesToSelected(props) {
+        const ann = this.selectedAnnotation();
+        if (!ann) return null;
+        applyAnnotationProperties(ann, props);
+        if (props && props.color != null) this.color = props.color;
+        if (props && props.strokeWidthRel != null) this.strokeWidth = props.strokeWidthRel;
+        this.render();
+        this.saveAnnotations();
+        return ann;
+    }
+
+    updatePropertyControls() {
+        if (!this.toolbar || !this.toolbar.querySelector) return;
+        const ann = this.selectedAnnotation();
+        const fontInput = this.toolbar.querySelector('.font-size-input');
+        const strokeInput = this.toolbar.querySelector('.stroke-width-input');
+        const picker = this.toolbar.querySelector('.color-picker');
+        if (fontInput) {
+            fontInput.hidden = !(ann && ann.type === 'text');
+            if (ann && ann.type === 'text') {
+                fontInput.value = String(ann.fontSizeRel || 0.036);
+            }
+        }
+        if (strokeInput) {
+            strokeInput.hidden = Boolean(ann && ann.type === 'text');
+            if (ann && ann.strokeWidthRel != null) {
+                strokeInput.value = String(ann.strokeWidthRel);
+            } else {
+                strokeInput.value = String(this.strokeWidth);
+            }
+        }
+        if (picker && ann && ann.color) picker.value = ann.color;
+    }
+
+    onKeyDown(e) {
+        if (!this.selectedId || this.textDraft) return;
+        const target = e.target;
+        const tag = target && target.tagName ? String(target.tagName).toUpperCase() : '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || (target && target.isContentEditable)) return;
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            e.preventDefault();
+            this.deleteSelected();
+        }
+    }
+
     draw(e) {
+        if (this.dragMode === 'move' || this.dragMode === 'resize') {
+            if (e && e.stopPropagation) e.stopPropagation();
+            const pos = this.getPosPct(e);
+            const ann = this.selectedAnnotation();
+            if (!ann || !this.dragSnapshot) return;
+            const restored = cloneAnnotation(this.dragSnapshot);
+            Object.keys(ann).forEach((key) => {
+                if (!(key in restored)) delete ann[key];
+            });
+            Object.assign(ann, restored);
+            if (this.dragMode === 'move') {
+                moveAnnotationBy(ann, pos.x - this.dragOrigin.x, pos.y - this.dragOrigin.y);
+            } else {
+                resizeAnnotationHandle(ann, this.dragHandle, pos.x, pos.y);
+            }
+            this.render();
+            return;
+        }
         if (!this.isDrawing || !this.tool || !this.draftEl) return;
         e.stopPropagation();
         const pos = this.getPosPct(e);
@@ -4979,7 +6010,23 @@ class LightboxAnnotationTool {
     }
 
     endDraw(e) {
-        if (!this.isDrawing || !this.tool) return;
+        if (this.dragMode) {
+            if (e) {
+                if (e.stopPropagation) e.stopPropagation();
+                if (e.pointerId && this.svg && this.svg.releasePointerCapture) {
+                    this.svg.releasePointerCapture(e.pointerId);
+                }
+            }
+            this.dragMode = null;
+            this.dragHandle = null;
+            this.dragSnapshot = null;
+            this.dragOrigin = null;
+            this.isDrawing = false;
+            this.saveAnnotations();
+            this.render();
+            return;
+        }
+        if (!this.isDrawing || !this.tool || this.tool === 'select') return;
         if (e) {
             e.stopPropagation();
             if (e.pointerId) {
@@ -4992,18 +6039,18 @@ class LightboxAnnotationTool {
 
         if (this.tool === 'pen' && this.currentPath.length > 1) {
             const normPoints = this.currentPath.map(p => ({ x: p.x, y: p.y }));
-            this.annotations.push({
+            this.annotations.push(ensureAnnotationId({
                 type: 'pen',
                 points: normPoints,
                 color: this.color,
                 strokeWidthRel
-            });
+            }));
         } else if (this.tool === 'rect') {
             const w = pos.x - this.startX;
             const h = pos.y - this.startY;
             // Minimum size: 1% of image dimension (coordinates are normalized 0-1)
             if (Math.abs(w) > 0.01 && Math.abs(h) > 0.01) {
-                this.annotations.push({
+                this.annotations.push(ensureAnnotationId({
                     type: 'rect',
                     x: this.startX,
                     y: this.startY,
@@ -5011,14 +6058,14 @@ class LightboxAnnotationTool {
                     height: h,
                     color: this.color,
                     strokeWidthRel
-                });
+                }));
             }
         } else if (this.tool === 'arrow') {
             const dx = pos.x - this.startX;
             const dy = pos.y - this.startY;
             // Minimum length: 2% of image diagonal (coordinates are normalized 0-1)
             if (Math.sqrt(dx*dx + dy*dy) > 0.02) {
-                this.annotations.push({
+                this.annotations.push(ensureAnnotationId({
                     type: 'arrow',
                     startX: this.startX,
                     startY: this.startY,
@@ -5026,7 +6073,7 @@ class LightboxAnnotationTool {
                     endY: pos.y,
                     color: this.color,
                     strokeWidthRel
-                });
+                }));
             }
         }
 
@@ -5036,17 +6083,22 @@ class LightboxAnnotationTool {
             this.draftEl.parentNode.removeChild(this.draftEl);
         }
         this.draftEl = null;
-        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
+        this.render();
     }
 
     undo() {
-        this.annotations.pop();
-        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
+        const removed = this.annotations.pop();
+        if (removed && removed.id === this.selectedId) this.selectedId = null;
+        this.updatePropertyControls();
+        this.render();
     }
 
     clear() {
         this.annotations = [];
-        renderAnnotationsToSvg(this.svg, [], 1, 1);
+        this.selectedId = null;
+        this.updatePropertyControls();
+        this.render();
+        this.saveAnnotations();
     }
 
     // Open a non-blocking inline text draft at the clicked position. The draft
@@ -5077,17 +6129,9 @@ class LightboxAnnotationTool {
         input.type = 'text';
         input.className = 'annotation-text-input';
         input.setAttribute('aria-label', 'Text annotation');
-        // Position over the clicked image point.
-        try {
-            const rect = getActualImageRect(this.img);
-            input.style.position = 'fixed';
-            input.style.left = `${rect.left + pos.x * rect.width}px`;
-            input.style.top = `${rect.top + pos.y * rect.height}px`;
-            input.style.zIndex = '10002';
-            input.style.color = this.color;
-        } catch (error) {
-            console.debug('createTextInput: positioning failed', error);
-        }
+        this.positionTextInput(input, pos);
+        input.style.zIndex = '10002';
+        input.style.color = this.color;
         // The draft only becomes commit/cancel-eligible AFTER it is focused at
         // the end of the opening gesture. A real mouse gesture is pointerdown
         // (creates the input) -> pointerup (pulls focus back), so a SYNCHRONOUS
@@ -5110,6 +6154,7 @@ class LightboxAnnotationTool {
         };
         const onBlur = () => {
             if (!ready) return; // instant blur from the opening gesture: keep the field alive
+            if (this.toolbarInteraction) return; // picker focus must not commit the old colour
             this.commitTextDraft(input.value);
         };
         input.addEventListener('input', onInput);
@@ -5133,6 +6178,18 @@ class LightboxAnnotationTool {
         return input;
     }
 
+    positionTextInput(input, pos) {
+        if (!input || !pos) return;
+        try {
+            const rect = getActualImageRect(this.img);
+            input.style.position = 'fixed';
+            input.style.left = `${rect.left + pos.x * rect.width}px`;
+            input.style.top = `${rect.top + pos.y * rect.height}px`;
+        } catch (error) {
+            console.debug('positionTextInput: positioning failed', error);
+        }
+    }
+
     removeTextInput(input) {
         if (input && input.parentNode && input.parentNode.removeChild) {
             input.parentNode.removeChild(input);
@@ -5149,16 +6206,16 @@ class LightboxAnnotationTool {
         }
         const text = (value || '').trim();
         if (text) {
-            this.annotations.push({
+            this.annotations.push(ensureAnnotationId({
                 type: 'text',
                 x: draft.pos.x,
                 y: draft.pos.y,
                 text,
                 color: this.color,
                 fontSizeRel: 0.036,
-            });
+            }));
         }
-        renderAnnotationsToSvg(this.svg, this.annotations, 1, 1);
+        this.render();
     }
 
     cancelTextDraft() {
@@ -5177,7 +6234,12 @@ class LightboxAnnotationTool {
     applyColorToActiveDraft() {
         if (this.textDraft && this.textDraft.el && typeof this.textDraft.el.setAttribute === 'function') {
             this.textDraft.el.setAttribute('fill', this.color);
+            if (this.textDraft.input && this.textDraft.input.style) {
+                this.textDraft.input.style.color = this.color;
+            }
+            return;
         }
+        this.applyPropertiesToSelected({ color: this.color });
     }
 
     saveAnnotations() {
@@ -5185,7 +6247,7 @@ class LightboxAnnotationTool {
         if (!reportState.findings[this.findingId]) {
             reportState.findings[this.findingId] = createDefaultFindingState();
         }
-        reportState.findings[this.findingId].annotations = [...this.annotations];
+        reportState.findings[this.findingId].annotations = this.annotations.map((ann) => cloneAnnotation(ann));
         reportState.modified = true;
         scheduleSharedStateSync();
     }
@@ -5194,7 +6256,7 @@ class LightboxAnnotationTool {
         if (!this.findingId) return;
         const state = reportState.findings[this.findingId];
         if (state && state.annotations) {
-            this.annotations = [...state.annotations];
+            this.annotations = ensureAnnotationsHaveIds(state.annotations.map((ann) => cloneAnnotation(ann)));
         }
     }
 
@@ -5203,8 +6265,10 @@ class LightboxAnnotationTool {
         if (this.resizeObserver) {
             this.resizeObserver.disconnect();
         }
-        this.boundHandlers.forEach(({ target, event, handler }) => {
-            target.removeEventListener(event, handler);
+        this.boundHandlers.forEach(({ target, event, handler, options }) => {
+            if (target && target.removeEventListener) {
+                target.removeEventListener(event, handler, options);
+            }
         });
         this.boundHandlers = [];
         if (this.svg) {
@@ -5212,6 +6276,7 @@ class LightboxAnnotationTool {
                 this.svg.firstChild.remove();
             }
             this.svg.classList.remove('drawing');
+            this.svg.classList.remove('selecting');
         }
     }
 }
@@ -5260,27 +6325,23 @@ class AnnotationPreview {
     }
 
     syncSvgSize() {
-        // Use actual image rect to account for object-fit: contain
-        const imgRect = getActualImageRect(this.img);
-        const containerRect = this.img.parentElement.getBoundingClientRect();
-        const offsetX = imgRect.left - containerRect.left;
-        const offsetY = imgRect.top - containerRect.top;
-        // Position SVG over the actual visible image area
-        // viewBox is set by render() to 0 0 1 1 (normalized coordinates)
-        this.svg.style.width = `${this.baseWidth}px`;
-        this.svg.style.height = `${this.baseHeight}px`;
-        this.svg.style.left = `${offsetX}px`;
-        this.svg.style.top = `${offsetY}px`;
-        const scaleX = imgRect.width / this.baseWidth;
-        const scaleY = imgRect.height / this.baseHeight;
+        if (!this.img || !this.svg) return;
+        const layout = overlayLayoutFromImage(this.img);
+        if (!layout || !layout.imgRect || !layout.imgRect.width) return;
+        this.baseWidth = layout.baseWidth;
+        this.baseHeight = layout.baseHeight;
+        this.svg.style.width = `${layout.baseWidth}px`;
+        this.svg.style.height = `${layout.baseHeight}px`;
+        this.svg.style.left = `${layout.offsetX}px`;
+        this.svg.style.top = `${layout.offsetY}px`;
         this.svg.style.transformOrigin = 'top left';
-        this.svg.style.transform = `scale(${scaleX}, ${scaleY})`;
+        this.svg.style.transform = `scale(${layout.scaleX}, ${layout.scaleY})`;
     }
 
     loadAnnotations() {
         const review = reportState.findings[this.findingId];
         if (review && review.annotations && review.annotations.length > 0) {
-            this.annotations = [...review.annotations];
+            this.annotations = ensureAnnotationsHaveIds(review.annotations.map((ann) => cloneAnnotation(ann)));
             this.container.classList.add('has-annotations');
         } else {
             this.annotations = [];

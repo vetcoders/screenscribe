@@ -14,6 +14,7 @@ common troubleshooting case. For a quick overview and installation, see the
   - [screenscribe transcribe](#screenscribe-transcribe)
   - [screenscribe preprocess](#screenscribe-preprocess)
   - [screenscribe config](#screenscribe-config)
+  - [screenscribe auth](#screenscribe-auth)
   - [screenscribe version](#screenscribe-version)
 - [Configuration reference](#configuration-reference)
 - [Local and offline STT](#local-and-offline-stt)
@@ -84,12 +85,16 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 | `--prompt`, `-P` | none | Append custom instructions to the semantic, semantic-prefilter, and vision prompts. |
 | `--lang`, `-l` | `en` | Language code for transcription. |
 | `--local` | off | Use a local STT server instead of the cloud provider. |
+| `--transcript-source` | `auto` | Where transcript segments come from: `auto` (audio STT when an audio track exists, frame OCR otherwise), `audio` (STT; fails fast on silent recordings), `ocr` (VLM OCR of frames, no audio needed). |
+| `--no-audio` | off | Alias for `--transcript-source ocr`: skip audio/STT entirely and build the transcript from OCR'd frames. Conflicts with `--transcript-source audio`. |
+| `--frame-interval` | `5.0` | Seconds between frames for the OCR transcript source (minimum 0.5). |
 | `--vision` / `--no-vision` (alias `--no-vlm`) | on | Skip visual/screenshot analysis. Semantic LLM detection still runs. |
 | `--json` / `--no-json` | on | Save the JSON report. |
 | `--markdown` / `--no-markdown` (`--md`) | on | Save the Markdown report. |
 | `--html` / `--no-html` | on | Save the interactive HTML report. |
 | `--embed-video` | off | Embed the video as base64 in the HTML report (only for files < 50 MB). |
 | `--keywords-file`, `-k` | global file | Per-run keywords YAML. Keywords are always-on AI hints (never replace the LLM, safe when empty); overrides the global `~/.config/screenscribe/keywords.yaml`. |
+| `--preset` | `programming` | Analysis preset: `programming`, `casual`, `medical`, `veterinary`, or `custom`. Switches the keyword dictionary, finding categories, and prompt focus. `custom` requires `--keywords-file`. |
 | `--resume` | off | Resume from a previous checkpoint if available. |
 | `--force` | off | Force reprocessing and overwrite the existing review instead of versioning. Only a screenscribe review folder (or a missing target) can be overwritten; if the target is a file or a folder screenscribe does not own, `review` stops with an error and changes nothing. |
 | `--estimate` | off | Show a time estimate (from video duration) without processing. Read-only: it skips output-folder handling entirely (no rerun prompt, no `--force` check, nothing created). |
@@ -117,6 +122,57 @@ auto-creates a finding from a keyword alone, and an empty or missing dictionary
 is a safe no-op. Use the global file by default, or `--keywords-file` for a
 per-run dictionary.
 
+**Transcript source (audio STT or frame OCR)**
+
+The transcript is an abstraction over where timestamped segments come from:
+
+- `audio` — the classic path: extract audio, transcribe with STT.
+- `ocr` — frames taken every `--frame-interval` seconds are read by the vision
+  model (VLM OCR), visually identical frames are deduplicated before any paid
+  call, and each surviving frame with readable text becomes one segment with
+  the exact STT shape (`start`, `end`, `text`). Everything downstream
+  (semantic pre-filter, screenshots, unified VLM analysis, reports, response
+  chaining) works unchanged. OCR uses the vision credentials/endpoint, so it
+  also works under `--no-vision` (which only skips VLM *analysis*).
+- `auto` (default) — `audio` when the recording has an audio track, `ocr`
+  otherwise. A recording without an audio track reaches semantic analysis instead
+  of failing at the audio gate. `--no-audio` is a shortcut for
+  `--transcript-source ocr`.
+
+`--prompt` instructions reach the OCR stage and all analysis stages either
+way. Private OCR cache entries bind frame content, model, endpoint and the
+effective prompt. Matching re-runs reuse them; changing those inputs triggers
+fresh OCR. Checkpoints also bind the source/interval, preset and vocabulary.
+
+```bash
+uv run screenscribe review silent-demo.mov --no-audio --prompt "No audio; the explanations are written on screen"
+uv run screenscribe review silent-demo.mov --transcript-source ocr --frame-interval 2.5
+```
+
+**Presets**
+
+`--preset` switches the whole analysis profile for a domain — three things at
+once: the keyword dictionary, the finding categories, and a prompt fragment
+describing who the viewer is and what counts as a finding:
+
+- `programming` (default) — the historical behavior, unchanged: the built-in
+  dictionary and the `bug/change/ui/performance/accessibility/other` categories.
+- `casual` — informal product feedback (everyday Polish/English slang), same
+  categories with a relaxed dictionary.
+- `medical` — clinical consultations and medical systems; findings use
+  `finding/observation/risk/followup/other` with a Polish+English clinical
+  dictionary.
+- `veterinary` — veterinary consultations, procedures, and clinic systems
+  (e.g. Vista); same clinical categories with a veterinary dictionary.
+- `custom` — your own profile, backed by `--keywords-file`; the file's
+  top-level keys become the finding categories. Without `--keywords-file`,
+  `review` stops with instructions.
+
+Priority for the keyword dictionary stays locked: `--keywords-file` > global
+`~/.config/screenscribe/keywords.yaml` > preset dictionary > built-in default.
+Non-default presets also record `preset` (name + categories) in the JSON
+report, and preset category badges render in the HTML report.
+
 **Examples**
 
 ```bash
@@ -124,14 +180,17 @@ uv run screenscribe review demo.mov
 uv run screenscribe review clip1.mov clip2.mov clip3.mov
 uv run screenscribe review ./recordings/session.mov --no-serve
 uv run screenscribe review demo.mov --force --keywords-file my-keywords.yaml
+uv run screenscribe review consult.mov --preset veterinary
 uv run screenscribe review demo.mov --no-vision           # skip the VLM step
 uv run screenscribe review demo.mov --lang en --prompt "Focus on accessibility issues"
 uv run screenscribe review demo.mov --estimate            # just the time estimate
 ```
 
-> `review` and `transcribe` require an **audio track**. On a silent recording
-> they fail fast and point you to `uv run screenscribe analyze` (vision-only). See
-> [Troubleshooting](#no-audio-track).
+> `transcribe` requires an **audio track**. `review` uses the default `auto`
+> transcript source: audio STT when a track exists, frame OCR otherwise.
+> Only an explicit `--transcript-source audio` keeps
+> the fail-fast behavior, pointing you to `uv run screenscribe analyze`
+> (vision-only). See [Troubleshooting](#no-audio-track).
 
 ---
 
@@ -170,7 +229,8 @@ it process the whole video. Because it is frame-driven, it also works on
 recordings that have **no audio track** — mark frames and add optional text or
 voice notes for an interactive vision-only review.
 
-The server validates that a vision API key is configured before starting. Press
+The server validates a usable vision credential (API key or supported xAI
+account access) before starting. Press
 `Ctrl+C` to stop the server and exit.
 
 **Examples**
@@ -202,6 +262,8 @@ uv run screenscribe transcribe VIDEO [OPTIONS]
 | `--output`, `-o` | stdout | Output file for the transcript. If omitted, the transcript prints to the console. |
 | `--lang`, `-l` | `en` | Language code for transcription. |
 | `--local` | off | Use a local STT server. |
+| `--live` | off | Read 16 kHz mono PCM16LE from stdin and stream it to the provider's websocket STT (xAI `wss://api.x.ai/v1/stt`, LibraxisAI `stt-ws-v1`). Prints `partial:` / `final:` lines; `-o` writes the final lines. `VIDEO` is omitted. |
+| `--sample-rate` | `16000` | Sample rate of the PCM on stdin (live mode). |
 
 **Examples**
 
@@ -209,7 +271,40 @@ uv run screenscribe transcribe VIDEO [OPTIONS]
 uv run screenscribe transcribe demo.mov
 uv run screenscribe transcribe demo.mov -o transcript.txt
 uv run screenscribe transcribe demo.mov --local --lang en
+# live: microphone -> ffmpeg -> websocket STT
+ffmpeg -loglevel error -f avfoundation -i ":0" -ac 1 -ar 16000 -f s16le - \
+  | screenscribe transcribe --live --lang pl
 ```
+
+STT `response_format` is picked per model: whisper-family models request
+`verbose_json` (per-segment timing); `gpt-transcribe*` / `gpt-4o-transcribe*` /
+`gpt-4o-mini-transcribe*` request `json` directly; unknown models start with
+`verbose_json` and fall back to `json` on an HTTP 400 that names
+`response_format`. On `api.x.ai` the request is xAI's own multipart (no `model`)
+and segments are built from the returned word timings.
+
+---
+
+### `screenscribe tts`
+
+Synthesize speech from text (xAI `POST /v1/tts`).
+
+```bash
+screenscribe tts TEXT --out FILE [--voice ID] [--language CODE] [--speed 0.7-1.5]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--out`, `-o` | required | Output file; `.mp3` or `.wav` suffix selects the codec. |
+| `--voice` | config `SCREENSCRIBE_TTS_VOICE`, else `eve` | xAI voice id. |
+| `--language`, `--lang`, `-l` | config language | BCP-47 code (`en`, `pl`, `auto`). |
+| `--speed` | `1.0` | Speech rate, 0.7-1.5. |
+
+The endpoint comes from the xAI preset or `SCREENSCRIBE_TTS_ENDPOINT`; the key
+from `SCREENSCRIBE_TTS_API_KEY`, falling back to an explicit STT/general key.
+Without an explicit key, account access is resolved against the actual TTS
+destination: only `api.x.ai` receives the xAI account bearer. Live STT applies
+the same rule to its actual WebSocket host, independently of the REST STT host.
 
 ---
 
@@ -306,6 +401,39 @@ uv run screenscribe config --set-key YOUR_API_KEY
 
 `--show` lists the active config source, masked API keys, the STT/LLM/vision
 endpoints and models, and the processing options (language, semantic, vision).
+
+---
+
+### `screenscribe auth`
+
+Sign in with a provider **account** instead of pasting an API key. The flow is
+device-code: the CLI prints a URL and a short code, opens the browser (skip
+with `--no-browser`), and polls until you approve (15 minute budget).
+
+```bash
+uv run screenscribe auth login xai        # RFC 8628 device flow on auth.x.ai
+uv run screenscribe auth login openai     # Codex device flow on auth.openai.com
+uv run screenscribe auth status           # never prints tokens
+uv run screenscribe auth logout xai
+```
+
+For xAI account access, follow sign-in with `screenscribe config setup`,
+choose xAI, and accept the signed-in account instead of entering an API key.
+This writes a coherent xAI preset with empty key fields; requests resolve the
+stored account token. Sign-in by itself does not reroute an existing setup.
+
+Tokens are stored in `~/.config/screenscribe/accounts.json` (mode 0600) and
+refreshed automatically when a refresh token is present.
+
+**Bearer resolution order** for STT/LLM/Vision requests: an explicit API key
+(`SCREENSCRIBE_*_API_KEY`, `OPENAI_API_KEY`, `SCREENSCRIBE_API_KEY`) always
+wins; without one, a signed-in **xAI** account token is used for endpoints on
+`api.x.ai`. An **OpenAI** account sign-in is identity-only: `api.openai.com`
+rejects a ChatGPT account token for REST calls (verified 2026-09-08), so
+Screenscribe prints a warning and still requires an OpenAI API key for
+requests. The shipped public client ids are disclosed in `NOTICE`.
+TTS and live STT resolve account access against their own destination host;
+custom service endpoints never inherit an account token from the REST STT host.
 
 ---
 
@@ -450,7 +578,7 @@ moving to a new provider.
 | `SCREENSCRIBE_STT_MODEL` | `whisper-1` | OpenAI-Whisper-compatible. |
 | `SCREENSCRIBE_LLM_MODEL` | `programmer` | LibraxisAI default — change to your provider's model (e.g. `gpt-4o`). |
 | `SCREENSCRIBE_VISION_MODEL` | `programmer` | LibraxisAI default — change to your provider's vision model. |
-| `SCREENSCRIBE_LLM_REASONING_EFFORT` | `medium` | Reasoning effort sent with all text-LLM Responses API calls (pre-filter, text-only analysis, summaries, merge): `minimal`, `low`, `medium`, or `high`. Not sent to Chat Completions endpoints or to the vision request. An invalid value warns and falls back to `medium`. Lower it to `low` if detection fails after the model reasons for a long time without answering. |
+| `SCREENSCRIBE_LLM_REASONING_EFFORT` | per provider | Reasoning effort for text-LLM Responses API calls (pre-filter, text-only analysis, summaries, merge): `none`, `low`, `medium`, `high`, `xhigh`, or `max`. Not sent to Chat Completions or vision requests. When unset: `low` for xAI, `none` for LibraxisAI/OpenAI, omitted for custom providers until explicitly configured. An invalid value warns and resolves the final provider's default regardless of config key order. |
 
 ### Processing options
 
@@ -459,6 +587,55 @@ moving to a new provider.
 | `SCREENSCRIBE_LANGUAGE` | `en` | Default transcription language (`pl` for Polish). |
 | `SCREENSCRIBE_VISION` | `true` | Enable visual/screenshot (VLM) analysis (`false` = LLM-only; semantic detection still runs). |
 | `SCREENSCRIBE_LLM_MERGE` | `true` | Semantic LLM-merge pass that dedups cross-category paraphrases after the cheap heuristic dedup (`false`/`0`/`no` = heuristic-only dedup). A missing LLM API key also makes it a no-op. |
+
+### Review agent chat
+
+The review server exposes `POST /api/agent/chat` and `POST /api/agent/chat/stream` (SSE). Under `deny`, external providers are skipped. A successful semantic LLM request records its host/protocol/provider in `processing_provenance.llm`; only that recorded analysis host qualifies as a processor. Merely configuring an endpoint does not prove that it processed this report. Legacy reports without a receipt do not establish processor trust.
+
+The agent can propose edits to findings. Write tools (`set_verdict`, `set_severity`, `edit_finding`, `add_finding`, `propose_review`) **do not write** `report.json`. They validate against the loaded report and return a `review_patch` (or a `review_plan` for broad requests). The browser is the single writer: the panel applies the patch to `reportState` and saves through the existing `/api/save` lock. The agent uses the same credential as `screenscribe auth login xai` / `review` — `ScreenScribeConfig.get_llm_api_key()` already falls back to the signed-in xAI account bearer; there is no extra key. Never treat a tool result as a saved edit; the panel confirms with `review_applied`.
+
+After an applied patch, the panel appends the exact user chat request to the
+affected finding/manual-frame notes, preserving existing notes. Read-only or
+no-op chat does not modify review data. The panel reports `review_applied:`
+only after a successful save; a failed save remains visibly unconfirmed.
+
+`merge_findings` / `unmerge_finding` currently return `{"unsupported": true}` — merge is a client-only fold (`mergeFindings` in the report UI) with no patch-callable API.
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `SCREENSCRIBE_AGENT_EGRESS` | `deny` | `deny` skips providers whose trust is `external`. `allow` sends the loaded report (and therefore the recording's contents) to those hosts. Analysis hosts (`processor`) are always kept. |
+| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from host and report receipt | `local` / `internal` / `processor` / `external`. localhost is `local`; `api.libraxis.cloud` is `internal`; a recorded successful semantic LLM host is `processor`. Set `external` to exclude that host under `deny`. |
+
+Optional Anthropic fallback (skipped when unset): `ANTHROPIC_API_KEY` or `SCREENSCRIBE_AGENT_FALLBACK_API_KEY`. Install the extra with `pip install 'screenscribe[anthropic]'`.
+
+SSE events: `token`, `tool_call`, `tool_result`, `done`, `error`. Text uses
+round-buffered delivery: the backend sends it after each provider round
+completes, then emits tool events. It does not deliver individual tokens as
+the provider generates them. Unexpected provider/tool failures return a
+generic error to the browser and model; exception details remain in server
+logs. Explicit configuration and tool-input validation messages remain
+available. Requests
+contain `message`, `history`, and an optional cursor bundle:
+`previous_response_id`, `previous_response_provider`,
+`previous_response_protocol`, `previous_response_host`. The cursor is reused
+only when the complete identity matches a stateful primary Responses provider;
+otherwise the backend uses full history and the report seed. `done` includes
+`response_id`, `provider`, `protocol`, `host`. Fallback, errors, incomplete
+streams and identity changes clear the cursor. Finding response IDs are
+evidence, not a shared conversation head.
+The xAI agent uses stateless full history: each round includes trusted
+instructions, the report seed, prior output items and tool results. It sends
+no `previous_response_id` and returns `done.response_id=null`.
+
+### xAI, TTS and live STT
+
+| Variable | Purpose |
+|----------|---------|
+| `SCREENSCRIBE_PROVIDER=xai` | xAI preset (`screenscribe config setup`, option 4): STT `https://api.x.ai/v1/stt`, LLM/vision `https://api.x.ai/v1/responses`, `SCREENSCRIBE_STT_MODEL` empty, `SCREENSCRIBE_LLM_MODEL=grok-4.6`. |
+| `SCREENSCRIBE_TTS_ENDPOINT` | TTS endpoint (default derived: `https://api.x.ai/v1/tts` on the xAI preset). |
+| `SCREENSCRIBE_TTS_API_KEY` | TTS key (falls back to the STT key, then the generic key). |
+| `SCREENSCRIBE_TTS_VOICE` | Default voice id for `screenscribe tts`. |
+| `SCREENSCRIBE_STT_LIVE_ENDPOINT` | Websocket STT gateway for `transcribe --live` (derived: `wss://api.x.ai/v1/stt` or `wss://api.libraxis.cloud/v1/audio/transcribe`). |
 
 ### Optional STT fallback (opt-in)
 
@@ -504,7 +681,11 @@ screenscribe POSTs a `multipart/form-data` request:
 - **File field:** `audio` (for loopback/local URLs). A custom cloud endpoint
   receives the field as `file` instead — see below.
 - **Form fields:** `model` (e.g. `whisper-1`), `language` (e.g. `en`),
-  `response_format` (`verbose_json` for the full `transcribe` path).
+  `response_format` (`verbose_json` for the full `transcribe` path). If your
+  server answers HTTP 400 naming `response_format` as unsupported (OpenAI's
+  `gpt-transcribe` family does), screenscribe retries once with `json` and
+  falls back to a synthetic timeline; that refusal is remembered per
+  endpoint+model for the rest of the run.
 - **No `Authorization` header** for `--local` / loopback targets.
 
 #### Response shape (what your server must return)
@@ -562,8 +743,13 @@ async def transcribe(
         "text": "your transcript here",
         "language": language,
         "segments": [
-            {"id": 0, "start": 0.0, "end": 3.2,
-             "text": "your transcript here", "no_speech_prob": 0.01}
+            {
+                "id": 0,
+                "start": 0.0,
+                "end": 3.2,
+                "text": "your transcript here",
+                "no_speech_prob": 0.01,
+            }
         ],
     }
 ```
@@ -678,6 +864,40 @@ the video; with `-o <existing folder>` it is `<folder>/<video>_review`):
 - `TODO_<video>.md` — a Markdown task list you can export from the interactive
   HTML report ("Export TODO"), handy for dropping findings into a sprint.
 
+In the review report, seek to a frame and choose **Add moment** to capture
+additional evidence with optional notes. VLM analysis is optional. **Save review**
+keeps the image reference, notes and annotations across page and server
+restarts. Keep the report directory with its `manual_frames/` images, or export
+the reviewed ZIP to carry those images together. Older pathless captures can
+recover their existing image from that directory.
+
+### Handoff to a coding agent
+
+Review the findings, add scope limits in the reviewer notes, then export TODO
+or the reviewed ZIP. TODO includes the complete timestamped narration, the
+source excerpt for each finding when available, review state, components,
+model proposals and evidence-frame references. The ZIP includes the same TODO,
+reviewed JSON, images, `transcript.txt` and `agent_manifest.json`.
+
+Narration and reviewer notes are the source of user intent. Later corrections,
+scope limits and retractions apply even when they occur outside a finding's
+timestamp. A model's summary, suggested fix and action items are proposals.
+Confirming that an issue exists does not approve every proposed implementation.
+Unreviewed findings are labelled accordingly. Human summary/action overrides
+are reflected in the exported view and retained separately in reviewed data.
+
+The manifest records `source_segments`, timestamps, `review_verdict`,
+`reviewer_notes` and `user_said_source`. Older reports without transcript
+segments retain detection text with `user_said_source: "detection"`; that text
+may be paraphrased and is not presented as a guaranteed transcript quotation.
+
+`transcript_source` distinguishes audio narration from OCR screen text.
+Legacy transcript segments with only `start` and `text` remain exportable;
+their missing end timestamp is treated as a point at the recorded start.
+OCR exports use `source_role: "screen_text"` and retain the text as evidence,
+never as `user_said`. A screen label is not a spoken instruction. An absent
+source kind remains unknown rather than proving who authored the transcript.
+
 ### Preprocess bundle
 
 See [preprocess bundle contents](#screenscribe-preprocess).
@@ -740,13 +960,17 @@ once instead of re-running a long generation. Your transcript is saved; re-run
 with `--resume` to retry detection without re-transcribing.
 
 If the reason says the model spent its budget reasoning without producing an
-answer, set `SCREENSCRIBE_LLM_REASONING_EFFORT=low` (default `medium`) or switch
-`SCREENSCRIBE_LLM_MODEL`.
+answer, set `SCREENSCRIBE_LLM_REASONING_EFFORT=low` (default: `low` on xAI,
+`none` elsewhere) or switch `SCREENSCRIBE_LLM_MODEL`.
 
 ### No audio track
 
-`review` and `transcribe` require audio. On a silent recording they fail fast
-with a clear message and suggest the vision-only path:
+`review` handles silent recordings out of the box: the default `auto`
+transcript source routes them to frame OCR (`--transcript-source ocr`, alias
+`--no-audio`), reading frames every `--frame-interval` seconds with the vision
+model. Only an explicit `--transcript-source audio` (and `transcribe`, which
+is STT-only) fails fast on a missing audio track, with a clear message that
+suggests the vision-only path:
 
 ```bash
 uv run screenscribe analyze <video-path>

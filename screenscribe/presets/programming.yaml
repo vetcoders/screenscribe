@@ -1,0 +1,15 @@
+# screenscribe preset: programming (default)
+#
+# Bit-for-bit compatible with the pre-preset behavior: no inline keyword
+# dictionary (the built-in default_keywords.yaml is used) and the historical
+# six finding categories. No prompt fragment.
+
+categories:
+  - bug
+  - change
+  - ui
+  - performance
+  - accessibility
+  - other
+
+prompt: ""

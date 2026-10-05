@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import math
 import mimetypes
 import os
 import re
@@ -23,11 +24,19 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__
+from .agent.chat import AgentChatError, AgentChatRequest, collect_agent_chat, stream_agent_chat
+from .agent.tools import ReportToolbelt
 from .server_common import (
     MAX_AUDIO_BYTES,
     VALID_MARKER_SEVERITIES,
@@ -293,6 +302,24 @@ def _data_url_from_disk(output_dir: Path, frame_path: str) -> str | None:
     return f"data:{mime};base64,{encoded}"
 
 
+def _recover_manual_frame_path(output_dir: Path, marker_id: object) -> str:
+    """Recover the server-authored image path for a legacy/pathless marker.
+
+    Manual captures are written as ``manual_frames/<marker_id>.jpg|png``. Older
+    saves could drop that reference while leaving the owned image intact. Only a
+    simple marker filename is accepted, and the candidate still passes the same
+    containment + magic-byte validation as normal disk hydration.
+    """
+    marker = str(marker_id or "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", marker):
+        return ""
+    for extension in (".jpg", ".png"):
+        relative = f"{MANUAL_FRAMES_DIRNAME}/{marker}{extension}"
+        if _data_url_from_disk(output_dir, relative) is not None:
+            return relative
+    return ""
+
+
 def hydrate_state_with_session_frames(
     state: dict[str, Any], markers: list[ManualFrameMarker]
 ) -> None:
@@ -344,8 +371,13 @@ def create_review_app(
     report_filename: str,
     video_path: Path,
     config: ScreenScribeConfig,
+    repo_root: Path | None = None,
 ) -> FastAPI:
-    """Create the interactive report review app."""
+    """Create the interactive report review app.
+
+    ``repo_root`` enables the optional ``open_repo_file`` agent tool. Leave it
+    ``None`` unless the operator started the server with a repo path.
+    """
 
     app = FastAPI(
         title="Screenscribe Review",
@@ -424,6 +456,7 @@ def create_review_app(
 
     # A reset epoch is report-owned state, not process-owned state. Hydrate it
     # before any request can accept work from a client that predates a restart.
+    initial_report_data: dict[str, Any] | None = None
     try:
         _, initial_report_data = load_report_json()
     except Exception as exc:
@@ -464,6 +497,10 @@ def create_review_app(
             # absorbed member's notes or priority onto the survivor.
             "merged_survivor_review": dict(human.get("merged_survivor_review") or {}),
             "merged_review_baseline": dict(human.get("merged_review_baseline") or {}),
+            # Additive reviewer overrides from agent review-patch tools. Older
+            # reports omit these keys; empty string is the honest unset value.
+            "summary_override": human.get("summary_override") or "",
+            "category_override": human.get("category_override") or "",
         }
 
     def work_item_from_review_finding(finding: dict[str, Any]) -> WorkItem:
@@ -526,7 +563,10 @@ def create_review_app(
             return
         frame_path = frame.get("frame_path")
         if not isinstance(frame_path, str) or not frame_path:
-            return
+            frame_path = _recover_manual_frame_path(session.output_dir, frame.get("marker_id"))
+            if not frame_path:
+                return
+            frame["frame_path"] = frame_path
         data_url = _data_url_from_disk(session.output_dir, frame_path)
         if data_url is None:
             frame["imageMissing"] = True
@@ -574,6 +614,73 @@ def create_review_app(
             "reviewer": human.get("reviewer", ""),
             "modified": False,
         }
+
+    def hydrate_session_manual_state(report_data: dict[str, Any]) -> None:
+        """Restore durable markers/results into a fresh server session.
+
+        ``/api/review-state`` could previously read disk-backed frames while the
+        new process's mutable session stayed empty. The next legitimate browser
+        save then rewrote ``manual_review.markers`` to ``[]`` and lost the only
+        ``frame_path`` reference. Restore the same marker identity before any
+        PATCH/delete/save can run; pixels remain owned by the existing disk file.
+        """
+        state = build_review_state_from_report(report_data)
+        restored_markers: dict[str, ManualFrameMarker] = {}
+        restored_results: dict[str, ManualFrameResult] = {}
+        for frame in state.get("manualFrames") or []:
+            if not isinstance(frame, dict):
+                continue
+            marker_id = str(frame.get("marker_id") or "")
+            frame_path = str(frame.get("frame_path") or "")
+            if not marker_id or not frame_path:
+                continue
+            timestamp_value = frame.get("timestamp")
+            if isinstance(timestamp_value, bool) or not isinstance(
+                timestamp_value, (int, float, str)
+            ):
+                continue
+            try:
+                timestamp = float(timestamp_value)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(timestamp) or timestamp < 0:
+                continue
+            data_url = frame.get("frameDataUrl")
+            frame_base64 = ""
+            if isinstance(data_url, str) and "," in data_url:
+                frame_base64 = data_url.split(",", 1)[1]
+            result_payload = frame.get("result")
+            result = result_payload if isinstance(result_payload, dict) else None
+            restored_markers[marker_id] = ManualFrameMarker(
+                marker_id=marker_id,
+                timestamp=timestamp,
+                frame_base64=frame_base64,
+                transcript=str(frame.get("transcript") or ""),
+                notes=str(frame.get("notes") or ""),
+                status=str(frame.get("status") or ("completed" if result else "pending")),
+                frame_path=frame_path,
+                severity=(str(frame["severity"]) if frame.get("severity") is not None else None),
+            )
+            if result is not None:
+                restored_results[marker_id] = ManualFrameResult(
+                    marker_id=marker_id,
+                    timestamp=timestamp,
+                    category=str(result.get("category") or "manual_capture"),
+                    severity=str(result.get("severity") or "medium"),
+                    summary=str(result.get("summary") or ""),
+                    issues_detected=[str(item) for item in result.get("issues_detected") or []],
+                    suggested_fix=str(result.get("suggested_fix") or ""),
+                    affected_components=[
+                        str(item) for item in result.get("affected_components") or []
+                    ],
+                    response_id=str(result.get("response_id") or ""),
+                )
+        with session.lock:
+            session.markers.update(restored_markers)
+            session.results.update(restored_results)
+
+    if initial_report_data is not None:
+        hydrate_session_manual_state(initial_report_data)
 
     def analyze_single_marker(marker_id: str) -> dict[str, Any]:
         """Run unified analysis on one manual frame."""
@@ -1295,6 +1402,59 @@ def create_review_app(
             raise HTTPException(status_code=500, detail="Failed to save review state.") from e
         finally:
             save_lock.release()
+
+    resolved_repo = repo_root.resolve() if repo_root is not None else None
+
+    def _agent_toolbelt(report_data: dict[str, Any]) -> ReportToolbelt:
+        return ReportToolbelt(
+            report_data,
+            output_dir=session.output_dir,
+            repo_root=resolved_repo,
+        )
+
+    @app.post("/api/agent/chat/stream")
+    async def agent_chat_stream(payload: AgentChatRequest) -> StreamingResponse:
+        """SSE agent turn. Contract is binding for the w1-05 UI panel."""
+        _json_path, report_data = load_report_json()
+        toolbelt = _agent_toolbelt(report_data)
+
+        async def event_frames() -> Any:
+            async for frame in stream_agent_chat(
+                config=config,
+                report=report_data,
+                tools=toolbelt,
+                message=payload.message,
+                history=payload.history,
+                previous_response_id=payload.previous_response_id,
+                previous_response_provider=payload.previous_response_provider,
+                previous_response_protocol=payload.previous_response_protocol,
+                previous_response_host=payload.previous_response_host,
+            ):
+                yield frame
+
+        return StreamingResponse(event_frames(), media_type="text/event-stream")
+
+    @app.post("/api/agent/chat")
+    async def agent_chat(payload: AgentChatRequest) -> dict[str, Any]:
+        """Non-streaming agent turn: full text + response_id."""
+        _json_path, report_data = load_report_json()
+        toolbelt = _agent_toolbelt(report_data)
+        try:
+            return await collect_agent_chat(
+                config=config,
+                report=report_data,
+                tools=toolbelt,
+                message=payload.message,
+                history=payload.history,
+                previous_response_id=payload.previous_response_id,
+                previous_response_provider=payload.previous_response_provider,
+                previous_response_protocol=payload.previous_response_protocol,
+                previous_response_host=payload.previous_response_host,
+            )
+        except AgentChatError as exc:
+            raise HTTPException(
+                status_code=502, detail="Review agent request failed. Check server logs."
+            ) from exc
 
     app.mount(
         "/",

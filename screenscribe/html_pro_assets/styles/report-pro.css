@@ -1802,7 +1802,8 @@ body.is-resizing * {
     position: absolute;
     top: 0;
     left: 0;
-    pointer-events: none;
+    pointer-events: auto;
+    cursor: default;
     border-radius: var(--radius-md);
 }
 
@@ -1810,6 +1811,46 @@ body.is-resizing * {
     pointer-events: auto;
     cursor: crosshair;
     touch-action: none;
+}
+
+.lightbox-annotation-svg.selecting {
+    pointer-events: auto;
+    cursor: default;
+    touch-action: none;
+}
+
+.lightbox-annotation-svg .annotation-selected {
+    outline: none;
+}
+
+.lightbox-annotation-svg .annotation-selection-box {
+    pointer-events: none;
+}
+
+.lightbox-annotation-svg .annotation-handle {
+    fill: var(--ss-accent);
+    stroke: var(--surface-primary);
+    stroke-width: 0.003;
+    cursor: nwse-resize;
+}
+
+.lightbox-annotation-svg .annotation-handle-start,
+.lightbox-annotation-svg .annotation-handle-end {
+    cursor: grab;
+}
+
+.lightbox-annotation-svg .annotation-handle-nw,
+.lightbox-annotation-svg .annotation-handle-se {
+    cursor: nwse-resize;
+}
+
+.lightbox-annotation-svg .annotation-handle-ne,
+.lightbox-annotation-svg .annotation-handle-sw {
+    cursor: nesw-resize;
+}
+
+.lightbox-annotation-svg .annotation-handle-size {
+    cursor: nwse-resize;
 }
 
 .lightbox-toolbar {
@@ -1876,6 +1917,7 @@ body.is-resizing * {
 }
 
 .lightbox-toolbar .undo-btn,
+.lightbox-toolbar .delete-btn,
 .lightbox-toolbar .clear-btn {
     padding: var(--space-xs) var(--space-sm);
     background: var(--surface-elevated);
@@ -1885,8 +1927,16 @@ body.is-resizing * {
     cursor: pointer;
     font-size: var(--fs-md);}
 
+.lightbox-toolbar .delete-btn,
 .lightbox-toolbar .clear-btn {
     color: var(--color-high);
+}
+
+.lightbox-toolbar .stroke-width-input,
+.lightbox-toolbar .font-size-input {
+    width: 72px;
+    accent-color: var(--ss-accent);
+    cursor: pointer;
 }
 
 .lightbox-toolbar .done-btn {
@@ -2100,6 +2150,7 @@ body.is-resizing * {
 .header-tabs .tab-btn:focus-visible,
 .lang-toggle button:focus-visible,
 .lightbox-toolbar .tool-btn:focus-visible,
+.lightbox-toolbar .delete-btn:focus-visible,
 .lightbox-close:focus-visible,
 .sidebar-resizer:focus-visible {
     outline: 2px solid var(--ss-accent);

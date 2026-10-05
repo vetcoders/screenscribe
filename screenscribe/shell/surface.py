@@ -83,6 +83,7 @@ REVIEW_SURFACE = SurfaceConfig(
         "manual_frames": True,
         "exports": True,
     },
+    extra_styles=["agent_panel"],
     scripts=[
         "i18n",
         "lib/layout-control",
@@ -91,6 +92,7 @@ REVIEW_SURFACE = SurfaceConfig(
         "lib/tab-keyboard",
         "video_player",
         "review_app",
+        "agent_panel",
     ],
     i18n_namespace="review",
     lang_persist_mode="report",

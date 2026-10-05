@@ -1,0 +1,1165 @@
+{
+  "video": "Screen_Recording_2026-09-15_at_08.22.27.mov",
+  "generated_at": "2026-09-15T10:43:24.246248",
+  "executive_summary": "Najważniejsze do naprawy to błędy HIGH: niestabilne wchodzenie w sessions, brakujące elementy oraz całkowicie rozjechany układ/schemat — to blokuje podstawowe użycie. Stan UX jest nierówny: rdzeń agenta jest akceptowalny, ale layout, widok gościa i oczekiwane autowykrywanie (Kimi) psują zaufanie i czytelność. Priorytet: najpierw naprawić sessions i spójność układu, potem sticky pierwszy rząd, autowykrywanie i jakość materiału dla gości; LOW (nawigacja New agent, Mode bez zbędnych kropek, niejasny element) dopiero po stabilizacji.",
+  "transcript_segments": [
+    {
+      "id": 0,
+      "start": 3.984,
+      "end": 6.707,
+      "text": "A czemu nie moglibyśmy zrobić w ten sposób, że"
+    },
+    {
+      "id": 1,
+      "start": 8.229,
+      "end": 8.949,
+      "text": "pierwszy rok w ramie"
+    },
+    {
+      "id": 2,
+      "start": 10.911,
+      "end": 11.212,
+      "text": "wisić?"
+    },
+    {
+      "id": 3,
+      "start": 16.102875,
+      "end": 17.744875,
+      "text": "coś tu próbuje wskoczyć w"
+    },
+    {
+      "id": 4,
+      "start": 18.645875,
+      "end": 19.125875,
+      "text": "sessions"
+    },
+    {
+      "id": 5,
+      "start": 20.387875,
+      "end": 22.710875,
+      "text": "ale się temu w końcu ostatecznie nie udaje"
+    },
+    {
+      "id": 6,
+      "start": 25.073875,
+      "end": 26.715875,
+      "text": "Zbadaj to też ewentualnie."
+    },
+    {
+      "id": 7,
+      "start": 28.018875,
+      "end": 28.318875,
+      "text": "A tuż to,"
+    },
+    {
+      "id": 8,
+      "start": 30.502875,
+      "end": 35.109875,
+      "text": "czemu nie zrobić by Facebooku, że"
+    },
+    {
+      "id": 9,
+      "start": 36.311875,
+      "end": 37.033874999999995,
+      "text": "wierzę w to. Zobaczę"
+    },
+    {
+      "id": 10,
+      "start": 37.934875000000005,
+      "end": 39.517875000000004,
+      "text": "jak to jest teraz, bo w sumie nie wiem."
+    },
+    {
+      "id": 11,
+      "start": 42.042874999999995,
+      "end": 46.350875,
+      "text": "O Pan Brochert. Aha. Czyli odwiedzać. O, to jeszcze może jest lepiej."
+    },
+    {
+      "id": 12,
+      "start": 48.9378435,
+      "end": 49.2178435,
+      "text": "daj"
+    },
+    {
+      "id": 13,
+      "start": 50.6988435,
+      "end": 51.2788435,
+      "text": "zobaczmy"
+    },
+    {
+      "id": 14,
+      "start": 56.8218435,
+      "end": 58.9428435,
+      "text": "dalej i co stworzyliśmy sesję i"
+    },
+    {
+      "id": 15,
+      "start": 59.9438435,
+      "end": 62.3458435,
+      "text": "zajebiście teraz to mi się dopadło"
+    },
+    {
+      "id": 16,
+      "start": 63.466843499999996,
+      "end": 66.4088435,
+      "text": "no i to jest kurwa produkt no ja pierdolę"
+    },
+    {
+      "id": 17,
+      "start": 67.4498435,
+      "end": 73.9558435,
+      "text": "agent ok to trochę odszczuło więc wyruchnijmy to nawigowanie new agent o"
+    },
+    {
+      "id": 18,
+      "start": 74.27584350000001,
+      "end": 76.8578435,
+      "text": "świetnie brakuje kimiego tutaj"
+    },
+    {
+      "id": 19,
+      "start": 78.0388435,
+      "end": 81.36184349999999,
+      "text": "to na pewno a może go nie ma zainstalowanego na tej maszynie"
+    },
+    {
+      "id": 20,
+      "start": 81.4418435,
+      "end": 82.3428435,
+      "text": "bo to też jest możliwe"
+    },
+    {
+      "id": 21,
+      "start": 81.41553149999999,
+      "end": 82.35653149999999,
+      "text": "bo to też jest możliwe"
+    },
+    {
+      "id": 22,
+      "start": 84.4795315,
+      "end": 88.6445315,
+      "text": "jeśli macie tutaj autowykrywanie to ja Nie mam pytań, to byłoby po"
+    },
+    {
+      "id": 23,
+      "start": 88.70553149999999,
+      "end": 91.02853149999999,
+      "text": "prostu kłopotarda i byłbym naprawdę,"
+    },
+    {
+      "id": 24,
+      "start": 91.88953149999999,
+      "end": 93.5915315,
+      "text": "naprawdę usatysfakcjonowany."
+    },
+    {
+      "id": 25,
+      "start": 94.5725315,
+      "end": 95.3135315,
+      "text": "Kimiko,"
+    },
+    {
+      "id": 26,
+      "start": 98.21753149999999,
+      "end": 100.80053149999999,
+      "text": "to był mi się wydaje że ja mam kimiego tutaj."
+    },
+    {
+      "id": 27,
+      "start": 102.78478150000001,
+      "end": 103.8047815,
+      "text": "może napisz sprawdzę"
+    },
+    {
+      "id": 28,
+      "start": 105.9657815,
+      "end": 107.2457815,
+      "text": "o tu jest jeszcze jakiś chłopak"
+    },
+    {
+      "id": 29,
+      "start": 108.7467815,
+      "end": 109.6667815,
+      "text": "w pierdak wamut"
+    },
+    {
+      "id": 30,
+      "start": 112.6077815,
+      "end": 114.1277815,
+      "text": "uważajcie spierdak"
+    },
+    {
+      "id": 31,
+      "start": 119.5497815,
+      "end": 121.57078150000001,
+      "text": "kimie ani"
+    },
+    {
+      "id": 32,
+      "start": 112.731375,
+      "end": 124.582375,
+      "text": "Właśnie, czyli spierdary. Nie mam pojęcia. A, no to dobrze, to byłoby"
+    },
+    {
+      "id": 33,
+      "start": 124.722375,
+      "end": 125.122375,
+      "text": "ciekawe."
+    },
+    {
+      "id": 34,
+      "start": 137.393375,
+      "end": 138.114375,
+      "text": "To mi się spodoba."
+    },
+    {
+      "id": 35,
+      "start": 137.3774685,
+      "end": 139.2784685,
+      "text": "to mi stanie mi. Ciekimi."
+    },
+    {
+      "id": 36,
+      "start": 194.9207505,
+      "end": 196.56175050000002,
+      "text": "mówiam i poza tym chciałbym mieć"
+    },
+    {
+      "id": 37,
+      "start": 202.5657505,
+      "end": 204.8877505,
+      "text": "jak myślisz w odniesieniu do stajewa on dostaje w"
+    },
+    {
+      "id": 38,
+      "start": 208.4897505,
+      "end": 212.7127505,
+      "text": "onieli na bisi bisi na bągambas i na prom bisi i nie"
+    },
+    {
+      "id": 39,
+      "start": 212.8327505,
+      "end": 213.2727505,
+      "text": "bisi i nie bisi i nie"
+    },
+    {
+      "id": 40,
+      "start": 214.07375050000002,
+      "end": 219.3567505,
+      "text": "super pochuj jak mam taki materiał dla gości tutaj w"
+    },
+    {
+      "id": 41,
+      "start": 222.8797505,
+      "end": 223.3797505,
+      "text": "pęcisz"
+    },
+    {
+      "id": 42,
+      "start": 230.78884399999998,
+      "end": 232.309844,
+      "text": "coś się tu komuś pomylilo"
+    },
+    {
+      "id": 43,
+      "start": 245.039844,
+      "end": 245.819844,
+      "text": "co się dzieje"
+    },
+    {
+      "id": 44,
+      "start": 244.9866875,
+      "end": 255.28968749999999,
+      "text": "co się dzieje nie ma"
+    },
+    {
+      "id": 45,
+      "start": 269.1146875,
+      "end": 270.09468749999996,
+      "text": "tu się czegoś dzieje"
+    },
+    {
+      "id": 46,
+      "start": 269.120938,
+      "end": 274.263938,
+      "text": "tu się czegoś rozjeżdża jakoś totalnie to jest bez sensu czyli kraj"
+    },
+    {
+      "id": 47,
+      "start": 274.544938,
+      "end": 275.744938,
+      "text": "szema rozjechane"
+    },
+    {
+      "id": 48,
+      "start": 277.386938,
+      "end": 280.12793800000003,
+      "text": "ni kraj rozjechane re rozjechane tutaj"
+    },
+    {
+      "id": 49,
+      "start": 282.94993800000003,
+      "end": 283.67093800000004,
+      "text": "cały układ"
+    },
+    {
+      "id": 50,
+      "start": 287.49293800000004,
+      "end": 289.594938,
+      "text": "no dobrze to mamy bali new agent"
+    },
+    {
+      "id": 51,
+      "start": 295.055719,
+      "end": 296.116719,
+      "text": "nie wykrywa kimie"
+    },
+    {
+      "id": 52,
+      "start": 300.238719,
+      "end": 304.781719,
+      "text": "a advanced jest schowany bardzo nisko tak czyli advanced jest bardzo nisko"
+    },
+    {
+      "id": 53,
+      "start": 304.841719,
+      "end": 305.24271899999997,
+      "text": "schowany"
+    },
+    {
+      "id": 54,
+      "start": 307.40371899999997,
+      "end": 307.883719,
+      "text": "ale to nic"
+    },
+    {
+      "id": 55,
+      "start": 311.406719,
+      "end": 314.449719,
+      "text": "Tutaj powinniśmy jedynie podkreślać nia dotych,"
+    },
+    {
+      "id": 56,
+      "start": 315.329719,
+      "end": 318.972719,
+      "text": "mods, a nie takie kropeczki, takie kropeczki, chyba żeby były z dwóch"
+    },
+    {
+      "id": 57,
+      "start": 318.972719,
+      "end": 319.073719,
+      "text": "sztuk."
+    }
+  ],
+  "analysis_passes": {
+    "detections": {
+      "status": "completed",
+      "count": 16
+    },
+    "screenshots": {
+      "status": "completed",
+      "count": 16
+    },
+    "unified_analysis": {
+      "status": "completed",
+      "count": 13,
+      "matched_findings": 16,
+      "unmatched_findings": 0
+    }
+  },
+  "summary": {
+    "total": 13,
+    "bugs": 4,
+    "changes": 3,
+    "ui": 5
+  },
+  "severity_breakdown": {
+    "critical": 0,
+    "high": 3,
+    "medium": 4,
+    "low": 3
+  },
+  "findings": [
+    {
+      "id": 0,
+      "category": "change",
+      "timestamp_start": 4.0,
+      "timestamp_end": 11.2,
+      "timestamp_formatted": "00:04",
+      "text": "A czemu nie moglibyśmy zrobić w ten sposób, że pierwszy rok w ramie wisić?",
+      "context": "A czemu nie moglibyśmy zrobić w ten sposób, że pierwszy rok w ramie wisić? coś tu próbuje wskoczyć w",
+      "keywords": [
+        "semantic:change"
+      ],
+      "screenshot": "01_change_00-04.jpg",
+      "unified_analysis": {
+        "status": "completed",
+        "is_issue": true,
+        "degraded": false,
+        "confidence": "high",
+        "parsed_from_unstructured_output": false,
+        "sentiment": "problem",
+        "severity": "medium",
+        "summary": "Użytkownik pyta, czemu nie moglibyśmy zrobić tak, żeby pierwszy rząd wisiał w ramie.",
+        "action_items": [
+          "Przeprojektować warstwę Session Manager tak, by pierwszy rząd listy pozostawał widoczny w ramie, a nie był przysłaniany.",
+          "Zintegrować pierwszy wiersz (wybór sesji) z ramą zamiast nakładać osobny overlay na listę Start Here."
+        ],
+        "affected_components": [
+          "Start Here",
+          "Session Manager",
+          "Lista opcji [1]–[5]",
+          "Overlay/rama"
+        ],
+        "suggested_fix": "Albo wpiąć pierwszy rząd (sesja / Create new) na stałe w ramę jako sticky/hanging row, albo nie nakładać modala Session Manager na listę Start Here — modal nie powinien zasłaniać „Choose” i pozycji [1].",
+        "ui_elements": [
+          "Ekran START HERE",
+          "Status RUNTIME [ready]",
+          "Nakładka Session Manager z PIN",
+          "Wpis Session: codescribe_ <ENTER> - Create new",
+          "Lista [1] [2] [3] [4] [5]",
+          "Tekst Choose (ucięty)",
+          "Help w Session Manager",
+          "Help & diagnostics"
+        ],
+        "issues_detected": [
+          "Session Manager zasłania listę Start Here i ucina etykietę Choose",
+          "Znacznik wyboru [1] wystaje poza ramę overlayu",
+          "Pozycje [2] i [3] wyglądają na puste pod overlayem",
+          "Mieszanie się helpu overlayu z pozycją [4]/[5] w tle"
+        ],
+        "accessibility_notes": [
+          "Overlay zasłania treść pod spodem i utrudnia odczyt pierwszej pozycji listy",
+          "Ucięty tekst Choose jest nieczytelny",
+          "Warstwy nachodzą na siebie, co psuje logiczny porządek nawigacji klawiaturą"
+        ],
+        "design_feedback": "Użytkownik chce, żeby pierwszy rząd wisiał w ramie, a nie ginął pod nakładką. Overlay Session Manager rozjeżdża hierarchię Start Here i powinien być wpięty w layout, nie latać po wierzchu.",
+        "technical_observations": "Session Manager to pływająca rama nad listą numerowaną; z-index zasłania Choose i [1]–[4], a [5] wystaje spodem. Wygląda na konflikt warstw (lista vs modal), spójny z pomysłem „pierwszy rząd w ramie wisieć”.",
+        "response_id": "fe961ece-db66-9a61-ae80-ba8fc5ff03bb",
+        "merged_from_ids": []
+      },
+      "merged_frames": []
+    },
+    {
+      "id": 3,
+      "category": "bug",
+      "timestamp_start": 16.1,
+      "timestamp_end": 26.7,
+      "timestamp_formatted": "00:16",
+      "text": "coś tu próbuje wskoczyć w sessions ale się temu w końcu ostatecznie nie udaje Zbadaj to też ewentualnie.",
+      "context": "wisić? coś tu próbuje wskoczyć w sessions ale się temu w końcu ostatecznie nie udaje Zbadaj to też ewentualnie. A tuż to, czemu nie zrobić by Facebooku, że",
+      "keywords": [
+        "semantic:bug"
+      ],
+      "screenshot": "02_bug_00-16.jpg",
+      "unified_analysis": {
+        "status": "completed",
+        "is_issue": true,
+        "degraded": false,
+        "confidence": "high",
+        "parsed_from_unstructured_output": false,
+        "sentiment": "problem",
+        "severity": "high",
+        "summary": "Użytkownik mówi, że coś próbuje wskoczyć w sessions, ale ostatecznie się to nie udaje, i prosi, żeby to zbadać.",
+        "action_items": [
+          "Zbadać, dlaczego przejście/wskoczenie do sessions kończy się niepowodzeniem.",
+          "Naprawić stan, w którym overlay Session Manager nachodzi na Start Here zamiast poprawnie otworzyć widok sesji."
+        ],
+        "affected_components": [
+          "Session Manager",
+          "Start Here",
+          "Przejście do Sessions"
+        ],
+        "suggested_fix": "Ustabilizować otwieranie Session Manager: albo w pełni zastąpić/wejść w widok sessions, albo nie renderować niedomkniętego overlayu nad listą Start Here. Sprawdzić timing/z-index i nieudane przejście stanu.",
+        "ui_elements": [
+          "Ekran START HERE",
+          "Status RUNTIME [ready]",
+          "Nakładka Session Manager",
+          "Session: codescribe_ <ENTER> - Create new",
+          "Lista [1]–[5]",
+          "Ucięty tekst Choose",
+          "Help w overlayu",
+          "Help & diagnostics"
+        ],
+        "issues_detected": [
+          "Session Manager wygląda na niedomknięty overlay nad Start Here, nie na dokończone wejście w sessions",
+          "Etykieta Choose jest ucięta przez ramę",
+          "Pozycje [1]–[4] są zasłonięte lub puste pod overlayem",
+          "Warstwy listy i modala się mieszają"
+        ],
+        "accessibility_notes": [
+          "Nakładka zasłania treść i psuje kolejność odczytu listy",
+          "Ucięty tekst Choose jest nieczytelny",
+          "Niejasne, która warstwa jest aktywna dla klawiatury"
+        ],
+        "design_feedback": "Widać niedokończone „wskakiwanie” Session Managera w widok — overlay wisi na Start Here zamiast czysto wejść w sessions, co zgadza się z relacją użytkownika.",
+        "technical_observations": "Pływająca rama Session Manager nachodzi na numerowaną listę Start Here (z-index/layout). Przejście do sessions wygląda na przerwane w połowie: modal jest, ale lista pod spodem i ucięte Choose zostają widoczne.",
+        "response_id": "9a5d78c2-700f-9c02-9ce2-7145c37bfb6a",
+        "merged_from_ids": []
+      },
+      "merged_frames": []
+    },
+    {
+      "id": 8,
+      "category": "other",
+      "timestamp_start": 30.5,
+      "timestamp_end": 39.5,
+      "timestamp_formatted": "00:30",
+      "text": "czemu nie zrobić by Facebooku, że wierzę w to. Zobaczę jak to jest teraz, bo w sumie nie wiem.",
+      "context": "Zbadaj to też ewentualnie. A tuż to, czemu nie zrobić by Facebooku, że wierzę w to. Zobaczę jak to jest teraz, bo w sumie nie wiem. O Pan Brochert. Aha. Czyli odwiedzać. O, to jeszcze może jest lepiej.",
+      "keywords": [
+        "semantic:other"
+      ],
+      "screenshot": "03_other_00-31.jpg",
+      "unified_analysis": {
+        "status": "completed",
+        "is_issue": false,
+        "degraded": false,
+        "confidence": "high",
+        "parsed_from_unstructured_output": false,
+        "sentiment": "neutral",
+        "severity": "none",
+        "summary": "Użytkownik zastanawia się, czemu nie zrobić czegoś inaczej, ale od razu mówi, że zobaczy, jak to jest teraz, bo w sumie nie wie.",
+        "action_items": [],
+        "affected_components": [
+          "Start Here"
+        ],
+        "suggested_fix": "Brak działania na podstawie tej wypowiedzi — użytkownik dopiero sprawdza obecny stan i nie potwierdza problemu.",
+        "ui_elements": [
+          "Ekran START HERE",
+          "Opis Vibecrafted",
+          "Status RUNTIME [ready]",
+          "Nagłówek Choose where to begin",
+          "Pozycje [1] Open project, [2] Agents, [3] Shell, [4] VC Console, [5] Help & diagnostics",
+          "Zaznaczenie [1] Open project",
+          "Skróty klawiszowe na dole",
+          "Sidebar sesji Maciejgad"
+        ],
+        "issues_detected": [
+          "Etykiety w sidebarze są ucięte (Start here · Start, Agents · Agent Work)"
+        ],
+        "accessibility_notes": [
+          "Nawigacja klawiaturowa jest opisana w stopce",
+          "Ucięte etykiety w sidebarze utrudniają odczyt pełnej nazwy widoku"
+        ],
+        "design_feedback": "Użytkownik jest w trybie rozpoznania, nie ocenia jeszcze ekranu negatywnie. Start Here wygląda czytelnie jako lista numerowanych wejść.",
+        "technical_observations": "Widok Start Here jest czysty, [1] Open project jest zaznaczone, runtime ready. Overlay Session Manager z poprzedniego momentu już nie zasłania listy. Sidebar obcina dłuższe etykiety.",
+        "response_id": "c21b0813-ec58-946d-9a97-34505691064f",
+        "merged_from_ids": []
+      },
+      "merged_frames": []
+    },
+    {
+      "id": 16,
+      "category": "ui",
+      "timestamp_start": 67.4,
+      "timestamp_end": 74.0,
+      "timestamp_formatted": "01:07",
+      "text": "agent ok to trochę odszczuło więc wyruchnijmy to nawigowanie new agent",
+      "context": "no i to jest kurwa produkt no ja pierdolę agent ok to trochę odszczuło więc wyruchnijmy to nawigowanie new agent o świetnie brakuje kimiego tutaj to na pewno a może go nie ma zainstalowanego na tej maszynie",
+      "keywords": [
+        "semantic:ui"
+      ],
+      "screenshot": "04_ui_01-07.jpg",
+      "unified_analysis": {
+        "status": "completed",
+        "is_issue": true,
+        "degraded": false,
+        "confidence": "high",
+        "parsed_from_unstructured_output": false,
+        "sentiment": "problem",
+        "severity": "low",
+        "summary": "Użytkownik mówi, że agent jest ok, ale trochę „odszczuło”, więc chce przetestować nawigowanie New agent.",
+        "action_items": [
+          "Sprawdzić, czy przy przejściu do New agent stan UI nie rozjeżdża się i nie „odczepia” od kontekstu sesji.",
+          "Zweryfikować spójność nawigacji New agent ze stanem listy agentów."
+        ],
+        "affected_components": [
+          "Agent Workspaces",
+          "Nawigacja New agent",
+          "Przycisk [ New agent ]"
+        ],
+        "suggested_fix": "Ustabilizować stan ekranu Agent Workspaces przy starcie flow New agent, żeby widok sesji i nawigacja nie rozjeżdżały się względem siebie.",
+        "ui_elements": [
+          "Zakładka Agents",
+          "Nagłówek Agent Workspaces",
+          "Sekcja Agents / codescribe · this session",
+          "Agents in this session (0)",
+          "Tekst No live Agents in this session yet.",
+          "Przyciski [ New agent ] i [ voc ]",
+          "Skróty n New agent · v voc · o other sessions",
+          "Lista sesji z lewej"
+        ],
+        "issues_detected": [
+          "Ekran jest prawie pusty mimo aktywnej sesji codescribe",
+          "Duży martwy obszar pod CTA utrudnia ocenę, czy layout się nie „odczepił”"
+        ],
+        "accessibility_notes": [
+          "Szarą stopkę ze skrótami łatwo przeoczyć",
+          "Pusty stan opiera się głównie na jednym przycisku, bez dodatkowego opisu kolejnego kroku"
+        ],
+        "design_feedback": "Empty state z [ New agent ] jest czytelny, ale użytkownik wyczuwa lekkie rozjechanie przy starcie nawigacji — flow New agent powinien być wyraźniej spięty z bieżącą sesją.",
+        "technical_observations": "Widok Agents pokazuje 0 live agentów i podświetlone [ New agent ]; kursor jest w sidebarze sesji, nie na CTA. Na klatce nie widać twardego crashu, raczej podejrzany stan przejścia.",
+        "response_id": "302fcdfe-4bc6-9b51-8673-e2322f930e26",
+        "merged_from_ids": []
+      },
+      "merged_frames": []
+    },
+    {
+      "id": 17,
+      "category": "bug",
+      "timestamp_start": 74.3,
+      "timestamp_end": 82.4,
+      "timestamp_formatted": "01:14",
+      "text": "świetnie brakuje kimiego tutaj to na pewno a może go nie ma zainstalowanego na tej maszynie bo to też jest możliwe",
+      "context": "agent ok to trochę odszczuło więc wyruchnijmy to nawigowanie new agent o świetnie brakuje kimiego tutaj to na pewno a może go nie ma zainstalowanego na tej maszynie bo to też jest możliwe bo to też jest możliwe jeśli macie tutaj autowykrywanie to ja Nie mam pytań, to byłoby po",
+      "keywords": [
+        "semantic:bug"
+      ],
+      "screenshot": "05_bug_01-14.jpg",
+      "unified_analysis": {
+        "status": "completed",
+        "is_issue": true,
+        "degraded": false,
+        "confidence": "high",
+        "parsed_from_unstructured_output": false,
+        "sentiment": "problem",
+        "severity": "medium",
+        "summary": "Użytkownik mówi, że jeśli jest tu autowykrywanie, to nie ma pytań i byłby naprawdę usatysfakcjonowany; z kontekstu wynika, że spodziewa się wykrycia Kimiego, którego jego zdaniem ma zainstalowanego.",
+        "action_items": [
+          "Sprawdzić, dlaczego Kimi nie pojawia się na liście providerów w New agent.",
+          "Jeśli brak wynika z niewykrycia instalacji, dodać autowykrywanie zainstalowanych providerów.",
+          "Dodać autowykrywanie zainstalowanych providerów i pokazywać je na liście New agent.",
+          "Jeśli Kimi jest zainstalowany, powinien pojawić się obok pozostałych providerów.",
+          "Naprawić wykrywanie providera Kimi w flow New agent.",
+          "Upewnić się, że zainstalowane CLI pojawiają się na liście providerów."
+        ],
+        "affected_components": [
+          "New agent",
+          "Lista providerów",
+          "Ekran New agent",
+          "Autowykrywanie runtime/CLI",
+          "Wykrywanie Kimiego",
+          "Autowykrywanie Kimi"
+        ],
+        "suggested_fix": "Wykrywać zainstalowane CLI/providery (w tym Kimi) i pokazywać je na liście; jeśli provider nie jest zainstalowany, nie milczeć — pokazać stan „unavailable” albo podpowiedź instalacji.\n\nSkanować maszynę pod kątem zainstalowanych CLI/providerów (w tym Kimi) i dynamicznie uzupełniać listę wyboru; ukrywać lub oznaczać te, których nie wykryto.\n\nBrak zmiany z tego fragmentu — użytkownik tylko weryfikuje, czy ma Kimiego. Ewentualne autowykrywanie wynika z wcześniejszego kontekstu, nie z tej wypowiedzi.\n\nDodać Kimi do detekcji zainstalowanych providerów i pokazywać go na ekranie New agent, jeśli jest dostępny na maszynie.",
+        "ui_elements": [
+          "Nagłówek New agent",
+          "Tekst Choose a provider, then Launch.",
+          "Pigułki providerów: agy, claude, codex, cursor, grok, junie",
+          "Pole Project",
+          "Przycisk [ Launch ]",
+          "Stopka skrótów (a advanced, Enter launch, Esc back)",
+          "Formularz New agent",
+          "Chrome Beta"
+        ],
+        "issues_detected": [
+          "Na liście providerów nie ma Kimiego",
+          "Brak informacji, czy provider jest niewykryty, nieobsługiwany czy niezainstalowany",
+          "Na liście providerów nie ma Kimiego, którego użytkownik oczekuje",
+          "Brak sygnału, że lista pochodzi z autowykrywania albo że jakiś zainstalowany provider został pominięty",
+          "Ekran New agent nie wykrywa Kimiego (zgłoszenie użytkownika)",
+          "Hint w stopce wygląda na ucięty z lewej („n New agent”)",
+          "Zakładka shell ma ikonę ostrzeżenia, HEALTH ! i CPU 257%"
+        ],
+        "accessibility_notes": [
+          "Lista providerów nie komunikuje, których narzędzi brakuje i dlaczego",
+          "Skrót „a advanced” jest nisko kontrastowy i łatwy do przeoczenia",
+          "Lista providerów nie komunikuje, które narzędzia wykryto, a których brak",
+          "Hint „a advanced” jest nisko kontrastowy i łatwy do przeoczenia",
+          "Skrót w stopce jest nisko kontrastowy i obcięty, przez co trudniej odkryć New agent z klawiatury",
+          "Pusty stan „0 live Agents” nie mówi, że problemem może być brak wykrytego providera"
+        ],
+        "design_feedback": "Użytkownik oczekuje Kimiego na liście i nie wie, czy to bug UI, czy brak instalacji. Lista powinna pokazywać wykryte narzędzia i jasny stan tych nieobecnych.\n\nUżytkownik chce, żeby lista providerów odzwierciedlała to, co ma na maszynie. Brak autowykrywania (albo brak Kimiego) psuje zaufanie do tego ekranu.\n\nW tym momencie użytkownik nie ocenia UI aplikacji — wyszedł do przeglądarki, żeby sprawdzić Kimiego.\n\nUżytkownik oczekuje, że New agent wykryje Kimiego. Brak tego providera na liście psuje zaufanie do autowykrywania i startu agenta.",
+        "technical_observations": "Widać tylko agy, claude, codex, cursor, grok, junie — bez kimi. New agent nie wyjaśnia kryteriów obecności na liście, co zgadza się z niepewnością użytkownika („może nie jest zainstalowany”).\n\nWidać stały zestaw pigułek (agy–junie) bez Kimiego. Wygląda na hardcodowaną listę, a nie wynik detekcji zainstalowanych CLI.\n\nZrzut to Chrome (wyszukiwanie „kimi code curl”), nie ekran recenzowanej aplikacji. To weryfikacja poza produktem, spójna z wcześniejszym brakiem Kimiego na liście.\n\nNa screenie widać listę Agent Workspaces po/przed New agent, nie sam picker providerów. Stopka skrótów jest ucięta z lewej; shell ma warning, CPU bardzo wysokie.",
+        "response_id": "ae881cf9-a3ac-95a4-9466-b33ae01547a8",
+        "merged_from_ids": [
+          [
+            22,
+            84.5
+          ],
+          [
+            26,
+            98.2
+          ],
+          [
+            50,
+            287.5
+          ]
+        ]
+      },
+      "merged_frames": [
+        {
+          "id": 22,
+          "timestamp_start": 84.5,
+          "timestamp_formatted": "01:24",
+          "text": "jeśli macie tutaj autowykrywanie to ja Nie mam pytań, to byłoby po prostu kłopotarda i byłbym naprawdę, naprawdę usatysfakcjonowany.",
+          "screenshot": "06_change_01-25.jpg"
+        },
+        {
+          "id": 26,
+          "timestamp_start": 98.2,
+          "timestamp_formatted": "01:38",
+          "text": "to był mi się wydaje że ja mam kimiego tutaj. może napisz sprawdzę",
+          "screenshot": "07_other_01-38.jpg"
+        },
+        {
+          "id": 50,
+          "timestamp_start": 287.5,
+          "timestamp_formatted": "04:47",
+          "text": "no dobrze to mamy bali new agent nie wykrywa kimie",
+          "screenshot": "14_bug_04-48.jpg"
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "category": "ui",
+      "timestamp_start": 106.0,
+      "timestamp_end": 125.1,
+      "timestamp_formatted": "01:46",
+      "text": "o tu jest jeszcze jakiś chłopak ... Właśnie, czyli spierdary. Nie mam pojęcia. A, no to dobrze, to byłoby ciekawe.",
+      "context": "może napisz sprawdzę o tu jest jeszcze jakiś chłopak w pierdak wamut uważajcie spierdak kimie ani Właśnie, czyli spierdary. Nie mam pojęcia. A, no to dobrze, to byłoby ciekawe.",
+      "keywords": [
+        "semantic:ui"
+      ],
+      "screenshot": "08_ui_01-46.jpg",
+      "unified_analysis": {
+        "status": "completed",
+        "is_issue": true,
+        "degraded": false,
+        "confidence": "high",
+        "parsed_from_unstructured_output": false,
+        "sentiment": "neutral",
+        "severity": "low",
+        "summary": "Użytkownik zauważa, że jest tu jeszcze jakiś nieznany element („jakiś chłopak”), mówi że nie ma pojęcia co to jest, a potem że dobrze, byłoby to ciekawe.",
+        "action_items": [
+          "Wyjaśnić albo podpisać nieoczekiwany, dodatkowy element tak, żeby było wiadomo czym jest.",
+          "Sprawdzić, czy nie jest to zduplikowana treść powitalna, która wygląda jak „drugi byt” na ekranie."
+        ],
+        "affected_components": [
+          "Start Here",
+          "Banner powitalny terminala",
+          "Powielona treść help/setup"
+        ],
+        "suggested_fix": "Nie renderować dwa razy tego samego bloku „Your terminal is ready” / listy komend. Jeśli drugi blok jest inną sesją albo notice, dać mu czytelną etykietę zamiast wyglądać jak kopia.",
+        "ui_elements": [
+          "Nagłówek Start Here",
+          "Komunikat Vibecrafted: 1 shell setup notices",
+          "Tekst Your terminal is ready",
+          "Lista komend vc-start / vc-frame / aliases / reload",
+          "Ścieżka workspace",
+          "Prompt z wpisanym „wł”",
+          "Sidebar SESSIONS",
+          "Stopka LIVE / CPU / MEM / HEALTH"
+        ],
+        "issues_detected": [
+          "Cały blok powitalny i lista komend są zduplikowane (raz w zwykłym kolorze, raz na zielono)",
+          "Nie wiadomo, czy druga kopia to nowa sesja, reload, czy błąd",
+          "CPU 641% i HEALTH ! w stopce"
+        ],
+        "accessibility_notes": [
+          "Powtórzona treść jest myląca dla czytania z ekranu i dla skanowania wzrokiem",
+          "Różnica czarny vs zielony nie wystarcza jako etykieta znaczenia drugiej kopii"
+        ],
+        "design_feedback": "Użytkownik nie rozpoznaje dodatkowego elementu i nie wie, co oznacza. Duplikat bannera wygląda jak „drugi chłopak” na ekranie zamiast jasnego, pojedynczego stanu terminala.",
+        "technical_observations": "Ten sam startup notice i help są wypisane dwukrotnie pod sobą; wygląda na podwójny init profilu shell. W stopce skrajnie wysokie CPU (641%) i HEALTH !.",
+        "response_id": "2b808aa1-1796-9bc8-9694-c00edd63d878",
+        "merged_from_ids": []
+      },
+      "merged_frames": []
+    },
+    {
+      "id": 36,
+      "category": "change",
+      "timestamp_start": 194.9,
+      "timestamp_end": 196.6,
+      "timestamp_formatted": "03:14",
+      "text": "mówiam i poza tym chciałbym mieć",
+      "context": "mówiam i poza tym chciałbym mieć",
+      "keywords": [
+        "semantic:change"
+      ],
+      "screenshot": "09_change_03-15.jpg",
+      "unified_analysis": {
+        "status": "completed",
+        "is_issue": false,
+        "degraded": false,
+        "confidence": "high",
+        "parsed_from_unstructured_output": false,
+        "sentiment": "neutral",
+        "severity": "none",
+        "summary": "Użytkownik mówi, że poza tym chciałby coś mieć, ale nie kończy myśli i nie mówi, czego dokładnie.",
+        "action_items": [],
+        "affected_components": [],
+        "suggested_fix": "Brak konkretnej zmiany — wypowiedź jest urwana, nie wiadomo, czego użytkownik chciałby mieć.",
+        "ui_elements": [
+          "Panel Agent Workspaces",
+          "Lista Agents in this session",
+          "Przyciski [ New agent ] i [ voc ]",
+          "Panel Prompt.md runtime initialization",
+          "Nagłówek Claude Code",
+          "Ścieżka do prompt.md",
+          "Overlay Multiple Pane Select",
+          "Etykieta Zigza (ucięta)"
+        ],
+        "issues_detected": [
+          "Nakładka Multiple Pane Select zasłania treść panelu agenta",
+          "Ucięte etykiety: Zigza, ścieżka runtime_r…, hint „n New agent”"
+        ],
+        "accessibility_notes": [
+          "Overlay zasłania treść i może psuć odczyt kontekstu agenta",
+          "Obcięte ścieżki i etykiety są nieczytelne"
+        ],
+        "design_feedback": "Z transkrypcji nie wynika konkretny postulat. Na ekranie widać nachodzące panele i ucięte etykiety, ale użytkownik tego w tym fragmencie nie opisuje.",
+        "technical_observations": "Wypowiedź urwana. Widoczny split Agent Workspaces + Claude Code z overlayem Multiple Pane Select; CPU 411% i HEALTH ! nie są tematem tej kwestii.",
+        "response_id": "c7a32b1f-da3b-95ed-a3de-567274f5ae0a",
+        "merged_from_ids": []
+      },
+      "merged_frames": []
+    },
+    {
+      "id": 39,
+      "category": "ui",
+      "timestamp_start": 214.1,
+      "timestamp_end": 219.4,
+      "timestamp_formatted": "03:34",
+      "text": "super pochuj jak mam taki materiał dla gości tutaj w",
+      "context": "onieli na bisi bisi na bągambas i na prom bisi i nie bisi i nie bisi i nie super pochuj jak mam taki materiał dla gości tutaj w pęcisz",
+      "keywords": [
+        "semantic:ui"
+      ],
+      "screenshot": "10_ui_03-34.jpg",
+      "unified_analysis": {
+        "status": "completed",
+        "is_issue": true,
+        "degraded": false,
+        "confidence": "high",
+        "parsed_from_unstructured_output": false,
+        "sentiment": "problem",
+        "severity": "medium",
+        "summary": "Użytkownik ocenia materiał dla gości jako „super pochuj”, gdy pokazuje taki widok.",
+        "action_items": [
+          "Uporządkować materiał i widok pokazywany gościom, żeby nie wyglądał jak surowy, chaotyczny dump.",
+          "Schować lub wyczyścić elementy nieprzeznaczone do prezentacji (surowe ścieżki, encje HTML, ucięte nazwy)."
+        ],
+        "affected_components": [
+          "Widok split w Pensieve",
+          "Treść rozmowy/markdown",
+          "Sidebar plików",
+          "Karty dokumentów"
+        ],
+        "suggested_fix": "Przygotować gościnny, czytelny widok: bez surowych tagów obrazków i encji HTML, z pełnymi nazwami plików i mniejszym zagęszczeniem dwóch niemal identycznych paneli.",
+        "ui_elements": [
+          "Aplikacja Pensieve",
+          "Sidebar Open Files / Search",
+          "Lista plików (MAX_HISTORY_EVIDENCE, CHANGELOG, conversation, prompt)",
+          "Karty dokumentów",
+          "Split: lewy markdown i prawy wątek rozmowy",
+          "Pasek narzędzi formatowania",
+          "Status bar (Words/Chars/Lines)",
+          "Przyciski okna macOS"
+        ],
+        "issues_detected": [
+          "Ucięte nazwy plików i kart",
+          "W treści wycieka encja HTML &quot;",
+          "Surowa składnia obrazka ze ścieżką systemową w panelu rozmowy",
+          "Dwa gęste, prawie równoległe panele tej samej rozmowy — trudne do pokazu gościom"
+        ],
+        "accessibility_notes": [
+          "Ogromny plik (tysiące linii) w splicie utrudnia skanowanie",
+          "Ucięte etykiety w sidebarze i kartach nie dają pełnego kontekstu",
+          "Niski kontrast szarego tekstu na ciemnym tle w długim dumpie rozmowy"
+        ],
+        "design_feedback": "Użytkownik wstydzi się tego materiału na pokaz dla gości. Widok jest przeładowany surową treścią i detalami edytora, zero warstwy prezentacyjnej.",
+        "technical_observations": "W prawym panelu widać niezrenderowany markup obrazka i encję &quot;Pong; nazwy w sidebarze/kartach są ellipsisowane. Split pokazuje ten sam wątek w dwóch formatach, co potęguje wrażenie bałaganu.",
+        "response_id": "568e866f-a4e6-997b-b021-0d5ca120dd74",
+        "merged_from_ids": []
+      },
+      "merged_frames": []
+    },
+    {
+      "id": 42,
+      "category": "bug",
+      "timestamp_start": 230.8,
+      "timestamp_end": 232.3,
+      "timestamp_formatted": "03:50",
+      "text": "coś się tu komuś pomylilo",
+      "context": "coś się tu komuś pomylilo",
+      "keywords": [
+        "semantic:bug"
+      ],
+      "screenshot": "11_bug_03-51.jpg",
+      "unified_analysis": {
+        "status": "completed",
+        "is_issue": true,
+        "degraded": false,
+        "confidence": "high",
+        "parsed_from_unstructured_output": false,
+        "sentiment": "problem",
+        "severity": "medium",
+        "summary": "Użytkownik mówi, że coś się tu komuś pomyliło.",
+        "action_items": [
+          "Sprawdzić, co jest pomylone w tym widoku (etykieta/akcja menu albo stan plików).",
+          "Poprawić uciętą lub błędną etykietę pozycji menu kontekstowego."
+        ],
+        "affected_components": [
+          "Menu kontekstowe pliku",
+          "Lista Open Files",
+          "Sidebar Pensieve"
+        ],
+        "suggested_fix": "Zweryfikować rendering i copy pozycji „Close from Open Files” — na zrzucie „Close” wygląda na ucięte („C se”). Upewnić się, że akcja i etykieta są spójne.",
+        "ui_elements": [
+          "Sidebar PENSIEVE",
+          "Pole Search",
+          "Zakładki Open Files / Workspace",
+          "Lista plików",
+          "Menu kontekstowe (Ask Siri, Open, Dispatch to Agent, Close from Open Files…)",
+          "Widok split edytora",
+          "Pasek zakładek dokumentu",
+          "Status bar (Mode Split, Words/Chars/Lines)"
+        ],
+        "issues_detected": [
+          "Etykieta „Close from Open Files” wygląda na uciętą („C se from Open Files”)",
+          "Menu kontekstowe zasłania treść edytora",
+          "Nazwa pliku w sidebarze i w zakładce jest mocno skrócona"
+        ],
+        "accessibility_notes": [
+          "Ucięta etykieta menu jest nieczytelna i myląca dla wzroku i czytników",
+          "Gęsty split i nachodzące menu utrudniają identyfikację aktywnego elementu"
+        ],
+        "design_feedback": "Użytkownik widzi pomyłkę — najbardziej rzuca się ucięta/dziwna etykieta w menu kontekstowym. Menu powinno mieć pełne, jednoznaczne nazwy akcji i nie pożerać własnego tekstu.",
+        "technical_observations": "Kursor stoi na podświetlonej pozycji Close from Open Files; litery „lo” zanikają (nakładka kursora albo błąd rysowania tekstu). Poza tym standardowe macOS menu nad split-view Pensieve.",
+        "response_id": "7323e13e-1643-9cce-8ba9-fa2009813841",
+        "merged_from_ids": []
+      },
+      "merged_frames": []
+    },
+    {
+      "id": 43,
+      "category": "bug",
+      "timestamp_start": 245.0,
+      "timestamp_end": 255.3,
+      "timestamp_formatted": "04:05",
+      "text": "co się dzieje co się dzieje nie ma",
+      "context": "co się dzieje co się dzieje nie ma",
+      "keywords": [
+        "semantic:bug"
+      ],
+      "screenshot": "12_bug_04-05.jpg",
+      "unified_analysis": {
+        "status": "completed",
+        "is_issue": true,
+        "degraded": false,
+        "confidence": "high",
+        "parsed_from_unstructured_output": false,
+        "sentiment": "problem",
+        "severity": "high",
+        "summary": "Użytkownik pyta, co się dzieje, i mówi, że czegoś nie ma.",
+        "action_items": [
+          "Zdiagnozować, czemu po starcie sesji użytkownik nie widzi oczekiwanego wyniku i zostaje z pustym/błędnym stanem.",
+          "Pokazać czytelny komunikat błędu i następny krok zamiast surowego logu, z którego nic nie wynika."
+        ],
+        "affected_components": [
+          "Panel shell",
+          "Start agenta / vc-init",
+          "Komunikat błędu workspace"
+        ],
+        "suggested_fix": "Obsłużyć błąd startu (foreign workspace) jako stan UI: jasny powód, że sesja nie wstała, i co zrobić dalej — nie zostawiać pustego panelu z uciętym logiem.",
+        "ui_elements": [
+          "Zakładka shell z ikoną ostrzeżenia",
+          "Log Starting claude with vc-init...",
+          "run_id / model / model_source",
+          "Komenda claude --resume",
+          "Komunikat provider usage event belongs to a foreign workspace",
+          "Pusty obszar panelu",
+          "Stopka CPU/MEM/DISK/HEALTH"
+        ],
+        "issues_detected": [
+          "Start agenta kończy się błędem foreign workspace",
+          "Linia model_source łamie się w połowie słowa (provide / r_default)",
+          "Panel jest prawie pusty po błędzie, bez CTA ani wyjaśnienia",
+          "Zakładka shell ma warning, HEALTH ! i CPU 346%"
+        ],
+        "accessibility_notes": [
+          "Brak zrozumiałego komunikatu, że operacja się nie udała i czego brakuje",
+          "Zawijanie identyfikatorów w połowie utrudnia odczyt",
+          "Pusty ekran po błędzie nie daje kolejnego kroku dla użytkownika"
+        ],
+        "design_feedback": "Użytkownik nie rozumie, co się dzieje i widzi brak oczekiwanego wyniku. Błąd startu powinien być stanem produktowym, nie surowym, uciętym logiem na pustym panelu.",
+        "technical_observations": "vc-init startuje claude, potem pada na „provider usage event belongs to a foreign workspace”; model_source jest złamane mid-word, reszta shella pusta, CPU 346% i HEALTH !.",
+        "response_id": "ca2a6070-a865-9631-a95b-6a121d768fdc",
+        "merged_from_ids": []
+      },
+      "merged_frames": []
+    },
+    {
+      "id": 45,
+      "category": "ui",
+      "timestamp_start": 269.1,
+      "timestamp_end": 283.7,
+      "timestamp_formatted": "04:29",
+      "text": "tu się czegoś rozjeżdża jakoś totalnie to jest bez sensu czyli kraj szema rozjechane ni kraj rozjechane re rozjechane tutaj cały układ",
+      "context": "tu się czegoś dzieje tu się czegoś rozjeżdża jakoś totalnie to jest bez sensu czyli kraj szema rozjechane ni kraj rozjechane re rozjechane tutaj cały układ no dobrze to mamy bali new agent",
+      "keywords": [
+        "semantic:ui"
+      ],
+      "screenshot": "13_ui_04-29.jpg",
+      "unified_analysis": {
+        "status": "completed",
+        "is_issue": true,
+        "degraded": false,
+        "confidence": "high",
+        "parsed_from_unstructured_output": false,
+        "sentiment": "problem",
+        "severity": "high",
+        "summary": "Użytkownik mówi, że coś się tu totalnie rozjeżdża, że to bez sensu, schemat jest rozjechany i rozjechany jest cały układ.",
+        "action_items": [
+          "Naprawić rozjechany layout ekranu Shell — wyrównać kolumny i bloki pomocy do spójnej siatki.",
+          "Sprawdzić, czy treść help/onboarding nie łamie się przy szerokości panelu."
+        ],
+        "affected_components": [
+          "Ekran Shell",
+          "Blok pomocy / First commands",
+          "Layout kolumn"
+        ],
+        "suggested_fix": "Złożyć treść Shell do stałej siatki (np. dwie kolumny: komenda | opis) z jednolitym wyrównaniem i wrappingiem, zamiast luźno pozycjonowanych fragmentów tekstu.",
+        "ui_elements": [
+          "Nagłówek VIBECRAFTED · Shell",
+          "Tekst Your work shell – Agent Workspaces lives on the Agents tab.",
+          "Sekcja First commands",
+          "Wiersze vibecrafted start / vibecrafted help",
+          "Sekcja Chrome, always on screen",
+          "Opisy left rail / top row / Ctrl+t 1",
+          "Prompt codescribe >",
+          "Zakładka Shell oraz dodatkowy tab shell z ostrzeżeniem"
+        ],
+        "issues_detected": [
+          "Bloki tekstu i komend są porozrzucane, kolumny nie trzymają siatki",
+          "Etykiety (First commands, left rail, Ctrl+t 1) nie wyrównują się z opisami",
+          "Dużo pustej, chaotycznej przestrzeni między promptem a helpem"
+        ],
+        "accessibility_notes": [
+          "Nieregularny układ utrudnia skanowanie wzrokiem i kolejność czytania",
+          "Luźno porozrzucany tekst psuje logiczny porządek nawigacji klawiaturą"
+        ],
+        "design_feedback": "Help na Shell wygląda jak rozjechany schemat, dokładnie tak jak mówi użytkownik. Trzeba spiąć to w czytelną siatkę komenda–opis, a nie dryfujące kawałki copy.",
+        "technical_observations": "Wygląda na zepsuty layout dwukolumnowy (flex/grid bez wrapu albo złe absolutne pozycjonowanie). Przy szerokości panelu bloki uciekają w prawo i nie trzymają rzędu. CPU 272% i HEALTH ! są osobnym sygnałem, nie tematem tej kwestii.",
+        "response_id": "df730f61-e679-9897-afb4-a1124dbfbed8",
+        "merged_from_ids": []
+      },
+      "merged_frames": []
+    },
+    {
+      "id": 52,
+      "category": "ui",
+      "timestamp_start": 300.2,
+      "timestamp_end": 307.9,
+      "timestamp_formatted": "05:00",
+      "text": "a advanced jest schowany bardzo nisko tak czyli advanced jest bardzo nisko schowany ale to nic",
+      "context": "nie wykrywa kimie a advanced jest schowany bardzo nisko tak czyli advanced jest bardzo nisko schowany ale to nic Tutaj powinniśmy jedynie podkreślać nia dotych,",
+      "keywords": [
+        "semantic:ui"
+      ],
+      "screenshot": "15_ui_05-00.jpg",
+      "unified_analysis": {
+        "status": "completed",
+        "is_issue": false,
+        "degraded": false,
+        "confidence": "high",
+        "parsed_from_unstructured_output": false,
+        "sentiment": "neutral",
+        "severity": "none",
+        "summary": "Użytkownik zauważa, że Advanced jest schowany bardzo nisko, ale od razu mówi, że to nic.",
+        "action_items": [],
+        "affected_components": [
+          "Ekran New agent",
+          "Hint Advanced w stopce"
+        ],
+        "suggested_fix": "Brak działania — użytkownik sam bagatelizuje umiejscowienie Advanced.",
+        "ui_elements": [
+          "Formularz New agent",
+          "Tekst Choose a provider, then Launch.",
+          "Pigułki providerów (agy, claude, codex, cursor, grok, junie)",
+          "Pole Project",
+          "Przycisk [ Launch ]",
+          "Stopka skrótów: ↔ provider · type to edit project · a advanced · Enter launch · Esc back"
+        ],
+        "issues_detected": [
+          "Jedyna wskazówka Advanced to mały, nisko kontrastowy hint „a advanced” przy dolnej krawędzi",
+          "Na liście providerów nie widać kimi (osobny wątek z kontekstu)",
+          "Stopka HEALTH ! i CPU 256%"
+        ],
+        "accessibility_notes": [
+          "Hint Advanced jest nisko, szary i łatwy do przeoczenia",
+          "Brak widocznego przycisku/etykiety Advanced — dostęp tylko ze skrótu „a”"
+        ],
+        "design_feedback": "Użytkownik widzi, że Advanced siedzi nisko w stopce, ale w tej chwili nie traktuje tego jako rzeczy do poprawy.",
+        "technical_observations": "Kursor wskazuje „a advanced” w dolnym pasku skrótów, co potwierdza obserwację o niskim schowaniu. Opcje Advanced są zwinięte; na ekranie zostaje tylko ten hint.",
+        "response_id": "94b3411e-fbec-95ee-a1d8-b3c648a81cb3",
+        "merged_from_ids": []
+      },
+      "merged_frames": []
+    },
+    {
+      "id": 55,
+      "category": "change",
+      "timestamp_start": 311.4,
+      "timestamp_end": 319.1,
+      "timestamp_formatted": "05:11",
+      "text": "Tutaj powinniśmy jedynie podkreślać nia dotych, mods, a nie takie kropeczki, takie kropeczki, chyba żeby były z dwóch sztuk.",
+      "context": "ale to nic Tutaj powinniśmy jedynie podkreślać nia dotych, mods, a nie takie kropeczki, takie kropeczki, chyba żeby były z dwóch sztuk.",
+      "keywords": [
+        "semantic:change"
+      ],
+      "screenshot": "16_change_05-11.jpg",
+      "unified_analysis": {
+        "status": "completed",
+        "is_issue": true,
+        "degraded": false,
+        "confidence": "high",
+        "parsed_from_unstructured_output": false,
+        "sentiment": "problem",
+        "severity": "low",
+        "summary": "Użytkownik mówi, że przy Mode powinniśmy jedynie podkreślać wybór, a nie dawać takich kropeczek; jeśli już kropeczki, to chyba z dwóch sztuk.",
+        "action_items": [
+          "Zmienić wskaźnik wyboru Mode: podkreślać/wyróżniać wyłącznie wybraną opcję, bez kropeczek.",
+          "Jeśli znacznik ma zostać, użyć dwuznakowego markera zamiast pojedynczej kropeczki."
+        ],
+        "affected_components": [
+          "Formularz New agent",
+          "Wiersz Mode",
+          "Wskaźniki wyboru opcji (• / ×)"
+        ],
+        "suggested_fix": "Dla Mode nie używać • jako markera — highlight/underline tylko na wybranym tokenie (np. init). Jeśli spójność z Runtime/Permits wymaga markera, stosować stały dwuznakowy prefix (np. „• ” / „× ”), a nie pojedynczą kropeczkę w środku listy.",
+        "ui_elements": [
+          "Ekran New agent",
+          "Pigułki providerów (agy, claude, codex, cursor, grok, junie)",
+          "Pole Project",
+          "Wiersz Mode (init • resume partner operator)",
+          "Runtime / Permits / Memory / Parent",
+          "Komunikat Unavailable",
+          "Przycisk [ Launch ]",
+          "Stopka skrótów a advanced"
+        ],
+        "issues_detected": [
+          "Cały blok opcji Mode jest w szarym highlightcie, zamiast samego wybranego init",
+          "Niespójne markery: w Mode kropeczka siedzi między tokenami, w innych wierszach •/× są prefixami",
+          "Komunikat Unavailable jest ucięty",
+          "CPU 1037% i HEALTH !!"
+        ],
+        "accessibility_notes": [
+          "Sama kropeczka słabo komunikuje stan selected vs available vs disabled",
+          "Highlight całego wiersza Mode zamiast jednej opcji myli, która wartość jest aktywna",
+          "Ucięty tekst Unavailable nie jest w pełni czytelny"
+        ],
+        "design_feedback": "Użytkownik chce czytelnego podkreślenia wyboru Mode, nie ozdobnych kropeczek. Teraz marker i highlight są niespójne z resztą formularza i rozmywają, co jest wybrane.",
+        "technical_observations": "W Mode highlight obejmuje cały string opcji z • w środku; Runtime/Permits/Memory używają •/× jako prefixów przy tokenach. Unavailable obcięte wielokropkiem, CPU 1037%.",
+        "response_id": "cf120548-353b-91b3-9a07-346811f8d2f5",
+        "merged_from_ids": []
+      },
+      "merged_frames": []
+    }
+  ]
+}
