@@ -44,11 +44,10 @@ class PreparedTurn:
 
 
 def report_chain_response_id(report: dict[str, Any] | None) -> str | None:
-    """Last analysis-pass ``response_id`` stored on the report, if any.
+    """Inspect legacy response-ID evidence for compatibility.
 
-    Newer reports write it at ``analysis_passes.unified_analysis.response_id``.
-    Existing reports only keep it on each finding's ``unified_analysis``; the
-    last non-empty value is the chain head from the VLM pass.
+    This value does not prove provider identity or a shared conversation head.
+    ``prepare_turn`` never uses it as a chat cursor.
     """
     if not isinstance(report, dict):
         return None

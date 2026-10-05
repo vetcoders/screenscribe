@@ -120,6 +120,9 @@ but each registers its own routes.
   a shared conversation head.
   xAI uses stateless full history so trusted instructions can be repeated on
   every user/tool round.
+  Manual captures persist their image path; cold start restores markers/results
+  before the next browser save. Legacy image lookup stays within the report's
+  `manual_frames/` directory and never writes the JSON during startup.
 - `processing_provenance.llm` records an actually successful semantic request.
   Agent processor trust uses this receipt, not the currently configured
   endpoint list. Missing/legacy receipts establish no processor trust.

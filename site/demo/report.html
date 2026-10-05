@@ -5657,27 +5657,36 @@ function enrichManualFrameImagesFromServerState(snapshot) {
         return false;
     }
 
-    const serverFrameImages = new Map();
+    const serverFrames = new Map();
     snapshot.manualFrames.forEach((frame) => {
         if (!frame || typeof frame !== 'object' || frame.marker_id === undefined || frame.marker_id === null) {
             return;
         }
-        if (frame.frameDataUrl) {
-            serverFrameImages.set(String(frame.marker_id), frame.frameDataUrl);
-        }
+        serverFrames.set(String(frame.marker_id), frame);
     });
 
     let enriched = false;
     reportState.manualFrames = reportState.manualFrames.map((frame) => {
-        if (!frame || typeof frame !== 'object' || frame.frameDataUrl) {
+        if (!frame || typeof frame !== 'object') {
             return frame;
         }
-        const frameDataUrl = serverFrameImages.get(String(frame.marker_id));
-        if (!frameDataUrl) {
+        const serverFrame = serverFrames.get(String(frame.marker_id));
+        if (!serverFrame) {
             return frame;
         }
+        const durablePath = !frame.frame_path && serverFrame.frame_path
+            ? serverFrame.frame_path
+            : null;
+        const frameDataUrl = !frame.frameDataUrl && serverFrame.frameDataUrl
+            ? serverFrame.frameDataUrl
+            : null;
+        if (!durablePath && !frameDataUrl) return frame;
         enriched = true;
-        return { ...frame, frameDataUrl };
+        return {
+            ...frame,
+            ...(durablePath ? { frame_path: durablePath } : {}),
+            ...(frameDataUrl ? { frameDataUrl } : {}),
+        };
     });
 
     if (enriched) {
@@ -8077,11 +8086,15 @@ async function exportReviewedZIP() {
             // the JSON must stay lightweight + referential — mirroring the strip in
             // exportReviewedJSON (de41ef1). Without this the ZIP's JSON balloons
             // ~100x (one frame's data URL is ~500KB) and stores each image 3x.
-            const { frameDataUrl, ...frameWithoutBase64 } = frame;
+            const { frameDataUrl, frame_path: _diskFramePath, ...frameWithoutBase64 } = frame;
+            const portableScreenshotPath = screenshotFile
+                ? `manual_frames/${screenshotFile}`
+                : null;
             manualFramesOutput.push({
                 ...frameWithoutBase64,
                 annotations,
-                screenshot_file: screenshotFile ? `manual_frames/${screenshotFile}` : null,
+                ...(portableScreenshotPath ? { frame_path: portableScreenshotPath } : {}),
+                screenshot_file: portableScreenshotPath,
                 screenshot_data_url: screenshotFile ? null : screenshotDataUrl,
             });
 
@@ -9213,6 +9226,7 @@ async function markManualFrame(current, transcript, notes) {
             current.marker_id = markPayload.marker_id;
             upsertManualFrame({
                 marker_id: markPayload.marker_id,
+                frame_path: markPayload.frame_path || '',
                 timestamp: current.timestamp,
                 timestamp_formatted: formatPreciseTime(current.timestamp),
                 transcript,

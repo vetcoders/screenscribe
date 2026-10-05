@@ -229,7 +229,8 @@ it process the whole video. Because it is frame-driven, it also works on
 recordings that have **no audio track** — mark frames and add optional text or
 voice notes for an interactive vision-only review.
 
-The server validates that a vision API key is configured before starting. Press
+The server validates a usable vision credential (API key or supported xAI
+account access) before starting. Press
 `Ctrl+C` to stop the server and exit.
 
 **Examples**
@@ -859,6 +860,13 @@ the video; with `-o <existing folder>` it is `<folder>/<video>_review`):
 - Captured screenshots for each finding.
 - `TODO_<video>.md` — a Markdown task list you can export from the interactive
   HTML report ("Export TODO"), handy for dropping findings into a sprint.
+
+In the review report, seek to a frame and choose **Add moment** to capture
+additional evidence with optional notes. VLM analysis is optional. **Save review**
+keeps the image reference, notes and annotations across page and server
+restarts. Keep the report directory with its `manual_frames/` images, or export
+the reviewed ZIP to carry those images together. Older pathless captures can
+recover their existing image from that directory.
 
 ### Handoff to a coding agent
 
