@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: model-validation messages redact provider-supplied URLs.** Both
+  streaming failure bodies and model-unavailable errors remove URL credentials
+  and query/path data; validation warnings also escape Rich markup.
+
 - **Fixed: `review -o <existing folder>` no longer mistakes an ordinary folder
   for a previous review.** A folder is a previous review only when it holds a
   `.screenscribe_cache/` checkpoint or this video's own `<video>_report.*`
