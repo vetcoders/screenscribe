@@ -1126,7 +1126,7 @@ def preprocess(
     if force:
         # --force may overwrite only a free slot or screenscribe's own bundle. A
         # foreign file/folder fails closed BEFORE anything is created or written.
-        if base_state == "foreign":
+        if base_state == "foreign" or (base_state == "free" and base_output.exists()):
             from .review_pipeline import _exit_output_dir_error
 
             _exit_output_dir_error(
@@ -1165,11 +1165,10 @@ def preprocess(
 
     # Reserve the folder before any audio/STT work: create a new slot
     # exclusively, re-check an existing one is still ours, and probe that it is
-    # writable, so an unusable output never costs a transcription. Only a
-    # freshly allocated version slot may be reselected on a race; --force and
-    # the base itself fail closed instead.
+    # writable, so an unusable output never costs a transcription. Any normally
+    # allocated missing slot may be reselected on a race; --force fails closed.
     reselect_slot = None
-    if not (force or output_dir == base_output):
+    if not force:
 
         def reselect_slot() -> Path:
             return _find_next_versioned_path(

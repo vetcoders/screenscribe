@@ -302,7 +302,8 @@ def run_review(
             # --force may overwrite only a free slot or screenscribe's own review
             # folder. A foreign file/folder fails closed BEFORE anything is
             # created, cleaned or written (per video, so batch mode too).
-            if classify_review_slot(base_output, video_stem) == "foreign":
+            force_state = classify_review_slot(base_output, video_stem)
+            if force_state == "foreign" or (force_state == "free" and base_output.exists()):
                 _exit_output_dir_error(console, _build_force_foreign_message(base_output))
             video_output = base_output
         elif effective_resume and _has_valid_checkpoint(base_output, video, language):
@@ -378,10 +379,10 @@ def run_review(
 
         # Reserve the folder right before use: create a new slot exclusively,
         # re-check an existing one is still ours, and probe that it is writable.
-        # Only a freshly allocated version slot may be reselected on a race;
-        # --force / --resume / Overwrite / the base itself fail closed instead.
+        # Any normally allocated missing slot may be reselected on a race;
+        # --force / --resume / Overwrite fail closed instead.
         reselect_slot = None
-        if not (force or effective_resume or video_output == base_output):
+        if not (force or effective_resume):
 
             def reselect_slot(base: Path = base_output, stem: str = video_stem) -> Path:
                 return cli._find_next_review_path(base, video_stem=stem)[0]

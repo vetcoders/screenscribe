@@ -236,7 +236,7 @@ uv run screenscribe preprocess VIDEO [OPTIONS]
 | `--lang`, `-l` | `en` | Language code for transcription. |
 | `--local` | off | Use a local STT server. |
 | `--audio` / `--no-audio` | on | Include the extracted `audio.mp3` in the bundle. |
-| `--force` | off | Overwrite a previous preprocess bundle in place instead of creating a new `_2`, `_3`, … version. Only a screenscribe preprocess bundle (or a missing/empty folder) can be overwritten; if the target is a file or a non-empty folder screenscribe does not own, `preprocess` stops with an error and changes nothing. |
+| `--force` | off | Overwrite a previous preprocess bundle in place instead of creating a new `_2`, `_3`, … version. Only a screenscribe preprocess bundle (or a missing target) can be overwritten; if the target is a file or a folder screenscribe does not own, `preprocess` stops with an error and changes nothing. |
 
 **Examples**
 
@@ -264,12 +264,12 @@ is screenscribe's own manifest (a JSON object with `"mode": "preprocess"` and an
 Any existing `-o` folder that is not a previous bundle, even an empty one, is a
 parent. The bundle directory is therefore `<video>_preprocess` next to the
 video, `<folder>/<video>_preprocess` for such a parent, or a `-o` path that does
-not exist yet; it is used as-is when it does not exist or is an empty folder
-(an empty `<video>_preprocess`). A previous bundle there is kept and a new
-version is created; a file or non-empty folder there that is not a preprocess
-bundle is skipped the same way (never written into). A new version goes to the
-first `_2`, `_3`, … slot that does not exist or is an empty folder, so an
-existing non-empty `_N` (bundle or not) is never written into either.
+not exist yet; it is used as-is only when it does not exist. An existing empty
+bundle path is skipped because another process may have just claimed it. A
+previous bundle there is kept and a new version is created; a file or folder
+there that is not a preprocess bundle is skipped the same way (never written
+into). A new version goes to the first `_2`, `_3`, … slot that does not exist;
+every existing `_N` (bundle, foreign, or empty) is left untouched.
 
 ---
 
@@ -611,8 +611,8 @@ uv run screenscribe review demo.mov
 screenscribe transcribes, finds actionable moments, captures screenshots,
 confirms them with the vision model, writes JSON/Markdown/HTML reports, and
 opens the HTML report in your browser. Re-running preserves the prior report as
-`_2`, `_3`, … (the first slot that does not exist or is an empty folder; an
-existing non-empty `_N` is never written into); pass `--force` to overwrite
+`_2`, `_3`, … (the first slot that does not exist; an existing `_N`, including
+an empty directory another process may have claimed, is never written into); pass `--force` to overwrite
 instead.
 
 screenscribe never writes into a folder it does not own. If `<video>_review`

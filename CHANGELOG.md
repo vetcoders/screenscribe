@@ -21,6 +21,9 @@
   a screenscribe preprocess bundle. Running out of versions and failing to
   write a bundle file (permission denied, disk full) also print an "Output
   Directory Error" instead of a traceback; partial files are left in place.
+  Existing empty bundle/version paths are treated as occupied because another
+  live process may have claimed them; after a lost `mkdir` race, preprocess
+  reselects a missing slot instead of sharing the winner's directory.
   The output folder is reserved and checked for writability before audio
   extraction and transcription, so folder creation, reservation, writability
   and version-limit errors stop before any STT call; a bundle write failure
@@ -35,7 +38,8 @@
 - **Fixed: `review` never writes into a folder screenscribe does not own.** An
   existing file or non-empty non-review folder at `<video>_review` is skipped
   (the next free `_2`, `_3`, … is used, without the overwrite/resume prompt),
-  a version slot is used only when missing or empty, and running out of
+  a version slot is used only when missing (an existing empty directory may be
+  another process's live claim and is skipped), and running out of
   versions prints an "Output Directory Error" instead of a traceback.
   `--force` refuses (exit 1, nothing changed) when the target is a file or a
   non-empty folder that is not a screenscribe review, and a checkpoint cache it

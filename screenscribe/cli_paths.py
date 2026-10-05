@@ -223,13 +223,13 @@ def _find_next_versioned_path(
 
     Slots are classified with ``classify_output_slot``:
 
-    - ``base_path`` is used when it is ``free`` or ``own_partial`` (a partial run
+    - ``base_path`` is used when it is missing or ``own_partial`` (a partial run
       keeps being reused in place, so ``--resume`` finds its checkpoint). An
-      ``own_complete`` or ``foreign`` base advances to ``<base>_2``.
-    - A version slot ``<base>_N`` (N >= 2) is used ONLY when it is ``free``
-      (missing or an empty directory). Any existing file or non-empty directory
-      -- owned or not -- is occupied, so a run never mixes its output into
-      another folder.
+      existing empty directory, ``own_complete`` or ``foreign`` base advances to
+      ``<base>_2``.
+    - A version slot ``<base>_N`` (N >= 2) is used ONLY when it is missing. Any
+      existing path -- including an empty directory another process may have
+      just created -- is occupied, so concurrent runs never share an output slot.
 
     Args:
         base_path: The initial desired output path (e.g., video_review).
@@ -247,7 +247,7 @@ def _find_next_versioned_path(
     base_state = classify_output_slot(
         base_path, owns_dir=owns_dir, has_completed_bundle=has_completed_bundle
     )
-    if base_state in ("free", "own_partial"):
+    if base_state == "own_partial" or (base_state == "free" and not base_path.exists()):
         return base_path, None
 
     # Read the cap through the cli module so tests that patch
@@ -260,7 +260,7 @@ def _find_next_versioned_path(
         state = classify_output_slot(
             versioned_path, owns_dir=owns_dir, has_completed_bundle=has_completed_bundle
         )
-        if state == "free":
+        if state == "free" and not versioned_path.exists():
             return versioned_path, version
         version += 1
         if version > cli.MAX_REVIEW_VERSIONS:
@@ -276,8 +276,8 @@ def _find_next_review_path(
     when ``is_review_directory`` says so, and complete when it holds this
     video's report bundle (``has_review_report_bundle``). So a checkpoint-only
     base (``own_partial``) is reused in place, a completed review or any foreign
-    non-empty folder/file at the base advances to ``_2``, and ``<base>_N`` slots
-    are used only when missing or empty (see ``_find_next_versioned_path``).
+    existing folder/file at the base advances to ``_2``, and ``<base>_N`` slots
+    are used only when missing (see ``_find_next_versioned_path``).
     """
     return _find_next_versioned_path(
         base_path,
@@ -363,6 +363,11 @@ def reserve_output_slot(
             exists = target.exists()
         except OSError as exc:
             raise OutputSlotError(target, "create_failed", exc) from exc
+        if exists and state == "free" and reselect is not None:
+            # The allocator selects only missing paths. Seeing an empty directory
+            # here means another process won the mkdir race; never share it.
+            target = reselect()
+            continue
         if not exists:
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)

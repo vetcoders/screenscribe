@@ -708,14 +708,16 @@ def test_version_slot_skips_ordinary_non_empty_folder(tmp_path: Path) -> None:
     )
 
 
-def test_version_slot_reuses_empty_folder(tmp_path: Path) -> None:
+def test_version_slot_skips_empty_folder(tmp_path: Path) -> None:
     base = _completed_base(tmp_path)
-    (tmp_path / "demo_review_2").mkdir()
+    empty = tmp_path / "demo_review_2"
+    empty.mkdir()
 
     assert cli_module._find_next_review_path(base, video_stem="demo") == (
-        tmp_path / "demo_review_2",
-        2,
+        tmp_path / "demo_review_3",
+        3,
     )
+    assert list(empty.iterdir()) == []
 
 
 def test_version_slot_skips_existing_file(tmp_path: Path) -> None:
@@ -788,11 +790,15 @@ def test_foreign_base_and_foreign_second_slot_allocates_third(tmp_path: Path) ->
     )
 
 
-def test_empty_base_folder_is_used(tmp_path: Path) -> None:
+def test_empty_base_folder_is_skipped(tmp_path: Path) -> None:
     base = tmp_path / "demo_review"
     base.mkdir()
 
-    assert cli_module._find_next_review_path(base, video_stem="demo") == (base, None)
+    assert cli_module._find_next_review_path(base, video_stem="demo") == (
+        tmp_path / "demo_review_2",
+        2,
+    )
+    assert list(base.iterdir()) == []
 
 
 def test_foreign_base_file_is_skipped_by_allocator(tmp_path: Path) -> None:
