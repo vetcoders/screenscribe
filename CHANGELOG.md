@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Internal: bandit pre-commit hook runs from the project environment.** The
+  remote `PyCQA/bandit` hook's pbr-based build ran `git describe` against our
+  tags from inside git hooks and broke on the non-PEP440 recovery tag; the
+  hook is now `repo: local` and calls the same `uv run bandit` used by
+  `make verify`.
+
 ## [0.1.19] - 2026-08-23
 
 - **Security: provider endpoints are classified by canonical DNS host boundaries.**
