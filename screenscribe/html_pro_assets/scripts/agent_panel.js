@@ -20,6 +20,7 @@
         sheet: false,
         history: [],
         previousResponseId: null,
+        previousResponseIdentity: null,
         streaming: false,
         drag: null,
         playerObserver: null,
@@ -32,6 +33,35 @@
             return fn(key, args);
         }
         return key;
+    }
+
+    function clearResponseCursor() {
+        state.previousResponseId = null;
+        state.previousResponseIdentity = null;
+    }
+
+    function acceptDoneCursor(data, previousIdentity) {
+        var payload = data && typeof data === 'object' ? data : {};
+        var responseId = typeof payload.response_id === 'string' ? payload.response_id.trim() : '';
+        var provider = typeof payload.provider === 'string' ? payload.provider.trim() : '';
+        var protocol = typeof payload.protocol === 'string' ? payload.protocol.trim() : '';
+        var host = typeof payload.host === 'string' ? payload.host.trim().toLowerCase() : '';
+        if (!responseId || provider !== 'primary' || protocol !== 'responses' || !host) {
+            clearResponseCursor();
+            return false;
+        }
+        if (previousIdentity && (
+            previousIdentity.provider !== provider
+            || previousIdentity.protocol !== protocol
+            || previousIdentity.host !== host
+        )) {
+            clearResponseCursor();
+            return false;
+        }
+        clearResponseCursor();
+        state.previousResponseId = responseId;
+        state.previousResponseIdentity = { provider: provider, protocol: protocol, host: host };
+        return true;
     }
 
     function storageKey() {
@@ -269,6 +299,14 @@
         return line;
     }
 
+    function recordReviewApplied(explain) {
+        var message = 'review_applied' + (explain ? ': ' + explain : '');
+        var last = state.history.length ? state.history[state.history.length - 1] : null;
+        if (!last || last.role !== 'user' || last.content !== message) {
+            state.history.push({ role: 'user', content: message });
+        }
+    }
+
     function attachRetry(row, retryFn) {
         if (!row) return;
         var btn = el('button', 'ss-agent-retry', { type: 'button' });
@@ -293,7 +331,7 @@
         return saveFn();
     }
 
-    async function applyOpsAndSave(ops, explain) {
+    async function applyOpsAndSave(ops, explain, userInstruction) {
         if (isOffline()) {
             appendSystemLine(tx('review.agentPatchOffline'), 'ss-agent-msg-warn');
             return { ok: false, offline: true };
@@ -303,7 +341,7 @@
             appendSystemLine(tx('review.agentPatchSaveFailed', { message: 'applyReviewPatch' }), 'ss-agent-msg-error');
             return { ok: false };
         }
-        var results = await host.applyReviewPatch(ops);
+        var results = await host.applyReviewPatch(ops, userInstruction || '');
         var unknown = (results || []).filter(function (row) { return row && row.unknown; });
         unknown.forEach(function (row) {
             appendSystemLine(tx('review.agentPatchUnknown', { op: row.op || '' }));
@@ -319,6 +357,7 @@
         var saved = await saveAfterPatch();
         if (saved && saved.ok) {
             appendSystemLine(confirmationLine(explain), 'ss-agent-msg-ok');
+            recordReviewApplied(explain);
             return { ok: true, applied: applied.length, saved: true, results: results };
         }
         var message = (saved && saved.message) || tx('review.agentPatchSaveFailed', { message: '' });
@@ -338,6 +377,7 @@
         var saved = await saveAfterPatch();
         if (saved && saved.ok) {
             appendSystemLine(confirmationLine(explain), 'ss-agent-msg-ok');
+            recordReviewApplied(explain);
             return saved;
         }
         var message = (saved && saved.message) || '';
@@ -349,7 +389,7 @@
         return saved;
     }
 
-    function renderPlanCard(plan) {
+    function renderPlanCard(plan, userInstruction) {
         var log = root.document.getElementById('ss-agent-log');
         if (!log) return null;
         var ops = Array.isArray(plan.ops) ? plan.ops : [];
@@ -391,13 +431,13 @@
             Promise.resolve(applyOpsAndSave(selected, tx('review.agentPlanApplied', {
                 applied: selected.length,
                 total: ops.length,
-            }))).then(function () {
+            }), userInstruction)).then(function (result) {
+                if (!result || !result.ok) return;
                 var summary = tx('review.agentPlanApplied', {
-                    applied: selected.length,
+                    applied: result.applied || 0,
                     total: ops.length,
                 });
                 appendMessage('user', summary);
-                state.history.push({ role: 'user', content: summary });
             }).finally(function () {
                 applyBtn.disabled = false;
                 cancelBtn.disabled = false;
@@ -416,7 +456,7 @@
         return card;
     }
 
-    async function ingestToolResult(name, result, seen) {
+    async function ingestToolResult(name, result, seen, userInstruction) {
         if (result == null) return;
         var payload = result;
         if (typeof payload === 'string') {
@@ -435,17 +475,19 @@
             return;
         }
         if (payload.type === 'review_plan') {
-            renderPlanCard(payload);
+            renderPlanCard(payload, userInstruction);
             return;
         }
         if (payload.type === 'review_patch') {
-            await applyOpsAndSave(payload.ops || [], payload.explain || '');
+            await applyOpsAndSave(payload.ops || [], payload.explain || '', userInstruction);
         }
     }
 
     function isOffline() {
         try {
             if (root.location && root.location.protocol === 'file:') return true;
+            var body = root.document && root.document.body;
+            if (body && body.dataset && body.dataset.staticDemo === 'true') return true;
         } catch (_err) { /* ignore */ }
         return false;
     }
@@ -693,10 +735,11 @@
                 var chunk = await reader.read();
                 if (chunk.done) break;
                 buffer += decoder.decode(chunk.value, { stream: true });
-                var idx;
-                while ((idx = buffer.indexOf('\n\n')) !== -1) {
+                var delimiter;
+                while ((delimiter = /\r?\n\r?\n/.exec(buffer)) !== null) {
+                    var idx = delimiter.index;
                     var block = buffer.slice(0, idx);
-                    buffer = buffer.slice(idx + 2);
+                    buffer = buffer.slice(idx + delimiter[0].length);
                     if (block.trim()) await onEvent(parseSseBlock(block));
                 }
             }
@@ -728,6 +771,15 @@
         var assembled = '';
         var errored = false;
         var seenToolResults = new Set();
+        var requestCursor = state.previousResponseId;
+        var requestIdentity = state.previousResponseIdentity;
+        if (!requestIdentity || !requestCursor) {
+            requestCursor = null;
+            requestIdentity = null;
+        }
+        // A cursor is reusable only after this turn produces a complete, identified
+        // primary Responses `done`. History remains authoritative across a cleared cursor.
+        clearResponseCursor();
         try {
             var response = await root.fetch(STREAM_URL, {
                 method: 'POST',
@@ -738,17 +790,21 @@
                 body: JSON.stringify({
                     message: message,
                     history: state.history.slice(0, -1),
-                    previous_response_id: state.previousResponseId,
+                    previous_response_id: requestCursor,
+                    previous_response_provider: requestIdentity && requestIdentity.provider,
+                    previous_response_protocol: requestIdentity && requestIdentity.protocol,
+                    previous_response_host: requestIdentity && requestIdentity.host,
                 }),
             });
-            if (!response || !response.ok) {
-                var fallback = tx('review.agentOffline');
-                paintAssistantError(assistantRow, fallback);
-                var notice = root.document.getElementById('ss-agent-offline');
-                if (notice && /screenscribe serve/i.test(String(fallback))) {
-                    notice.hidden = false;
-                    notice.textContent = fallback;
-                }
+            if (!response) {
+                showOfflineNotice();
+                paintAssistantError(assistantRow, tx('review.agentOffline'));
+                state.streaming = false;
+                return true;
+            }
+            if (!response.ok) {
+                var status = Number.isFinite(Number(response.status)) ? String(response.status) : '?';
+                paintAssistantError(assistantRow, tx('review.agentRequestFailed', { status: status }));
                 state.streaming = false;
                 return true;
             }
@@ -766,14 +822,14 @@
                     await ingestToolResult(
                         evt.data && evt.data.name,
                         evt.data && evt.data.result,
-                        seenToolResults
+                        seenToolResults,
+                        message
                     );
                 } else if (evt.event === 'done') {
-                    if (evt.data && evt.data.response_id) {
-                        state.previousResponseId = evt.data.response_id;
-                    }
+                    acceptDoneCursor(evt.data, requestIdentity);
                 } else if (evt.event === 'error') {
                     errored = true;
+                    clearResponseCursor();
                     paintAssistantError(
                         assistantRow,
                         (evt.data && evt.data.message) || tx('review.agentOffline')
@@ -786,6 +842,7 @@
                 removeEmptyAssistant(assistantRow);
             }
         } catch (_err) {
+            clearResponseCursor();
             showOfflineNotice();
             if (assistantRow && !assembled) {
                 paintAssistantError(assistantRow, tx('review.agentOffline'));
@@ -891,12 +948,21 @@
         header.addEventListener('mousedown', startDrag);
         header.addEventListener('touchstart', startDrag);
 
-        var log = el('div', 'ss-agent-log', { id: 'ss-agent-log' });
+        var log = el('div', 'ss-agent-log', {
+            id: 'ss-agent-log',
+            role: 'log',
+            'aria-live': 'polite',
+            'aria-relevant': 'additions text',
+        });
         var empty = el('p', 'ss-agent-empty', { 'data-i18n': 'agentEmpty' });
         empty.textContent = t('review.agentEmpty');
         log.appendChild(empty);
 
-        var offline = el('p', 'ss-agent-offline', { id: 'ss-agent-offline', hidden: 'hidden' });
+        var offline = el('p', 'ss-agent-offline', {
+            id: 'ss-agent-offline',
+            hidden: 'hidden',
+            'data-i18n': 'agentOffline',
+        });
         offline.textContent = t('review.agentOffline');
 
         var form = el('form', 'ss-agent-form', { id: 'ss-agent-form' });
@@ -904,6 +970,8 @@
             id: 'ss-agent-input',
             rows: '2',
             'data-i18n': 'agentPlaceholder',
+            'aria-label': tx('review.agentPlaceholder'),
+            'data-i18n-attr': 'aria-label:agentPlaceholder',
         });
         input.placeholder = tx('review.agentPlaceholder');
         var sendBtn = el('button', 'ss-agent-send', { type: 'submit', 'data-i18n': 'agentSend' });
@@ -992,7 +1060,7 @@
         init: init,
         getState: function () { return state; },
     };
-    root.ScreenScribeAgentPanel = api;
+    root.screenscribeAgentPanel = api;
 
     if (!root.__screenscribeAgentPanelSkipInit && root.document) {
         if (root.document.readyState === 'loading' && root.document.addEventListener) {
