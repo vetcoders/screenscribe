@@ -287,3 +287,45 @@ def test_manifest_manual_frame_not_analyzed_status() -> None:
             throw new Error('un-annotated manual frame should expose empty annotations list: ' + JSON.stringify(mf));
         """,
     )
+
+
+def test_zip_reviewed_manual_frame_paths_are_portable_and_exist() -> None:
+    """Bundled reviewed JSON never carries a source-workspace frame_path."""
+    frames = [
+        {
+            "marker_id": "with-image",
+            "timestamp": 5.0,
+            "timestamp_formatted": "00:05",
+            "notes": "portable",
+            "frame_path": "manual_frames/durable-server-id.jpg",
+            "frameDataUrl": "data:image/png;base64,QUJD",
+        },
+        {
+            "marker_id": "without-image",
+            "timestamp": 6.0,
+            "timestamp_formatted": "00:06",
+            "notes": "missing pixels",
+            "frame_path": "manual_frames/dangling-server-id.jpg",
+        },
+    ]
+    _run_manifest(
+        f"reportState.manualFrames = {json.dumps(frames)};"
+        " reportState.findings = {}; reportState.merges = [];",
+        """
+        const reviewed = JSON.parse(files['report_reviewed_demo.json'].data);
+        const withImage = reviewed.manual_frames.find((frame) => frame.marker_id === 'with-image');
+        const withoutImage = reviewed.manual_frames.find((frame) => frame.marker_id === 'without-image');
+        if (withImage.frame_path !== 'manual_frames/demo_manual_00-05.png')
+            throw new Error('portable frame_path mismatch: ' + JSON.stringify(withImage));
+        if (withImage.screenshot_file !== withImage.frame_path)
+            throw new Error('frame_path and screenshot_file disagree: ' + JSON.stringify(withImage));
+        if (!(withImage.frame_path in files))
+            throw new Error('nonempty frame_path has no ZIP member: ' + withImage.frame_path);
+        if ('frame_path' in withoutImage)
+            throw new Error('path without bundled pixels stayed dangling: ' + JSON.stringify(withoutImage));
+        for (const frame of reviewed.manual_frames) {
+            if (frame.frame_path && !(frame.frame_path in files))
+                throw new Error('dangling frame_path: ' + frame.frame_path);
+        }
+        """,
+    )

@@ -768,6 +768,37 @@ def test_f3_local_draft_reload_enriches_manual_frame_image_from_server() -> None
     )
 
 
+def test_f3_enrichment_adds_durable_path_without_replacing_live_pixels() -> None:
+    """An old live tab keeps its pixels but learns the server's durable frame_path."""
+    _run_review_app_smoke(
+        """
+        renderManualFrames = () => {};
+        reportState.manualFrames = [{
+            marker_id: 'm1',
+            timestamp: 5,
+            frameDataUrl: 'data:image/jpeg;base64,LIVE',
+            notes: 'local',
+        }];
+        const changed = enrichManualFrameImagesFromServerState({
+            manualFrames: [{
+                marker_id: 'm1',
+                frame_path: 'manual_frames/m1.jpg',
+                frameDataUrl: 'data:image/jpeg;base64,DISK',
+            }],
+        });
+        const frame = reportState.manualFrames[0];
+        if (!changed || frame.frame_path !== 'manual_frames/m1.jpg') {
+            console.error('durable path not enriched: ' + JSON.stringify(frame));
+            process.exitCode = 1;
+        }
+        if (frame.frameDataUrl !== 'data:image/jpeg;base64,LIVE') {
+            console.error('server enrichment replaced live pixels: ' + frame.frameDataUrl);
+            process.exitCode = 1;
+        }
+        """
+    )
+
+
 def test_f4_restore_uses_newer_sync_state_over_stale_draft() -> None:
     """When draft+sync both exist, the fresher savedAt envelope wins."""
     _run_review_app_smoke(

@@ -125,6 +125,12 @@
   top-level instructions alongside a response cursor, so its agent uses full
   history without `previous_response_id`, including output items/tool results
   on tool continuations. Other Responses providers keep bound stateful cursors.
+- **Fixed: manual captures survive a server restart and another save.** The
+  browser preserves the image path even while it has live pixels, and a fresh
+  server restores disk-backed markers/results before saving. Legacy captures
+  recover only their exact JPEG/PNG filename within `manual_frames/`; startup
+  does not rewrite JSON. Persisted response IDs remain evidence and do not
+  become a shared conversation cursor.
 - **Fixed: signed-in xAI setup can use its account bearer without a pasted key.**
   API-key setup remains available through the same wizard.
 - **Fixed: TTS and live STT account access follows the actual destination.**
