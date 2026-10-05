@@ -146,6 +146,10 @@
   Whisper-family models keep `verbose_json` and their real segment timing; any
   other 400 still fails loudly.
 
+- **Fixed: model-validation messages redact provider-supplied URLs.** Both
+  streaming failure bodies and model-unavailable errors remove URL credentials
+  and query values; validation warnings also escape Rich markup.
+
 - **Fixed: `review -o <existing folder>` no longer mistakes an ordinary folder
   for a previous review.** A folder is a previous review only when it holds a
   `.screenscribe_cache/` checkpoint or this video's own `<video>_report.*`
@@ -165,6 +169,9 @@
   a screenscribe preprocess bundle. Running out of versions and failing to
   write a bundle file (permission denied, disk full) also print an "Output
   Directory Error" instead of a traceback; partial files are left in place.
+  Existing empty bundle/version paths are treated as occupied because another
+  live process may have claimed them; after a lost `mkdir` race, preprocess
+  reselects a missing slot instead of sharing the winner's directory.
   The output folder is reserved and checked for writability before audio
   extraction and transcription, so folder creation, reservation, writability
   and version-limit errors stop before any STT call; a bundle write failure
@@ -172,6 +179,9 @@
 - **Fixed: `review --estimate` is read-only.** It prints the time table before
   any output-folder handling, so it no longer creates an empty output directory,
   shows the rerun prompt, or refuses a `--force` target.
+- **Hardened: review ownership markers never follow symlinks.** Report files and
+  `.screenscribe_cache/` prove ownership only as real entries, so `--force`
+  cannot write through a foreign marker symlink into its target.
 - **Fixed: an output directory that cannot be created is a clear error.**
   Permission denied, read-only volumes and file-in-the-way paths now print an
   "Output Directory Error" with the path and reason and exit with code 1,
@@ -179,14 +189,15 @@
 - **Fixed: `review` never writes into a folder screenscribe does not own.** An
   existing file or non-empty non-review folder at `<video>_review` is skipped
   (the next free `_2`, `_3`, … is used, without the overwrite/resume prompt),
-  a version slot is used only when missing or empty, and running out of
+  a version slot is used only when missing (an existing empty directory may be
+  another process's live claim and is skipped), and running out of
   versions prints an "Output Directory Error" instead of a traceback.
   `--force` refuses (exit 1, nothing changed) when the target is a file or a
   non-empty folder that is not a screenscribe review, and a checkpoint cache it
   cannot remove is reported as an error instead of a traceback. The output
   folder is reserved right before use (created exclusively, re-checked, and
-  probed for writability), so a slot taken in the meantime or a read-only
-  folder stops with an error instead of being written into or crashing.
+  reselected after a lost `mkdir` race), so a slot taken in the meantime or a
+  read-only folder stops with an error instead of being written into or crashing.
 - **Fixed: semantic pre-filter failures name the real cause.** Provider error
   events inside a 200 response stream (`error`, `response.failed`,
   `response.incomplete`) are captured and shown with their message and code
@@ -226,7 +237,6 @@
   an hour. Non-streaming summary and merge calls also treat a 200 response with
   status `failed` or `incomplete` as a failure (local summary / merge skipped)
   instead of using its partial text.
-
 
 ## [0.1.19] - 2026-08-23
 
