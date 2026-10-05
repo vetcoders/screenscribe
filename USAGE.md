@@ -885,6 +885,11 @@ path. `screenshot_annotated` references a bundled annotated image when present.
 Source-report image paths are never carried into this ZIP JSON; when no image
 is bundled, its image-path fields are omitted. The standalone JSON export
 retains its existing source-report reference behavior.
+Auto-merged evidence in `merged_frames` is bundled separately with its identity,
+timestamp and narration preserved in reviewed JSON and the manifest. Its image
+fields also reference actual archive members; embedded base64 and inherited
+source paths are removed. Original image filenames use the data URL's media
+type (for example, PNG stays `.png`), without re-encoding the image bytes.
 
 Narration and reviewer notes are the source of user intent. Later corrections,
 scope limits and retractions apply even when they occur outside a finding's
