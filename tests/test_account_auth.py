@@ -35,6 +35,7 @@ from screenscribe.account_auth import (
     resolve_bearer,
     store_account_tokens,
 )
+from screenscribe.account_auth import device_code as device_code_module
 from screenscribe.account_auth.device_code import (
     XAI_DEVICE_CODE_GRANT_TYPE,
     complete_device_code_login,
@@ -483,6 +484,34 @@ def test_config_getters_fall_back_to_xai_account_only_on_api_x_ai() -> None:
     assert config.get_vision_api_key() == "generic"
 
 
+@pytest.mark.parametrize("service", ["tts", "stt_live"])
+@pytest.mark.parametrize("destination", ["xai", "custom", "explicit"])
+def test_account_bearer_follows_actual_auxiliary_service_destination(
+    service: str, destination: str
+) -> None:
+    store_account_tokens("xai", AccountTokens.from_token_response({"access_token": "test-account"}))
+    config = ScreenScribeConfig.provider_preset("xai", "")
+    if destination != "xai":
+        if service == "tts":
+            config.tts_endpoint = "https://other.example/v1/tts"
+        else:
+            config.stt_live_endpoint = "wss://other.example/stt"
+    if destination == "explicit":
+        if service == "tts":
+            config.tts_api_key = "explicit-fixture"  # pragma: allowlist secret
+        else:
+            config.stt_api_key = "explicit-fixture"  # pragma: allowlist secret
+    credential = getattr(config, f"get_{service}_api_key")()
+    assert (
+        credential
+        == {
+            "xai": "test-account",
+            "custom": "",
+            "explicit": "explicit-fixture",
+        }[destination]
+    )
+
+
 def test_config_openai_account_warns_once_and_returns_no_key() -> None:
     store_account_tokens("openai", AccountTokens(access_token="chatgpt-token"))
     config = ScreenScribeConfig.provider_preset("openai", "")
@@ -504,3 +533,28 @@ def test_config_default_libraxis_never_reads_account_store() -> None:
     config = ScreenScribeConfig()
     assert config.get_stt_api_key() == ""
     assert config.configuration_status() == "INCOMPLETE - API key required"
+
+
+def test_device_code_transport_error_redacts_override_url() -> None:
+    url = (
+        "https://operator:password@auth.example.test/oauth2/device/code"  # pragma: allowlist secret
+        "?key=supersecret&tenant=clinic"
+    )
+
+    def fail(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"could not connect to {request.url}", request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(fail)) as client:
+        with pytest.raises(AccountAuthError) as exc_info:
+            device_code_module._post(client, url)
+
+    message = str(exc_info.value)
+    assert exc_info.value.kind == "http"
+    assert "ConnectError" in message
+    assert "auth.example.test/oauth2/device/code" in message
+    assert "operator" not in message
+    assert "password" not in message
+    assert "supersecret" not in message
+    assert "clinic" not in message
+    assert "key=***" in message
+    assert "tenant=***" in message

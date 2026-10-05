@@ -363,8 +363,10 @@ class ScreenScribeConfig:
         return resolution.bearer if resolution.usable else ""
 
     def get_tts_api_key(self) -> str:
-        """API key for TTS: explicit TTS key, else the STT key, else the generic key."""
-        return self.tts_api_key or self.get_stt_api_key()
+        """Explicit key fallback, or account bearer for the actual TTS host."""
+        return self._key_or_account_bearer(
+            self.tts_api_key or self.stt_api_key or self.api_key, self.get_tts_endpoint()
+        )
 
     def get_tts_endpoint(self) -> str:
         """TTS endpoint: explicit, else xAI's when the STT provider is xAI, else empty."""
@@ -384,6 +386,12 @@ class ScreenScribeConfig:
         if provider == "libraxis":
             return LIBRAXIS_STT_LIVE_ENDPOINT
         return ""
+
+    def get_stt_live_api_key(self) -> str:
+        """Resolve account access against the actual WebSocket destination."""
+        return self._key_or_account_bearer(
+            self.stt_api_key or self.api_key, self.get_stt_live_endpoint()
+        )
 
     def has_stt_fallback(self) -> bool:
         """True when a complete, opt-in STT fallback endpoint is configured."""

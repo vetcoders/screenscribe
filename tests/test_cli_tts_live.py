@@ -9,11 +9,37 @@ import pytest
 from typer.testing import CliRunner
 
 import screenscribe.cli as cli
+from screenscribe.account_auth import AccountTokens, store_account_tokens
 from screenscribe.cli import app
 from screenscribe.config import ScreenScribeConfig
 from screenscribe.stt_stream import TranscriptEvent
 
 runner = CliRunner()
+
+
+@pytest.mark.parametrize("service", ["tts", "stt_live"])
+def test_custom_auxiliary_endpoint_never_receives_xai_account_bearer(
+    service: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    store_account_tokens(
+        "xai", AccountTokens.from_token_response({"access_token": "account-bearer"})
+    )
+    config = ScreenScribeConfig.provider_preset("xai", "")
+    _use_config(monkeypatch, config)
+    monkeypatch.setattr(cli, "synthesize_speech_xai", lambda *a, **k: pytest.fail("no TTS request"))
+    monkeypatch.setattr(
+        cli, "stream_client_for_endpoint", lambda *a, **k: pytest.fail("no WS request")
+    )
+    if service == "tts":
+        config.tts_endpoint = "https://other.example/v1/tts"
+        args = ["tts", "test", "--out", str(tmp_path / "out.mp3")]
+    else:
+        config.stt_live_endpoint = "wss://other.example/stt"
+        args = ["transcribe", "--live"]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1, result.output
+    assert "account-bearer" not in result.output
 
 
 def _use_config(monkeypatch: pytest.MonkeyPatch, config: ScreenScribeConfig) -> None:
@@ -140,6 +166,23 @@ def test_transcribe_live_streams_stdin_pcm_and_prints_lines(
     assert "hel" in result.output
     assert "hello there" in result.output
     assert "xai-k" not in result.output
+
+
+def test_live_stt_status_redacts_custom_websocket_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = ScreenScribeConfig.provider_preset("xai", "xai-" + "fixture")
+    config.stt_live_endpoint = "wss://user:fixture-password@other.example/stt?key=fixture-query#fixture-fragment"  # pragma: allowlist secret
+    _use_config(monkeypatch, config)
+    record: dict[str, Any] = {}
+    monkeypatch.setattr(
+        cli, "stream_client_for_endpoint", lambda endpoint, **kw: _FakeStream([], record)
+    )
+    result = runner.invoke(app, ["transcribe", "--live"], input=b"")
+    assert result.exit_code == 0, result.output
+    assert "other.example/stt?key=***" in result.output
+    for value in ("fixture-password", "fixture-query", "fixture-fragment"):
+        assert value not in result.output
 
 
 def test_transcribe_live_error_event_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
