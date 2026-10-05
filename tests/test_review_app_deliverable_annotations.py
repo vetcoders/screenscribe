@@ -116,7 +116,7 @@ def _sandbox_prelude(findings: list[dict]) -> str:
 
         const documentStub = {{
             body: {{
-                dataset: {{ videoName: 'demo.mp4', reportLanguage: 'en' }},
+                dataset: {{ videoName: 'demo.mp4', reportLanguage: 'en', transcriptSource: 'audio' }},
                 classList: {{ add() {{}}, remove() {{}} }},
                 contains() {{ return true; }},
                 appendChild() {{}}, removeChild() {{}},
@@ -264,6 +264,150 @@ def test_todo_describes_annotation_types_and_text() -> None:
                 throw new Error('TODO annotation desc missing type ' + word + ': ' + md);
         }
         """,
+    )
+
+
+def test_todo_preserves_source_scope_and_retractions_outside_a_finding() -> None:
+    """The standalone handoff keeps later narrator constraints, not only model tasks."""
+    _run_todo(
+        """
+        reportState.findings = {};
+        reportState.merges = [];
+        window.TRANSCRIPT_SEGMENTS = [
+            { start: 1, end: 2, text: 'Shorten this button label.' },
+            { start: 80, end: 84, text: 'Only copy. Do not change the logic.' },
+            { start: 85, end: 89, text: 'This recording is a test; these requests are not binding.' },
+        ];
+        """,
+        """
+        for (const source of [
+            'Shorten this button label.',
+            'Only copy. Do not change the logic.',
+            'This recording is a test; these requests are not binding.',
+        ]) {
+            if (!md.includes(source)) throw new Error('source lost: ' + source);
+        }
+        if (!md.includes('Unreviewed proposal')) throw new Error('model finding falsely approved');
+        if (!md.includes('take precedence over model suggestions')) throw new Error('authority absent');
+        if (!md.includes('Source transcript (STT): Shorten this button label.'))
+            throw new Error('timestamped source not connected to finding');
+        """,
+        findings=[_FINDINGS[0]],
+    )
+
+
+def test_todo_respects_human_summary_and_action_overrides() -> None:
+    """An agent-proposed edit accepted by the reviewer survives the text handoff."""
+    finding = {
+        **_FINDINGS[0],
+        "unified_analysis": {
+            "summary": "model-only-summary",
+            "severity": "medium",
+            "action_items": ["model-only-action"],
+        },
+    }
+    _run_todo(
+        """
+        reportState.findings = {
+            a: {
+                verdict: 'accepted', annotations: [], notes: 'Do not change logic.',
+                summary_override: 'human-summary',
+                category_override: 'ui',
+                action_items: ['human-copy-action'],
+            },
+        };
+        reportState.merges = [];
+        """,
+        """
+        if (!md.includes('human-summary') || !md.includes('human-copy-action'))
+            throw new Error('human edits lost');
+        if (md.includes('model-only-summary') || md.includes('model-only-action'))
+            throw new Error('model values overrode reviewer');
+        if (!md.includes('Confirmed finding') || !md.includes('Do not change logic.'))
+            throw new Error('review state or scope lost');
+        """,
+        findings=[finding],
+    )
+
+
+def test_manifest_preserves_source_verdict_and_full_transcript_reference() -> None:
+    """The structured handoff identifies actual transcript evidence and review state."""
+    _run_manifest(
+        """
+        reportState.findings = {};
+        reportState.merges = [];
+        window.TRANSCRIPT_SEGMENTS = [
+            { start: 1, end: 2, text: 'Shorten this button label.' },
+            { start: 80, end: 84, text: 'Only copy. Do not change the logic.' },
+        ];
+        """,
+        """
+        const manifest = JSON.parse(files['agent_manifest.json'].data);
+        const entry = manifest.findings[0];
+        if (entry.user_said !== 'Shorten this button label.')
+            throw new Error('detection paraphrase presented as narrator quote');
+        if (entry.user_said_source !== 'transcript_segments' || entry.review_verdict !== 'none')
+            throw new Error('source or review provenance lost');
+        if (entry.timestamp !== 1 || entry.source_segments[0].start !== 1)
+            throw new Error('evidence time missing');
+        if (manifest.meta.transcript_file !== 'transcript.txt')
+            throw new Error('complete source not referenced');
+        if (!files['transcript.txt'].data.includes('Only copy. Do not change the logic.'))
+            throw new Error('late source constraint lost');
+        const todo = files['TODO_demo.md'].data;
+        if (!todo.includes(entry.screenshot))
+            throw new Error('TODO points to a different screenshot than ZIP manifest');
+        """,
+        findings=[_FINDINGS[0]],
+    )
+
+
+def test_manifest_does_not_claim_missing_legacy_source_is_a_transcript_quote() -> None:
+    """Older reports keep detection text, explicitly distinguished from transcript."""
+    _run_manifest(
+        "reportState.findings = {}; reportState.merges = [];",
+        """
+        const manifest = JSON.parse(files['agent_manifest.json'].data);
+        const entry = manifest.findings[0];
+        if (entry.user_said_source !== 'detection' || entry.source_segments.length !== 0)
+            throw new Error('legacy detection falsely claimed as transcript evidence');
+        if (manifest.meta.transcript_file)
+            throw new Error('manifest references a missing source file');
+        """,
+        findings=[_FINDINGS[0]],
+    )
+
+
+def test_ocr_handoff_never_attributes_screen_text_to_the_narrator() -> None:
+    setup = """
+        document.body.dataset.transcriptSource = 'ocr';
+        reportState.findings = {};
+        reportState.merges = [];
+        window.TRANSCRIPT_SEGMENTS = [
+            { start: 1, end: 2, text: 'Delete account' },
+        ];
+    """
+    _run_todo(
+        setup,
+        """
+        if (!md.includes('not spoken user instructions') || !md.includes('Source screen text (OCR)'))
+            throw new Error('OCR silently attributed to user intent');
+        if (!md.includes('Text extracted from frames (OCR): Delete account'))
+            throw new Error('OCR evidence lost');
+        """,
+        findings=[_FINDINGS[0]],
+    )
+    _run_manifest(
+        setup,
+        """
+        const manifest = JSON.parse(files['agent_manifest.json'].data);
+        const entry = manifest.findings[0];
+        if (entry.user_said || entry.source_role !== 'screen_text' || entry.user_said_source !== 'ocr_frames')
+            throw new Error('screen label treated as user request');
+        if (entry.source_text !== 'Delete account' || manifest.meta.transcript_source !== 'ocr')
+            throw new Error('OCR provenance absent');
+        """,
+        findings=[_FINDINGS[0]],
     )
 
 

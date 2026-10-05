@@ -17,6 +17,7 @@ SCRIPTS = REPO_ROOT / "screenscribe/html_pro_assets/scripts"
 I18N_JS = SCRIPTS / "i18n.js"
 AGENT_PANEL_JS = SCRIPTS / "agent_panel.js"
 REVIEW_APP_JS = SCRIPTS / "review_app.js"
+AGENT_PANEL_CSS = REPO_ROOT / "screenscribe/html_pro_assets/styles/agent_panel.css"
 
 _CI_TRUE = {"1", "true", "yes", "on"}
 
@@ -235,6 +236,7 @@ const sandbox = {
     setTimeout,
     clearTimeout,
     TextDecoder,
+    TextEncoder,
     JSON,
     Math,
     Date,
@@ -328,7 +330,7 @@ def test_toggle_and_persist() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             api.init();
             const rootEl = document.getElementById('ss-agent-root');
             const fab = document.getElementById('ss-agent-fab');
@@ -366,7 +368,7 @@ def test_sse_and_tools() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             const stream = [
                 'event: token',
                 'data: {"text":"Hello "}',
@@ -418,13 +420,43 @@ def test_sse_and_tools() -> None:
     assert "sse-tools:ok" in output
 
 
+def test_streaming_sse_accepts_crlf_delimiters() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const bytes = new TextEncoder().encode(
+                'event: token\\r\\ndata: {"text":"CRLF works"}\\r\\n\\r\\n'
+                + 'event: done\\r\\ndata: {}\\r\\n\\r\\n'
+            );
+            let reads = 0;
+            fetch = async () => ({
+                ok: true,
+                body: { getReader() { return { async read() {
+                    reads += 1;
+                    return reads === 1 ? { done: false, value: bytes } : { done: true };
+                } }; } },
+            });
+            window.fetch = fetch;
+            api.init();
+            await api.send('test CRLF');
+            const log = document.getElementById('ss-agent-log');
+            const text = (log.children || []).map((n) => n.textContent).join('|');
+            if (!/CRLF works/.test(text)) throw new Error('CRLF event was not emitted: ' + text);
+            process.stdout.write('sse-crlf:ok');
+            """
+        )
+    )
+    assert "sse-crlf:ok" in output
+
+
 def test_offline_mode() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
             location.protocol = 'file:';
             window.location.protocol = 'file:';
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             api.init();
             const beforeErrors = consoleCalls.error.length;
             await api.send('What is critical in this recording?');
@@ -433,7 +465,9 @@ def test_offline_mode() -> None:
             }
             const notice = document.getElementById('ss-agent-offline');
             const text = (notice && notice.textContent) || '';
-            if (!/screenscribe serve/.test(text)) throw new Error('offline copy: ' + text);
+            if (!/screenscribe review/.test(text) || !/screenscribe analyze/.test(text)) {
+                throw new Error('offline copy: ' + text);
+            }
             if (notice.hidden) throw new Error('offline notice should be visible');
             process.stdout.write('offline:ok');
             """
@@ -442,11 +476,31 @@ def test_offline_mode() -> None:
     assert "offline:ok" in output
 
 
+def test_static_demo_is_offline_even_over_http() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            document.body.dataset.staticDemo = 'true';
+            let fetches = 0;
+            fetch = async () => { fetches += 1; throw new Error('must stay offline'); };
+            window.fetch = fetch;
+            const api = screenscribeAgentPanel;
+            api.init();
+            if (!api.isOffline()) throw new Error('static demo not classified offline');
+            await api.send('do not post');
+            if (fetches !== 0) throw new Error('static demo attempted network: ' + fetches);
+            process.stdout.write('static-offline:ok');
+            """
+        )
+    )
+    assert "static-offline:ok" in output
+
+
 def test_geometry_beside_player_stays_in_viewport() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             const player = { left: 20, top: 80, right: 520, bottom: 400, width: 500, height: 320 };
             const viewport = { width: 1280, height: 800 };
             const placed = api.placeBesidePlayer(player, viewport, { width: 360, height: 480 });
@@ -485,18 +539,39 @@ def test_rendered_report_includes_agent_panel_assets() -> None:
         errors=[],
         language="en",
     )
-    assert "ScreenScribeAgentPanel" in html
+    assert "screenscribeAgentPanel" in html
     assert "ss-agent-fab" in html or "ss-agent-root" in html
     assert ".ss-agent-fab" in html
-    assert "Run `screenscribe serve` to chat about this report." in html
+    assert "screenscribe review" in html
+    assert "screenscribe analyze &lt;video&gt;" in html or "screenscribe analyze <video>" in html
     assert "cdnjs.cloudflare.com" not in html
+
+
+def test_agent_panel_runtime_builds_accessible_live_chat_controls() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            api.init();
+            const log = document.getElementById('ss-agent-log');
+            const input = document.getElementById('ss-agent-input');
+            const offline = document.getElementById('ss-agent-offline');
+            if (log.getAttribute('role') !== 'log') throw new Error('chat log role missing');
+            if (log.getAttribute('aria-live') !== 'polite') throw new Error('chat log live region missing');
+            if (!input.getAttribute('aria-label')) throw new Error('composer accessible name missing');
+            if (offline.getAttribute('data-i18n') !== 'agentOffline') throw new Error('offline notice not translatable');
+            process.stdout.write('a11y:ok');
+            """
+        )
+    )
+    assert "a11y:ok" in output
 
 
 def test_enter_sends_and_respects_ime_shift_and_whitespace() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             const fetches = [];
             fetch = async (url, opts) => {
                 fetches.push({ url, body: JSON.parse(opts.body) });
@@ -564,7 +639,7 @@ def test_error_turn_reuses_assistant_bubble() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             fetch = async () => ({
                 ok: true,
                 text: async () => 'event: error\\ndata: {"message":"egress deny: external provider blocked"}\\n\\n',
@@ -587,11 +662,127 @@ def test_error_turn_reuses_assistant_bubble() -> None:
     assert "error-bubble:ok" in output
 
 
+def test_cursor_identity_round_trips_then_fallback_clears_without_losing_history() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const bodies = [];
+            const replies = [
+                'event: token\\ndata: {"text":"primary answer"}\\n\\n'
+                    + 'event: done\\ndata: {"response_id":"resp-primary","provider":"primary","protocol":"responses","host":"api.x.ai"}\\n\\n',
+                'event: token\\ndata: {"text":"fallback answer"}\\n\\n'
+                    + 'event: done\\ndata: {"response_id":null,"provider":"fallback","protocol":"anthropic","host":"api.anthropic.com"}\\n\\n',
+                'event: token\\ndata: {"text":"fresh answer"}\\n\\n'
+                    + 'event: done\\ndata: {"response_id":"resp-fresh","provider":"primary","protocol":"responses","host":"api.x.ai"}\\n\\n',
+            ];
+            fetch = async (_url, opts) => {
+                bodies.push(JSON.parse(opts.body));
+                return { ok: true, text: async () => replies.shift() };
+            };
+            window.fetch = fetch;
+            api.init();
+
+            await api.send('first');
+            const firstCursor = api.getState();
+            if (firstCursor.previousResponseId !== 'resp-primary'
+                || firstCursor.previousResponseIdentity.host !== 'api.x.ai') {
+                throw new Error('primary cursor identity not retained: ' + JSON.stringify(firstCursor));
+            }
+
+            await api.send('second');
+            if (bodies[1].previous_response_id !== 'resp-primary'
+                || bodies[1].previous_response_provider !== 'primary'
+                || bodies[1].previous_response_protocol !== 'responses'
+                || bodies[1].previous_response_host !== 'api.x.ai') {
+                throw new Error('identity bundle missing from next request: ' + JSON.stringify(bodies[1]));
+            }
+            if (api.getState().previousResponseId !== null
+                || api.getState().previousResponseIdentity !== null) {
+                throw new Error('fallback cursor was retained');
+            }
+
+            await api.send('third');
+            if (bodies[2].previous_response_id !== null
+                || bodies[2].previous_response_provider !== null
+                || bodies[2].previous_response_protocol !== null
+                || bodies[2].previous_response_host !== null) {
+                throw new Error('cleared cursor leaked into fresh request: ' + JSON.stringify(bodies[2]));
+            }
+            const history = api.getState().history.map((item) => item.content).join('|');
+            for (const expected of ['first', 'primary answer', 'second', 'fallback answer', 'third', 'fresh answer']) {
+                if (!history.includes(expected)) throw new Error('history lost ' + expected + ': ' + history);
+            }
+            process.stdout.write('cursor-identity:ok');
+            """
+        )
+    )
+    assert "cursor-identity:ok" in output
+
+
+def test_legacy_done_provider_change_and_error_clear_cursor() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const cases = [
+                'event: done\\ndata: {"response_id":"legacy-no-identity"}\\n\\n',
+                'event: done\\ndata: {"response_id":"other-host","provider":"primary","protocol":"responses","host":"other.example"}\\n\\n',
+                'event: error\\ndata: {"message":"provider failed"}\\n\\n',
+            ];
+            fetch = async () => ({ ok: true, text: async () => cases.shift() });
+            window.fetch = fetch;
+            api.init();
+            for (const message of ['legacy', 'changed', 'errored']) {
+                const state = api.getState();
+                state.previousResponseId = 'seed';
+                state.previousResponseIdentity = {
+                    provider: 'primary', protocol: 'responses', host: 'api.x.ai'
+                };
+                await api.send(message);
+                if (state.previousResponseId !== null || state.previousResponseIdentity !== null) {
+                    throw new Error(message + ' retained a foreign/ambiguous cursor');
+                }
+            }
+            if (api.getState().history.filter((item) => item.role === 'user').length < 3) {
+                throw new Error('cursor clearing discarded history');
+            }
+            process.stdout.write('cursor-clear:ok');
+            """
+        )
+    )
+    assert "cursor-clear:ok" in output
+
+
+def test_http_failure_is_not_reported_as_offline() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            fetch = async () => ({ ok: false, status: 403 });
+            window.fetch = fetch;
+            api.init();
+            await api.send('forbidden');
+            const log = document.getElementById('ss-agent-log');
+            const error = (log.children || []).find((node) => String(node.className).includes('ss-agent-msg-error'));
+            if (!error || !/403/.test(error.textContent)) throw new Error('HTTP status missing: ' + (error && error.textContent));
+            if (/screenscribe review|screenscribe analyze/.test(error.textContent)) {
+                throw new Error('HTTP failure mislabeled offline: ' + error.textContent);
+            }
+            const notice = document.getElementById('ss-agent-offline');
+            if (!notice.hidden) throw new Error('HTTP failure opened offline notice');
+            process.stdout.write('http-error:ok');
+            """
+        )
+    )
+    assert "http-error:ok" in output
+
+
 def test_geometry_default_avoids_player_and_toolbar() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             api.init();
             api.setCollapsed(false);
             const rootEl = document.getElementById('ss-agent-root');
@@ -616,7 +807,7 @@ def test_geometry_discards_overlapping_restored_position() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             api.init();
             const key = [...localStorage._store.keys()][0] || (api.STORAGE_KEY + ':http://localhost/report.html');
             localStorage.setItem(key, JSON.stringify({ collapsed: false, left: 30, top: 90 }));
@@ -647,7 +838,7 @@ def test_geometry_recomputes_on_metadata_resize_and_player_rect() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             api.init();
             api.setCollapsed(false);
             const video = document.getElementById('videoPlayer');
@@ -709,7 +900,7 @@ def test_geometry_docks_sheet_when_no_clear_spot() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             const player = { left: 8, top: 8, right: 1272, bottom: 792, width: 1264, height: 784 };
             const placed = api.placeBesidePlayer(player, { width: 1280, height: 800 }, { width: 360, height: 480 });
             if (!placed.sheet) throw new Error('expected sheet when player fills viewport: ' + JSON.stringify(placed));
@@ -737,16 +928,27 @@ def test_geometry_docks_sheet_when_no_clear_spot() -> None:
     assert "geometry-sheet:ok" in output
 
 
+def test_mobile_sheet_is_stacked_and_viewport_width() -> None:
+    css = AGENT_PANEL_CSS.read_text(encoding="utf-8")
+    mobile = css.split("@media (max-width: 900px)", 1)[1]
+    assert ".ss-agent-root.ss-agent-sheet" in mobile
+    assert "position: relative" in mobile
+    assert "width: 100% !important" in mobile
+    assert "max-width: 100vw" in mobile
+
+
 def test_review_patch_applies_and_saves_once() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             const applied = [];
+            const instructions = [];
             const saves = [];
             window.__screenscribeAgentHost = {
-                applyReviewPatch(ops) {
+                applyReviewPatch(ops, instruction) {
                     applied.push(ops);
+                    instructions.push(instruction);
                     return ops.map((op) => ({ op: op.op, findingId: String(op.finding_id || ''), skipped: false }));
                 },
                 async saveReview() {
@@ -774,6 +976,9 @@ def test_review_patch_applies_and_saves_once() -> None:
             await api.send('zmień finding 3 na high');
             if (applied.length !== 1) throw new Error('expected one apply after SSE dedupe, got ' + applied.length);
             if (applied[0][0].severity !== 'high') throw new Error('severity');
+            if (instructions[0] !== 'zmień finding 3 na high') {
+                throw new Error('raw user instruction lost: ' + instructions[0]);
+            }
             if (saves.length !== 1) throw new Error('save once, got ' + saves.length);
             const log = document.getElementById('ss-agent-log');
             const text = (log.children || []).map((n) => n.textContent).join('|');
@@ -794,7 +999,7 @@ def test_review_patch_save_409_shows_retry_not_silent() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             let saveCalls = 0;
             window.__screenscribeAgentHost = {
                 applyReviewPatch(ops) {
@@ -832,11 +1037,13 @@ def test_review_plan_card_apply_selected_ops() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             const applied = [];
+            const instructions = [];
             window.__screenscribeAgentHost = {
-                applyReviewPatch(ops) {
+                applyReviewPatch(ops, instruction) {
                     applied.push(ops.slice());
+                    instructions.push(instruction);
                     return ops.map((op) => ({ op: op.op, findingId: String(op.finding_id || '') }));
                 },
                 async saveReview() { return { ok: true, status: 200 }; },
@@ -850,7 +1057,7 @@ def test_review_plan_card_apply_selected_ops() -> None:
                     { op: 'set_verdict', finding_id: '1', verdict: 'accepted' },
                 ],
                 rationale: ['raise severity', 'note', 'accept'],
-            });
+            }, 'popraw tylko finding 3');
             if (!card) throw new Error('plan card missing');
             const checks = card.querySelectorAll('.ss-agent-plan-check');
             if (checks.length !== 3) throw new Error('checkboxes: ' + checks.length);
@@ -861,14 +1068,17 @@ def test_review_plan_card_apply_selected_ops() -> None:
             await new Promise((resolve) => setTimeout(resolve, 30));
             if (applied.length !== 1) throw new Error('apply once, got ' + applied.length);
             if (applied[0].length !== 2) throw new Error('selected 2, got ' + applied[0].length);
+            if (instructions[0] !== 'popraw tylko finding 3') {
+                throw new Error('plan lost raw user instruction: ' + instructions[0]);
+            }
             const log = document.getElementById('ss-agent-log');
             const user = (log.children || []).find((n) => String(n.className).includes('ss-agent-msg-user'));
             if (!user || !/2/.test(user.textContent) || !/3/.test(user.textContent)) {
                 throw new Error('summary message: ' + (user && user.textContent));
             }
             const hist = api.getState().history;
-            if (!hist.some((m) => m.role === 'user' && /2/.test(m.content))) {
-                throw new Error('history missing plan summary');
+            if (!hist.some((m) => m.role === 'user' && /^review_applied:/.test(m.content))) {
+                throw new Error('history missing review_applied confirmation');
             }
             process.stdout.write('plan:ok');
             """
@@ -877,13 +1087,45 @@ def test_review_plan_card_apply_selected_ops() -> None:
     assert "plan:ok" in output
 
 
+def test_review_plan_does_not_confirm_or_update_history_when_save_fails() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            window.__screenscribeAgentHost = {
+                applyReviewPatch(ops) { return ops.map((op) => ({ op: op.op, findingId: '3' })); },
+                async saveReview() { return { ok: false, status: 409, message: 'stale generation' }; },
+            };
+            api.init();
+            const card = api.renderPlanCard({
+                type: 'review_plan',
+                ops: [{ op: 'set_severity', finding_id: '3', severity: 'high' }],
+                rationale: ['raise severity'],
+            });
+            card.querySelector('.ss-agent-plan-apply').click();
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const log = document.getElementById('ss-agent-log');
+            const userLines = (log.children || []).filter((n) => String(n.className).includes('ss-agent-msg-user'));
+            if (userLines.length) throw new Error('failed plan was confirmed: ' + userLines[0].textContent);
+            if (api.getState().history.some((m) => /1/.test(m.content || ''))) {
+                throw new Error('failed plan leaked confirmation into model history');
+            }
+            const error = (log.children || []).find((n) => String(n.className).includes('ss-agent-msg-error'));
+            if (!error) throw new Error('save failure was not shown');
+            process.stdout.write('plan-failure:ok');
+            """
+        )
+    )
+    assert "plan-failure:ok" in output
+
+
 def test_review_patch_offline_blocks_apply() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
             location.protocol = 'file:';
             window.location.protocol = 'file:';
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             let applied = 0;
             window.__screenscribeAgentHost = {
                 applyReviewPatch() { applied += 1; return []; },
@@ -894,7 +1136,7 @@ def test_review_patch_offline_blocks_apply() -> None:
             if (notice.hidden) throw new Error('offline notice hidden');
             const log = document.getElementById('ss-agent-log');
             const before = (log.children || []).map((n) => n.textContent).join('|');
-            if (!/cannot save agent edits|nie zapisze poprawek/.test(before)) {
+            if (!/cannot save (?:agent )?edits|nie zapisze poprawek/.test(before)) {
                 throw new Error('preemptive patch-offline copy missing: ' + before);
             }
             await api.ingestToolResult('set_severity', {
@@ -914,7 +1156,7 @@ def test_review_tool_error_and_unsupported_are_system_lines() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             let applied = 0;
             window.__screenscribeAgentHost = {
                 applyReviewPatch() { applied += 1; return []; },

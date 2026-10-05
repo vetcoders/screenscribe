@@ -249,6 +249,25 @@ def test_merge_summary_override_is_editable() -> None:
     )
 
 
+def test_agent_overrides_survive_merged_review_serialization() -> None:
+    """Agent-authored reviewer fields stay in human_review after a human merge."""
+    _run_merge(
+        """
+        reportState.findings.a.summary_override = 'Corrected by reviewer';
+        reportState.findings.a.category_override = 'ui';
+        reportState.findings.a.actionItems = 'Add regression test';
+        const data2 = buildReviewData();
+        const human = data2.findings.find((f) => f.id === 'a').human_review;
+        if (human.summary_override !== 'Corrected by reviewer')
+            throw new Error('merged summary_override lost: ' + JSON.stringify(human));
+        if (human.category_override !== 'ui')
+            throw new Error('merged category_override lost: ' + JSON.stringify(human));
+        if (human.action_items !== 'Add regression test')
+            throw new Error('merged action_items lost: ' + JSON.stringify(human));
+        """
+    )
+
+
 def test_merge_persists_member_review_snapshots_for_durable_unmerge() -> None:
     """Saved merge data retains each member's pre-merge reviewer state."""
     _run_merge(

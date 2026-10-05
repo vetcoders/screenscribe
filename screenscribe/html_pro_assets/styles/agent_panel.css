@@ -25,6 +25,24 @@ html.ss-agent-sheet .app-container {
     cursor: default;
 }
 
+@media (max-width: 900px) {
+    html.ss-agent-sheet .app-container {
+        right: auto;
+    }
+
+    /* The report is already a static single column at this breakpoint. Keep the
+       agent in that flow as a stacked panel so it cannot cover the player, and
+       fit viewports narrower than the desktop 360px sheet width. */
+    .ss-agent-root.ss-agent-sheet {
+        position: relative;
+        inset: auto;
+        width: 100% !important;
+        max-width: 100vw;
+        height: min(480px, 70vh);
+        margin-top: var(--space-md);
+    }
+}
+
 .ss-agent-root > * {
     pointer-events: auto;
 }

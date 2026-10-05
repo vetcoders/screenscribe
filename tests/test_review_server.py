@@ -985,7 +985,7 @@ def test_review_server_save_merges_human_review(
                 "id": 1,
                 "human_review": {
                     "verdict": "accepted",
-                    "notes": "real bug",
+                    "notes": "real bug\n\nUser chat request: Change only finding 1.",
                     "severity_override": None,
                 },
             },
@@ -1007,10 +1007,17 @@ def test_review_server_save_merges_human_review(
     human = saved["human_review"]
     assert human["reviewer"] == "alex"
     assert human["findings"]["1"]["verdict"] == "accepted"
+    assert human["findings"]["1"]["notes"].endswith("User chat request: Change only finding 1.")
     assert human["findings"]["2"]["verdict"] == "rejected"
     assert human["rejected_ids"] == [2]
     # The canonical findings list is untouched — rejection is a marker, not a deletion.
     assert len(saved["findings"]) == 2
+
+    reloaded = client.get("/api/review-state")
+    assert reloaded.status_code == 200
+    assert reloaded.json()["findings"]["1"]["notes"].endswith(
+        "User chat request: Change only finding 1."
+    )
 
 
 def test_review_server_reset_returns_to_generated_report_state(

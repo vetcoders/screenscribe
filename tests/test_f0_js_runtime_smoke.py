@@ -2032,9 +2032,11 @@ def _finding_card_stubs() -> str:
             firstChild: null,
             insertBefore(node) { this.firstChild = node; return node; },
         };
+        let summaryOverride = null;
         const summaryEl = {
-            querySelector() { return null; },
-            appendChild() {},
+            querySelector(sel) { return sel === '.ss-summary-override' ? summaryOverride : null; },
+            appendChild(node) { summaryOverride = node; node.parentNode = this; return node; },
+            removeChild(node) { if (summaryOverride === node) summaryOverride = null; return node; },
         };
         const article = {
             dataset: { findingId: '3', verdict: '' },
@@ -2074,6 +2076,7 @@ def _finding_card_stubs() -> str:
         window.__screenscribeHostSelect = select;
         window.__screenscribeHostTextarea = textarea;
         window.__screenscribeHostRadios = radios;
+        window.__screenscribeHostSummary = summaryEl;
         }
         """
     )
@@ -2100,7 +2103,7 @@ def test_f0_apply_review_patch_ops_paint_card() -> None:
                     category_override: 'ui',
                 }},
                 { op: 'nope_unknown', finding_id: '3' },
-            ]);
+            ], 'Zmień tylko finding 3, bez dopisywania nowych problemów.');
 
             const state = reportState.findings['3'];
             if (state.verdict !== 'accepted') {
@@ -2109,8 +2112,12 @@ def test_f0_apply_review_patch_ops_paint_card() -> None:
             if (state.severity !== 'high') {
                 console.error('severity: ' + state.severity); process.exitCode = 1;
             }
-            if (state.notes !== 'sprawdzić na Safari') {
+            if (!state.notes.startsWith('sprawdzić na Safari')
+                || !state.notes.includes('Zmień tylko finding 3, bez dopisywania nowych problemów.')) {
                 console.error('notes: ' + state.notes); process.exitCode = 1;
+            }
+            if ((state.notes.match(/Zmień tylko finding 3/g) || []).length !== 1) {
+                console.error('raw instruction duplicated: ' + state.notes); process.exitCode = 1;
             }
             if (state.actionItems !== 'otworzyć Safari') {
                 console.error('actionItems: ' + state.actionItems); process.exitCode = 1;
@@ -2124,11 +2131,21 @@ def test_f0_apply_review_patch_ops_paint_card() -> None:
             if (select.value !== 'high') {
                 console.error('dom severity: ' + select.value); process.exitCode = 1;
             }
-            if (textarea.value !== 'sprawdzić na Safari') {
+            if (!textarea.value.startsWith('sprawdzić na Safari')
+                || !textarea.value.includes('Zmień tylko finding 3')) {
                 console.error('dom notes: ' + textarea.value); process.exitCode = 1;
             }
             if (!radios[0].checked) {
                 console.error('accepted radio not checked'); process.exitCode = 1;
+            }
+            if (!window.__screenscribeHostSummary.querySelector('.ss-summary-override')) {
+                console.error('summary override was not painted'); process.exitCode = 1;
+            }
+            await applyReviewPatch([{ op: 'edit_finding', finding_id: '3', fields: {
+                summary_override: '', category_override: 'ui'
+            }}]);
+            if (window.__screenscribeHostSummary.querySelector('.ss-summary-override')) {
+                console.error('cleared summary override stayed visible'); process.exitCode = 1;
             }
             const payload = buildReviewData();
             const finding = (payload.findings || []).find((f) => String(f.id) === '3');
@@ -2136,8 +2153,11 @@ def test_f0_apply_review_patch_ops_paint_card() -> None:
                 if (finding.human_review.severity_override !== 'high') {
                     console.error('save payload severity'); process.exitCode = 1;
                 }
-                if (finding.human_review.summary_override !== 'Safari clip') {
+                if (finding.human_review.summary_override !== '') {
                     console.error('save payload summary_override'); process.exitCode = 1;
+                }
+                if (!finding.human_review.notes.includes('Zmień tylko finding 3')) {
+                    console.error('save payload lost raw instruction'); process.exitCode = 1;
                 }
             }
             if (!reportState.modified) {
@@ -2148,6 +2168,17 @@ def test_f0_apply_review_patch_ops_paint_card() -> None:
     )
 
 
+def test_f0_agent_finding_lookup_does_not_build_css_from_report_ids() -> None:
+    """Report finding ids are data, never raw CSS selector fragments."""
+    source = REVIEW_APP_JS.read_text(encoding="utf-8")
+    runtime = source[source.index("function showAgentFrame") :]
+    assert 'querySelectorAll(`input[name="verdict-${' not in source
+    assert 'querySelector(`.finding[data-finding-id="${' not in runtime
+    assert 'querySelector(`[data-finding-id="${' not in runtime
+    assert 'querySelector(`.notes-mic-status[data-finding-id="${' not in runtime
+    assert "dataset?.findingId" in runtime
+
+
 def test_f0_apply_review_patch_add_finding_local_and_merge_unsupported() -> None:
     _run_review_app_smoke(
         _finding_card_stubs()
@@ -2156,7 +2187,7 @@ def test_f0_apply_review_patch_add_finding_local_and_merge_unsupported() -> None
             const results = await applyReviewPatch([
                 { op: 'add_finding', timestamp: 12.5, summary: 'Safari overlay', severity: 'high', category: 'bug' },
                 { op: 'merge_findings', survivor_id: '3', member_ids: ['1'] },
-            ]);
+            ], 'Dodaj dokładnie ten jeden problem przy 12.5 s.');
             const add = results.find((row) => row.op === 'add_finding');
             const merge = results.find((row) => row.op === 'merge_findings' || row.unsupported);
             if (!add || !add.markerId) {
@@ -2165,9 +2196,53 @@ def test_f0_apply_review_patch_add_finding_local_and_merge_unsupported() -> None
             if (!merge || !merge.unsupported) {
                 console.error('merge should stay unsupported: ' + JSON.stringify(results)); process.exitCode = 1;
             }
-            if (!reportState.manualFrames.some((f) => f.notes === 'Safari overlay')) {
+            const frame = reportState.manualFrames.find((f) => f.notes.includes('Safari overlay'));
+            if (!frame || !frame.notes.includes('Dodaj dokładnie ten jeden problem przy 12.5 s.')) {
                 console.error('manual frame not upserted: ' + JSON.stringify(reportState.manualFrames));
                 process.exitCode = 1;
+            }
+            """
+        )
+    )
+
+
+def test_f0_add_finding_waits_for_seeked_before_frame_capture() -> None:
+    _run_review_app_smoke(
+        _finding_card_stubs()
+        + textwrap.dedent(
+            """
+            let seeked = false;
+            globalThis.HTMLVideoElement = class HTMLVideoElement {};
+            const listeners = {};
+            const video = {
+                currentTime: 0,
+                seeking: false,
+                addEventListener(name, fn) { listeners[name] = fn; },
+                removeEventListener(name) { delete listeners[name]; },
+            };
+            window.player = {
+                video,
+                seekTo(timestamp) {
+                    video.currentTime = timestamp;
+                    video.seeking = true;
+                    setTimeout(() => {
+                        video.seeking = false;
+                        seeked = true;
+                        if (listeners.seeked) listeners.seeked();
+                    }, 0);
+                },
+                async captureCurrentFrame() {
+                    if (!seeked) throw new Error('captured stale pre-seek frame');
+                    return { timestamp: video.currentTime, frameBase64: 'AA==', frameDataUrl: 'data:image/jpeg;base64,AA==' };
+                },
+            };
+            reportState.manualFrames = [{ marker_id: 'm-seek' }];
+            markManualFrame = async () => 'm-seek';
+            const result = await addFindingFromPatch({
+                timestamp: 12.5, summary: 'after seek', severity: 'high', category: 'bug'
+            });
+            if (!result.captured || !seeked) {
+                console.error('seeked capture failed: ' + JSON.stringify(result)); process.exitCode = 1;
             }
             """
         )

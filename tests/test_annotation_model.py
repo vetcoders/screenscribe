@@ -169,6 +169,13 @@ def test_ids_and_migration() -> None:
         assertTrue(migrated[0].id !== migrated[1].id, 'migration reused the same id');
         const snap = snapshotFindingReview({ annotations: [{ type: 'pen', points: [{ x: 0.1, y: 0.1 }] }] });
         assertTrue(snap.annotations[0].id, 'snapshotFindingReview did not migrate id');
+        const hydrated = { legacy: { annotations: [{ type: 'rect', x: 0.1, y: 0.1, width: 0.2, height: 0.2 }] } };
+        migrateFindingStates(hydrated);
+        const hydratedId = hydrated.legacy.annotations[0].id;
+        assertTrue(Boolean(hydratedId), 'hydration migration did not write the id into canonical state');
+        snapshotFindingReview(hydrated.legacy);
+        assertTrue(hydrated.legacy.annotations[0].id === hydratedId,
+            'snapshot regenerated the canonical hydrated id');
         const tool = makeTool();
         tool.annotations = [];
         tool.commitTextDraft = LightboxAnnotationTool.prototype.commitTextDraft;
@@ -237,6 +244,24 @@ def test_move_resize() -> None:
         tool.render = () => {};
         LightboxAnnotationTool.prototype.moveSelected.call(tool, -0.1, 0);
         assertTrue(Math.abs(rect.x - 0.2) < 1e-9, 'moveSelected failed');
+
+        const edgeRect = ensureAnnotationId({ type: 'rect', x: 0.8, y: 0.8, width: 0.2, height: 0.2 });
+        moveAnnotationBy(edgeRect, 0.5, 0.5);
+        assertTrue(Math.abs(edgeRect.x - 0.8) < 1e-9 && Math.abs(edgeRect.y - 0.8) < 1e-9,
+            'rect escaped the normalized canvas: ' + JSON.stringify(edgeRect));
+        moveAnnotationBy(edgeRect, -2, -2);
+        assertTrue(edgeRect.x === 0 && edgeRect.y === 0,
+            'rect did not clamp at the top-left edge: ' + JSON.stringify(edgeRect));
+
+        const edgeArrow = ensureAnnotationId({ type: 'arrow', startX: 0.7, startY: 0.6, endX: 0.9, endY: 0.8 });
+        moveAnnotationBy(edgeArrow, 0.5, 0.5);
+        assertTrue(Math.abs(edgeArrow.endX - 1) < 1e-9 && Math.abs(edgeArrow.endY - 1) < 1e-9,
+            'arrow escaped the normalized canvas: ' + JSON.stringify(edgeArrow));
+
+        const edgePen = ensureAnnotationId({ type: 'pen', points: [{ x: 0.05, y: 0.1 }, { x: 0.3, y: 0.4 }] });
+        moveAnnotationBy(edgePen, -1, 1);
+        assertTrue(edgePen.points[0].x === 0 && Math.abs(edgePen.points[1].y - 1) < 1e-9,
+            'pen escaped the normalized canvas: ' + JSON.stringify(edgePen));
         """
     )
 

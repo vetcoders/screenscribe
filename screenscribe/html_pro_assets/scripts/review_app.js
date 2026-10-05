@@ -201,6 +201,11 @@ function migrateFindingStates(findings) {
         if ('confirmed' in state) {
             delete state.confirmed;
         }
+        if (Array.isArray(state.annotations)) {
+            // Migrate the canonical hydrated records, not a throw-away editor
+            // clone, so IDs remain stable even when the lightbox is never opened.
+            ensureAnnotationsHaveIds(state.annotations);
+        }
     }
     return findings;
 }
@@ -1158,7 +1163,7 @@ function restoreUIFromState() {
 
         const verdict = normalizeVerdict(state.verdict);
         article.dataset.verdict = verdict === 'none' ? '' : verdict;
-        article.querySelectorAll(`input[name="verdict-${findingId}"]`).forEach((radio) => {
+        article.querySelectorAll('.verdict-controls input[type="radio"]').forEach((radio) => {
             radio.checked = radio.value === verdict;
         });
 
@@ -1798,10 +1803,14 @@ function buildMergedReviewEntry(merged) {
     const { screenshot, ...rest } = merged;
     // Inherit the reviewer state of the WHOLE group, not just the survivor's.
     const r = reconcileMergedReview(merged.id, merged.merged_from_ids);
+    const survivorState = reportState.findings[normId(merged.id)] || {};
     const human_review = {
         verdict: r.verdict,
         severity_override: r.severity || null,
         notes: r.notes || '',
+        action_items: survivorState.actionItems || survivorState.action_items || '',
+        summary_override: survivorState.summary_override || '',
+        category_override: survivorState.category_override || '',
         annotations: r.annotations,
         reviewer: reportState.reviewer,
         reviewed_at: new Date().toISOString(),
@@ -2483,11 +2492,49 @@ function describeAnnotations(annotations) {
     return desc;
 }
 
-function buildTodoMarkdown(originalFindings, videoName, reviewer) {
+function transcriptSourceKind() {
+    const source = document.body.dataset.transcriptSource;
+    return source === 'audio' || source === 'ocr' ? source : 'unknown';
+}
+
+function sourceTranscriptSegments(finding = null) {
+    const segments = Array.isArray(window.TRANSCRIPT_SEGMENTS) ? window.TRANSCRIPT_SEGMENTS : [];
+    const start = finding ? Number(finding.timestamp_start ?? finding.timestamp) : null;
+    const end = finding ? Number(finding.timestamp_end ?? start) : null;
+    return segments.filter((segment) => {
+        if (!segment || typeof segment.text !== 'string') return false;
+        if (!Number.isFinite(segment.start) || !Number.isFinite(segment.end)) return false;
+        return !finding || (
+            Number.isFinite(start) && Number.isFinite(end)
+            && segment.end >= start && segment.start <= end
+        );
+    }).map(({ start, end, text }) => ({ start, end, text }));
+}
+
+function effectiveExportAnalysis(finding, review) {
+    const unified = { ...(finding.unified_analysis || {}) };
+    if (typeof review.summary_override === 'string') unified.summary = review.summary_override;
+    if (typeof review.category_override === 'string') unified.category = review.category_override;
+    if (Array.isArray(review.action_items)) unified.action_items = review.action_items;
+    return unified;
+}
+
+function buildTodoMarkdown(originalFindings, videoName, reviewer, evidencePaths = null) {
     let md = `# TODO: ${videoName}\n`;
     md += `> ${t('review.todoReviewerLabel')}: ${reviewer} | ${t('review.todoDateLabel')}: ${new Date().toISOString().split('T')[0]}\n\n`;
+    const sourceKind = transcriptSourceKind();
+    md += `${t(sourceKind === 'ocr' ? 'review.todoOcrAuthorityRule' : 'review.todoAuthorityRule')}\n\n`;
+    const sourceSegments = sourceTranscriptSegments();
+    if (sourceSegments.length) {
+        md += `## ${t(sourceKind === 'ocr' ? 'review.todoOcrSourceSection' : 'review.todoSourceSection')}\n\n`;
+        md += sourceSegments.map((segment) =>
+            `> [${formatPreciseTime(segment.start)}] ${segment.text.replace(/\r?\n/g, '\n> ')}`
+        ).join('\n');
+        md += '\n\n';
+    }
 
-    // ===== AI findings (severity-grouped, accepted only; rejected listed below) =====
+    // Unreviewed proposals stay visible, explicitly labelled; rejected findings
+    // are excluded from the actionable list and recorded separately below.
     const bySeverity = { critical: [], high: [], medium: [], low: [] };
 
     // Collapse human-merge groups so the TODO carries one richer item per merge
@@ -2506,7 +2553,7 @@ function buildTodoMarkdown(originalFindings, videoName, reviewer) {
         const review = isMerged
             ? reconcileMergedReview(f.id, f.merged_from_ids)
             : (reportState.findings[f.id] || {});
-        const unified = f.unified_analysis || {};
+        const unified = effectiveExportAnalysis(f, review);
         const severity = review.severity || unified.severity || 'medium';
         const verdict = normalizeVerdict(review.verdict);
 
@@ -2518,7 +2565,32 @@ function buildTodoMarkdown(originalFindings, videoName, reviewer) {
         const actionItems = unified.action_items || [];
 
         let item = `- ${checkbox} **#${idx + 1}** [${severity.toUpperCase()}] ${summary}`;
+        item += `\n  - ${t('review.todoReviewStateLabel')}: ${t(verdict === 'accepted' ? 'review.todoConfirmed' : 'review.todoUnreviewed')}`;
+        const timestamp = Number(f.timestamp_start ?? f.timestamp);
+        if (f.timestamp_formatted || Number.isFinite(timestamp)) {
+            item += `\n  - ${t('review.todoTimestampLabel')}: ${f.timestamp_formatted || formatPreciseTime(timestamp)}`;
+        }
+        const source = sourceTranscriptSegments(f);
+        if (source.length) {
+            const sourceLabel = sourceKind === 'audio' ? 'review.todoSourceQuoteLabel'
+                : sourceKind === 'ocr' ? 'review.todoOcrSourceLabel' : 'review.todoUnknownSourceLabel';
+            item += `\n  - ${t(sourceLabel)}: ${source.map((segment) => segment.text).join(' ')}`;
+        } else if (f.text) {
+            item += `\n  - ${t('review.todoDetectionLabel')}: ${f.text}`;
+        }
+        const originalScreenshot = typeof f.screenshot_path === 'string'
+            ? f.screenshot_path.split(/[\\/]/).pop() : '';
+        const evidencePath = evidencePaths
+            ? evidencePaths[normId(f.id)]
+            : (originalScreenshot ? `screenshots/${originalScreenshot}` : null);
+        if (evidencePath) item += `\n  - ${t('review.todoEvidenceLabel')}: ${evidencePath}`;
         if (notes) item += `\n  - ${t('review.todoNotesLabel')}: ${notes}`;
+        if (unified.affected_components?.length) {
+            item += `\n  - ${t('review.todoComponentsLabel')}: ${unified.affected_components.join(', ')}`;
+        }
+        if (unified.suggested_fix) {
+            item += `\n  - ${t('review.todoSuggestedFixLabel')}: ${unified.suggested_fix}`;
+        }
         if (actionItems.length > 0) {
             item += `\n  - ${t('review.todoActionsLabel')}: ${actionItems.slice(0, 3).join(', ')}`;
         }
@@ -2780,6 +2852,7 @@ async function exportReviewedZIP() {
 
         const reviewedFindings = [];
         const manifestFindings = [];
+        const evidencePaths = {};
         let findingIndex = 0;
 
         // Collapse human-merge groups so the handoff bundle (report_reviewed JSON
@@ -2813,6 +2886,9 @@ async function exportReviewedZIP() {
                 human_review: {
                     verdict: normalizeVerdict(review.verdict),
                     severity_override: review.severity || null,
+                    summary_override: review.summary_override ?? null,
+                    category_override: review.category_override ?? null,
+                    action_items: Array.isArray(review.action_items) ? review.action_items : null,
                     notes: review.notes || '',
                     annotations: annotations,
                     reviewer: reportState.reviewer,
@@ -2828,7 +2904,7 @@ async function exportReviewedZIP() {
             if (annotations.length > 0) {
                 try {
                     const tool = annotationTools.get(String(f.id));
-                    const thumb = document.querySelector(`[data-finding-id="${f.id}"] .thumbnail`);
+                    const thumb = findingArticle(f.id)?.querySelector('.thumbnail');
                     let dataUrl = null;
                     if (tool && typeof tool.getMergedDataURL === 'function') {
                         dataUrl = await tool.getMergedDataURL();
@@ -2884,7 +2960,7 @@ async function exportReviewedZIP() {
 
             // Build the manifest entry: priority, action items, and a testable
             // acceptance criterion so an agent can verify the fix.
-            const unified = f.unified_analysis || {};
+            const unified = effectiveExportAnalysis(f, review);
             const severity = review.severity || unified.severity || 'medium';
             const priorityMap = {critical: 'P0', high: 'P0', medium: 'P1', low: 'P2'};
             const priority = priorityMap[severity] || 'P1';
@@ -2911,7 +2987,15 @@ async function exportReviewedZIP() {
                 severity: severity,
                 title: title,
                 user_said: f.text || '',
+                user_said_source: 'detection',
+                source_role: transcriptSourceKind() === 'ocr' ? 'screen_text'
+                    : transcriptSourceKind() === 'audio' ? 'narration' : 'unknown',
                 context: f.context || '',
+                timestamp: f.timestamp_start ?? f.timestamp ?? null,
+                timestamp_formatted: f.timestamp_formatted || null,
+                source_segments: sourceTranscriptSegments(f),
+                review_verdict: normalizeVerdict(review.verdict),
+                reviewer_notes: review.notes || '',
                 screenshot: screenshotWritten ? screenshotRelPath : null,
                 annotated: result.screenshot_annotated || null,
                 annotations: annotationSummary,
@@ -2921,6 +3005,13 @@ async function exportReviewedZIP() {
                 verify: verify,
                 status: 'pending'
             };
+            if (manifestEntry.source_segments.length) {
+                manifestEntry.source_text = manifestEntry.source_segments.map((segment) => segment.text).join(' ');
+                manifestEntry.user_said = transcriptSourceKind() === 'ocr' ? '' : manifestEntry.source_text;
+                manifestEntry.user_said_source = transcriptSourceKind() === 'ocr'
+                    ? 'ocr_frames' : 'transcript_segments';
+            }
+            evidencePaths[normId(f.id)] = manifestEntry.screenshot;
             // Provenance trail for a folded merge group: surface the absorbed
             // finding ids (and an explicit count) so the coding agent sees this
             // entry stands in for many.
@@ -3031,7 +3122,11 @@ async function exportReviewedZIP() {
                 reviewer: reportState.reviewer,
                 total_findings: manifestFindings.length,
                 total_manual_frames: manualManifestFrames.length,
-                unpack_to: '.screenscribe/reviews/' + baseName + '/'
+                unpack_to: '.screenscribe/reviews/' + baseName + '/',
+                transcript_source: transcriptSourceKind(),
+                source_guidance: t(transcriptSourceKind() === 'ocr'
+                    ? 'review.todoOcrAuthorityRule' : 'review.todoAuthorityRule'),
+                ...(sourceTranscriptSegments().length ? { transcript_file: 'transcript.txt' } : {})
             },
             findings: manifestFindings,
             manual_frames: manualManifestFrames
@@ -3039,7 +3134,7 @@ async function exportReviewedZIP() {
 
         const reviewedJsonName = 'report_reviewed_' + baseName + '.json';
         const todoFilename = 'TODO_' + baseName + '.md';
-        const todoMarkdown = buildTodoMarkdown(originalFindings, videoName, reportState.reviewer);
+        const todoMarkdown = buildTodoMarkdown(originalFindings, videoName, reportState.reviewer, evidencePaths);
 
         zip.file(reviewedJsonName, JSON.stringify(output, null, 2));
         zip.file(todoFilename, todoMarkdown);
@@ -3048,7 +3143,7 @@ async function exportReviewedZIP() {
         // Full timestamped transcript for agent context. A coding agent picking
         // up the handoff bundle benefits from reading the complete narration
         // before working through individual findings.
-        const transcriptSegments = window.TRANSCRIPT_SEGMENTS || [];
+        const transcriptSegments = sourceTranscriptSegments();
         if (transcriptSegments.length > 0) {
             const transcriptLines = transcriptSegments.map(s => {
                 const mm = String(Math.floor(s.start / 60)).padStart(2, '0');
@@ -3123,7 +3218,7 @@ function showAgentFrame(input) {
     });
     let target = null;
     if (findingId) {
-        target = document.querySelector(`.finding[data-finding-id="${findingId}"]`);
+        target = findingArticle(findingId);
     }
     if (!target && Number.isFinite(timestamp)) {
         const metas = document.querySelectorAll('.finding .finding-meta[data-timestamp]');
@@ -3165,7 +3260,9 @@ function ensureFindingReviewState(findingId) {
 function findingArticle(findingId) {
     const id = normId(findingId);
     if (!id) return null;
-    return document.querySelector(`.finding[data-finding-id="${id}"]`);
+    return Array.from(document.querySelectorAll('.finding')).find(
+        (article) => normId(article?.dataset?.findingId) === id
+    ) || null;
 }
 
 function actionItemsText(value) {
@@ -3180,6 +3277,13 @@ function paintReviewerOverrides(article, state) {
     const summary = String(state.summary_override || '');
     const category = String(state.category_override || '');
     const actions = actionItemsText(state.actionItems || state.action_items);
+    const summaryEl = article.querySelector('.finding-summary');
+    const oldSummaryOverride = summaryEl
+        ? summaryEl.querySelector('.ss-summary-override')
+        : null;
+    if (!summary && oldSummaryOverride?.parentNode) {
+        oldSummaryOverride.parentNode.removeChild(oldSummaryOverride);
+    }
     let box = article.querySelector('.ss-reviewer-overrides');
     if (!summary && !category && !actions) {
         if (box && box.parentNode) box.parentNode.removeChild(box);
@@ -3213,7 +3317,6 @@ function paintReviewerOverrides(article, state) {
     addLine('review.agentOverrideCategory', category, 'ss-reviewer-override-category');
     addLine('review.agentOverrideActions', actions, 'ss-reviewer-override-actions');
 
-    const summaryEl = article.querySelector('.finding-summary');
     if (summaryEl && summary) {
         let override = summaryEl.querySelector('.ss-summary-override');
         if (!override) {
@@ -3232,7 +3335,7 @@ function paintFindingReview(findingId) {
     const state = reportState.findings[id];
     const verdict = normalizeVerdict(state.verdict);
     article.dataset.verdict = verdict === 'none' ? '' : verdict;
-    article.querySelectorAll(`input[name="verdict-${id}"]`).forEach((radio) => {
+    article.querySelectorAll('.verdict-controls input[type="radio"]').forEach((radio) => {
         radio.checked = radio.value === verdict;
     });
     const select = article.querySelector('.severity-select');
@@ -3280,6 +3383,38 @@ function applyEditFindingOp(op) {
     return { op: 'edit_finding', findingId: id, reversible: false };
 }
 
+async function seekPlayerBeforeFrameCapture(timestamp) {
+    const activePlayer = window.player;
+    if (!activePlayer || typeof activePlayer.seekTo !== 'function' || !Number.isFinite(timestamp)) {
+        return;
+    }
+    const video = activePlayer.video;
+    if (!video || typeof video.addEventListener !== 'function') {
+        activePlayer.seekTo(timestamp, false);
+        return;
+    }
+
+    await new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            if (typeof video.removeEventListener === 'function') {
+                video.removeEventListener('seeked', finish);
+            }
+            resolve();
+        };
+        const timer = setTimeout(finish, 2000);
+        video.addEventListener('seeked', finish, { once: true });
+        activePlayer.seekTo(timestamp, false);
+        if (!video.seeking && Math.abs(Number(video.currentTime) - timestamp) < 0.001) {
+            if (typeof requestAnimationFrame === 'function') requestAnimationFrame(finish);
+            else setTimeout(finish, 0);
+        }
+    });
+}
+
 async function addFindingFromPatch(op) {
     const timestamp = Number(op.timestamp);
     const summary = String(op.summary || '');
@@ -3295,9 +3430,7 @@ async function addFindingFromPatch(op) {
         && typeof window.player.captureCurrentFrame === 'function'
     ) {
         try {
-            if (typeof window.player.seekTo === 'function' && Number.isFinite(timestamp)) {
-                window.player.seekTo(timestamp, false);
-            }
+            await seekPlayerBeforeFrameCapture(timestamp);
             captured = await window.player.captureCurrentFrame();
         } catch (_error) {
             captured = null;
@@ -3359,7 +3492,42 @@ async function applyOneReviewOp(op) {
     return { skipped: true, unknown: true, op: kind };
 }
 
-async function applyReviewPatch(ops) {
+function appendAppliedChatInstruction(existingNotes, instruction) {
+    const raw = instruction == null ? '' : String(instruction);
+    if (!raw.trim()) return existingNotes || '';
+    const entry = `${t('review.chatInstructionLabel')}: ${raw}`;
+    const current = String(existingNotes || '');
+    if (current === entry || current.includes(`\n\n${entry}`)) return current;
+    if (!current) return entry;
+    return current + (current.endsWith('\n') ? '\n' : '\n\n') + entry;
+}
+
+function attachAppliedChatInstruction(results, instruction) {
+    if (!String(instruction || '').trim()) return;
+    const findingIds = new Set();
+    const markerIds = new Set();
+    (results || []).forEach((row) => {
+        if (!row || row.skipped) return;
+        if (row.findingId) findingIds.add(normId(row.findingId));
+        if (row.markerId) markerIds.add(String(row.markerId));
+    });
+    findingIds.forEach((id) => {
+        if (!id || !reportState.findings[id]) return;
+        reportState.findings[id].notes = appendAppliedChatInstruction(
+            reportState.findings[id].notes,
+            instruction
+        );
+        paintFindingReview(id);
+    });
+    markerIds.forEach((markerId) => {
+        const frame = reportState.manualFrames.find(
+            (candidate) => String(candidate?.marker_id) === markerId
+        );
+        if (frame) frame.notes = appendAppliedChatInstruction(frame.notes, instruction);
+    });
+}
+
+async function applyReviewPatch(ops, userInstruction = '') {
     const list = Array.isArray(ops) ? ops : [];
     const results = [];
     for (const op of list) {
@@ -3367,6 +3535,7 @@ async function applyReviewPatch(ops) {
     }
     const applied = results.filter((row) => !row.skipped);
     if (applied.length) {
+        attachAppliedChatInstruction(applied, userInstruction);
         reportState.modified = true;
         scheduleSharedStateSync();
         updateReviewMeta();
@@ -4291,14 +4460,16 @@ function setVoiceNoteUi(button, findingId, recording, statusText = '') {
         ? `🎤 ${t('review.voiceRecording')}`
         : `🎤 ${t('review.voiceNote')}`;
 
-    const statusEl = document.querySelector(`.notes-mic-status[data-finding-id="${findingId}"]`);
+    const statusEl = Array.from(document.querySelectorAll('.notes-mic-status')).find(
+        (node) => normId(node?.dataset?.findingId) === normId(findingId)
+    );
     if (statusEl) {
         statusEl.textContent = statusText;
     }
 }
 
 function appendVoiceTextToNotes(findingId, text) {
-    const article = document.querySelector(`[data-finding-id="${findingId}"]`);
+    const article = findingArticle(findingId);
     if (!article) return;
     const textarea = article.querySelector('.notes textarea');
     if (!textarea) return;
@@ -4911,6 +5082,17 @@ function hitTestTopAnnotation(annotations, x, y) {
 
 function moveAnnotationBy(ann, dx, dy) {
     if (!ann) return ann;
+    const bounds = annotationBounds(ann);
+    if (bounds) {
+        const minDx = -bounds.x;
+        const maxDx = 1 - (bounds.x + bounds.width);
+        const minDy = -bounds.y;
+        const maxDy = 1 - (bounds.y + bounds.height);
+        if (minDx <= maxDx) dx = Math.min(maxDx, Math.max(minDx, dx));
+        else dx = 0;
+        if (minDy <= maxDy) dy = Math.min(maxDy, Math.max(minDy, dy));
+        else dy = 0;
+    }
     if (ann.type === 'rect' || ann.type === 'text') {
         ann.x = (ann.x || 0) + dx;
         ann.y = (ann.y || 0) + dy;
@@ -5342,6 +5524,7 @@ class LightboxAnnotationTool {
         this.currentPath = [];
         this.draftEl = null;
         this.textDraft = null;
+        this.toolbarInteraction = false;
         this.selectedId = null;
         this.dragMode = null;
         this.dragHandle = null;
@@ -5384,12 +5567,19 @@ class LightboxAnnotationTool {
         if (colorPicker) {
             colorPicker.value = this.color;
             const colorClick = (e) => e.stopPropagation();
+            const colorPointerDown = (e) => {
+                e.stopPropagation();
+                this.toolbarInteraction = true;
+                setTimeout(() => { this.toolbarInteraction = false; }, 0);
+            };
             const colorInput = (e) => {
                 this.color = e.target.value;
                 this.applyColorToActiveDraft();
             };
+            colorPicker.addEventListener('pointerdown', colorPointerDown);
             colorPicker.addEventListener('click', colorClick);
             colorPicker.addEventListener('input', colorInput);
+            this.boundHandlers.push({ target: colorPicker, event: 'pointerdown', handler: colorPointerDown });
             this.boundHandlers.push({ target: colorPicker, event: 'click', handler: colorClick });
             this.boundHandlers.push({ target: colorPicker, event: 'input', handler: colorInput });
         }
@@ -5462,6 +5652,12 @@ class LightboxAnnotationTool {
         const onViewportChange = () => {
             this.syncOverlaySize();
             this.render();
+            if (this.textDraft) {
+                if (this.textDraft.el && !this.textDraft.el.parentNode) {
+                    this.svg.appendChild(this.textDraft.el);
+                }
+                this.positionTextInput(this.textDraft.input, this.textDraft.pos);
+            }
         };
         window.addEventListener('scroll', onViewportChange, true);
         window.addEventListener('resize', onViewportChange);
@@ -5911,17 +6107,9 @@ class LightboxAnnotationTool {
         input.type = 'text';
         input.className = 'annotation-text-input';
         input.setAttribute('aria-label', 'Text annotation');
-        // Position over the clicked image point.
-        try {
-            const rect = getActualImageRect(this.img);
-            input.style.position = 'fixed';
-            input.style.left = `${rect.left + pos.x * rect.width}px`;
-            input.style.top = `${rect.top + pos.y * rect.height}px`;
-            input.style.zIndex = '10002';
-            input.style.color = this.color;
-        } catch (error) {
-            console.debug('createTextInput: positioning failed', error);
-        }
+        this.positionTextInput(input, pos);
+        input.style.zIndex = '10002';
+        input.style.color = this.color;
         // The draft only becomes commit/cancel-eligible AFTER it is focused at
         // the end of the opening gesture. A real mouse gesture is pointerdown
         // (creates the input) -> pointerup (pulls focus back), so a SYNCHRONOUS
@@ -5944,6 +6132,7 @@ class LightboxAnnotationTool {
         };
         const onBlur = () => {
             if (!ready) return; // instant blur from the opening gesture: keep the field alive
+            if (this.toolbarInteraction) return; // picker focus must not commit the old colour
             this.commitTextDraft(input.value);
         };
         input.addEventListener('input', onInput);
@@ -5965,6 +6154,18 @@ class LightboxAnnotationTool {
             setTimeout(arm, 0);
         }
         return input;
+    }
+
+    positionTextInput(input, pos) {
+        if (!input || !pos) return;
+        try {
+            const rect = getActualImageRect(this.img);
+            input.style.position = 'fixed';
+            input.style.left = `${rect.left + pos.x * rect.width}px`;
+            input.style.top = `${rect.top + pos.y * rect.height}px`;
+        } catch (error) {
+            console.debug('positionTextInput: positioning failed', error);
+        }
     }
 
     removeTextInput(input) {
