@@ -78,8 +78,8 @@ def _build_transcript_timeline_coverage_message(
     )
 
 
-def _build_output_dir_error_message(path: Path, exc: OSError) -> str:
-    """Turn an output-directory ``mkdir`` OSError into actionable guidance."""
+def _describe_output_os_error(path: Path, exc: OSError) -> tuple[str, str]:
+    """``(reason, where)`` for an OSError hit while creating/writing output."""
     blocked = Path(exc.filename) if exc.filename else path
     if isinstance(exc, PermissionError):
         reason = "permission denied"
@@ -90,6 +90,12 @@ def _build_output_dir_error_message(path: Path, exc: OSError) -> str:
     else:
         reason = exc.strerror or str(exc)
     where = "" if blocked == path else f"\n[dim]Blocked at:[/] {escape(str(blocked))}"
+    return reason, where
+
+
+def _build_output_dir_error_message(path: Path, exc: OSError) -> str:
+    """Turn an output-directory ``mkdir`` OSError into actionable guidance."""
+    reason, where = _describe_output_os_error(path, exc)
     return (
         f"Cannot create the output directory: {escape(str(path))}\n"
         f"[dim]Reason:[/] {escape(reason)}{where}\n\n"
@@ -98,11 +104,29 @@ def _build_output_dir_error_message(path: Path, exc: OSError) -> str:
     )
 
 
-def _build_force_foreign_message(path: Path) -> str:
-    """Why ``--force`` refuses a target screenscribe does not own."""
+def _build_bundle_write_error_message(path: Path, exc: OSError) -> str:
+    """An OSError while writing the preprocess bundle files into ``path``.
+
+    Partial files are left in place (never cleaned up), so the message says so.
+    """
+    reason, where = _describe_output_os_error(path, exc)
     return (
-        f"{escape(str(path))} already exists and is not a screenscribe review folder.\n\n"
-        "[bold]--force[/] only overwrites a previous screenscribe review, so it will "
+        f"Cannot write the preprocess bundle to: {escape(str(path))}\n"
+        f"[dim]Reason:[/] {escape(reason)}{where}\n\n"
+        "Files written before the error were left in place. Free up space or fix "
+        "permissions and re-run, or pass [bold]-o[/] with a folder you can write to."
+    )
+
+
+def _build_force_foreign_message(path: Path, artifact: str = "review") -> str:
+    """Why ``--force`` refuses a target screenscribe does not own.
+
+    ``artifact`` names what the command owns (``"review"`` for ``review``,
+    ``"preprocess bundle"`` for ``preprocess``).
+    """
+    return (
+        f"{escape(str(path))} already exists and is not a screenscribe {artifact} folder.\n\n"
+        f"[bold]--force[/] only overwrites a previous screenscribe {artifact}, so it will "
         "not overwrite or clean this location. Pass [bold]-o[/] with a new folder."
     )
 

@@ -4,7 +4,7 @@
 
 - **Fixed: model-validation messages redact provider-supplied URLs.** Both
   streaming failure bodies and model-unavailable errors remove URL credentials
-  and query/path data; validation warnings also escape Rich markup.
+  and query values; validation warnings also escape Rich markup.
 
 - **Fixed: `review -o <existing folder>` no longer mistakes an ordinary folder
   for a previous review.** A folder is a previous review only when it holds a
@@ -14,6 +14,27 @@
   a parent (`<folder>/<video>_review`, re-runs version inside it), matching
   batch mode, instead of creating a `<folder>_2` sibling. A path that does not
   exist, or a real previous review, behaves as before.
+- **Fixed: `preprocess -o <existing folder>` follows the same folder contract.**
+  Only a folder whose `preprocess.json` is screenscribe's own manifest counts as
+  a previous bundle (a stray `transcript.txt` no longer does); any other existing
+  folder is used as a parent (`<folder>/<video>_preprocess`), and an output
+  directory that cannot be created shows the same "Output Directory Error".
+  Like `review`, a file or non-empty non-bundle folder at `<video>_preprocess`
+  is skipped for the next free version, `-o` naming an existing file is an
+  error, and `--force` refuses (exit 1, nothing changed) a target that is not
+  a screenscribe preprocess bundle. Running out of versions and failing to
+  write a bundle file (permission denied, disk full) also print an "Output
+  Directory Error" instead of a traceback; partial files are left in place.
+  Existing empty bundle/version paths are treated as occupied because another
+  live process may have claimed them; after a lost `mkdir` race, preprocess
+  reselects a missing slot instead of sharing the winner's directory.
+  The output folder is reserved and checked for writability before audio
+  extraction and transcription, so folder creation, reservation, writability
+  and version-limit errors stop before any STT call; a bundle write failure
+  (e.g. disk full) is still reported after transcription has run.
+- **Fixed: `review --estimate` is read-only.** It prints the time table before
+  any output-folder handling, so it no longer creates an empty output directory,
+  shows the rerun prompt, or refuses a `--force` target.
 - **Hardened: review ownership markers never follow symlinks.** Report files and
   `.screenscribe_cache/` prove ownership only as real entries, so `--force`
   cannot write through a foreign marker symlink into its target.
@@ -31,8 +52,8 @@
   non-empty folder that is not a screenscribe review, and a checkpoint cache it
   cannot remove is reported as an error instead of a traceback. The output
   folder is reserved right before use (created exclusively, re-checked, and
-  reselected after a lost `mkdir` race), so a slot taken in the meantime or a read-only
-  folder stops with an error instead of being written into or crashing.
+  reselected after a lost `mkdir` race), so a slot taken in the meantime or a
+  read-only folder stops with an error instead of being written into or crashing.
 - **Fixed: semantic pre-filter failures name the real cause.** Provider error
   events inside a 200 response stream (`error`, `response.failed`,
   `response.incomplete`) are captured and shown with their message and code
