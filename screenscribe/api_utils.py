@@ -296,12 +296,12 @@ def stream_chunk_has_model_output(chunk: dict[str, Any]) -> bool:
 
 
 def responses_reasoning_options(endpoint: str, effort: str) -> dict[str, str] | None:
-    """``reasoning`` block for a text-LLM request, or ``None`` for Chat Completions.
+    """Configured text reasoning, or ``None`` for unsupported/unconfigured use.
 
-    Responses API requests ask for streamed reasoning summaries AND an explicit
-    effort; Chat Completions endpoints do not accept this block at all.
+    Configured Responses requests ask for summaries and an explicit effort.
+    Empty custom-provider effort and Chat Completions omit the block.
     """
-    if is_chat_completions_endpoint(endpoint):
+    if not effort or is_chat_completions_endpoint(endpoint):
         return None
     return {"summary": "auto", "effort": effort}
 

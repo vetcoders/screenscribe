@@ -108,7 +108,8 @@
   reviewer state/notes and separate model proposals. OCR is labelled screen text,
   never narrator instructions. Applied agent edits preserve the exact user
   request in notes and confirm only after save. Summary/category/action overrides
-  survive reload, merges and export.
+  survive reload, merges and export; empty saved overrides preserve the generated
+  proposal. Verdict controls restore their checked state after reload.
 - **Fixed: OCR and resume bind effective inputs.** Private OCR cache keys include
   frame/model/endpoint/prompt; malformed entries are misses and temporary frames
   are removed. Checkpoint v3 binds source/interval/preset/vocabulary/prompt.

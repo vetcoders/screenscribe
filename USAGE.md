@@ -878,6 +878,8 @@ segments retain detection text with `user_said_source: "detection"`; that text
 may be paraphrased and is not presented as a guaranteed transcript quotation.
 
 `transcript_source` distinguishes audio narration from OCR screen text.
+Legacy transcript segments with only `start` and `text` remain exportable;
+their missing end timestamp is treated as a point at the recorded start.
 OCR exports use `source_role: "screen_text"` and retain the text as evidence,
 never as `user_said`. A screen label is not a spoken instruction. An absent
 source kind remains unknown rather than proving who authored the transcript.

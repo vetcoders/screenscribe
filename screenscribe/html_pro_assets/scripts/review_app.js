@@ -1163,7 +1163,7 @@ function restoreUIFromState() {
 
         const verdict = normalizeVerdict(state.verdict);
         article.dataset.verdict = verdict === 'none' ? '' : verdict;
-        article.querySelectorAll('.verdict-controls input[type="radio"]').forEach((radio) => {
+        article.querySelectorAll('.radio-group input[type="radio"]').forEach((radio) => {
             radio.checked = radio.value === verdict;
         });
 
@@ -2501,9 +2501,13 @@ function sourceTranscriptSegments(finding = null) {
     const segments = Array.isArray(window.TRANSCRIPT_SEGMENTS) ? window.TRANSCRIPT_SEGMENTS : [];
     const start = finding ? Number(finding.timestamp_start ?? finding.timestamp) : null;
     const end = finding ? Number(finding.timestamp_end ?? start) : null;
-    return segments.filter((segment) => {
-        if (!segment || typeof segment.text !== 'string') return false;
-        if (!Number.isFinite(segment.start) || !Number.isFinite(segment.end)) return false;
+    return segments.flatMap((segment) => {
+        if (!segment || typeof segment.text !== 'string') return [];
+        const segmentEnd = segment.end ?? segment.start;
+        if (!Number.isFinite(segment.start) || !Number.isFinite(segmentEnd)) return [];
+        return [{ start: segment.start, end: segmentEnd, text: segment.text }];
+    }).filter((segment) => {
+        if (!segment) return false;
         return !finding || (
             Number.isFinite(start) && Number.isFinite(end)
             && segment.end >= start && segment.start <= end
@@ -2513,8 +2517,12 @@ function sourceTranscriptSegments(finding = null) {
 
 function effectiveExportAnalysis(finding, review) {
     const unified = { ...(finding.unified_analysis || {}) };
-    if (typeof review.summary_override === 'string') unified.summary = review.summary_override;
-    if (typeof review.category_override === 'string') unified.category = review.category_override;
+    if (typeof review.summary_override === 'string' && review.summary_override.trim()) {
+        unified.summary = review.summary_override;
+    }
+    if (typeof review.category_override === 'string' && review.category_override.trim()) {
+        unified.category = review.category_override;
+    }
     if (Array.isArray(review.action_items)) unified.action_items = review.action_items;
     return unified;
 }
@@ -3335,7 +3343,7 @@ function paintFindingReview(findingId) {
     const state = reportState.findings[id];
     const verdict = normalizeVerdict(state.verdict);
     article.dataset.verdict = verdict === 'none' ? '' : verdict;
-    article.querySelectorAll('.verdict-controls input[type="radio"]').forEach((radio) => {
+    article.querySelectorAll('.radio-group input[type="radio"]').forEach((radio) => {
         radio.checked = radio.value === verdict;
     });
     const select = article.querySelector('.severity-select');

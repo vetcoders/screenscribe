@@ -786,7 +786,7 @@ def _recording_client(lines: list[str], bodies: list[dict[str, Any]], attempts: 
     return _Client
 
 
-def test_prefilter_sends_default_reasoning_effort(
+def test_prefilter_omits_unverified_custom_reasoning_options(
     monkeypatch: pytest.MonkeyPatch,
     transcription: TranscriptionResult,
     config: ScreenScribeConfig,
@@ -800,8 +800,8 @@ def test_prefilter_sends_default_reasoning_effort(
 
     assert result.failed is False
     # No effort configured: the fixture's endpoints resolve to the "custom"
-    # provider, whose default is "none".
-    assert bodies[0]["reasoning"] == {"summary": "auto", "effort": "none"}
+    # provider, whose unverified reasoning option is omitted.
+    assert "reasoning" not in bodies[0]
 
 
 def test_prefilter_uses_configured_reasoning_effort(
