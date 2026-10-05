@@ -30,6 +30,7 @@ def save_html_report_pro(
     errors: list[dict[str, str]] | None = None,
     embed_video: bool = False,
     language: str = "en",
+    transcript_source: str | None = None,
 ) -> Path:
     """Save report as Pro HTML with video player and synchronized subtitles.
 
@@ -168,6 +169,7 @@ def save_html_report_pro(
         errors=report_errors,
         embed_video=embed_video,
         language=language,
+        transcript_source=transcript_source,
     )
 
     # Write HTML file

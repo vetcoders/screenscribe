@@ -16,9 +16,10 @@ must not depend on which directory the terminal sits in. Screenscribe
 analyzes a video, not "the project in cwd".
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from rich.console import Console
@@ -145,7 +146,7 @@ class KeywordsConfig:
 
     @classmethod
     def _from_mapping(
-        cls, data: dict[object, object], categories: tuple[str, ...]
+        cls, data: Mapping[Any, object], categories: tuple[str, ...]
     ) -> "KeywordsConfig":
         """Build a config from a parsed mapping for the active category set.
 

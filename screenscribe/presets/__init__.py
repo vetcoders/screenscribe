@@ -61,6 +61,21 @@ def _as_str_list(value: object) -> list[str]:
     return [str(item) for item in value if item is not None and str(item).strip()]
 
 
+def _validated_categories(values: list[str], *, source: Path) -> tuple[str, ...]:
+    """Return filename-safe category names or reject the preset definition."""
+    categories: list[str] = []
+    for raw in values:
+        category = raw.strip()
+        if not category or any(not (char.isalnum() or char in "_-") for char in category):
+            raise PresetError(
+                f"Unsafe category name {raw!r} in {source}. Use only letters, numbers, '_' and '-'."
+            )
+        if category in categories:
+            raise PresetError(f"Duplicate category name {category!r} in {source}.")
+        categories.append(category)
+    return tuple(categories)
+
+
 def _preset_path(name: str) -> Path:
     return PRESETS_DIR / f"{name}.yaml"
 
@@ -91,7 +106,7 @@ def load_preset(name: str) -> Preset:
     if not isinstance(data, dict):
         raise PresetError(f"Preset definition is not a mapping: {path}")
 
-    categories = tuple(_as_str_list(data.get("categories")))
+    categories = _validated_categories(_as_str_list(data.get("categories")), source=path)
     if not categories:
         raise PresetError(f"Preset {normalized!r} defines no categories: {path}")
 
@@ -133,5 +148,5 @@ def load_custom_preset(keywords_file: Path) -> Preset:
         )
 
     keys = [str(key) for key in data] if isinstance(data, dict) else []
-    categories = tuple(keys) if keys else CATEGORIES
+    categories = _validated_categories(keys, source=keywords_file) if keys else CATEGORIES
     return Preset(name="custom", categories=categories, prompt="", keywords=None)

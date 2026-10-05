@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from typer.testing import CliRunner
 import screenscribe.cli as cli_module
 from screenscribe.audio import MissingAudioStreamError
 from screenscribe.config import ScreenScribeConfig
+from screenscribe.review_pipeline import _transcription_context_id
 from screenscribe.semantic_filter import SemanticFilterResult
 from screenscribe.transcribe_types import Segment, TranscriptionResult
 from screenscribe.transcript_sources import (
@@ -19,6 +21,7 @@ from screenscribe.transcript_sources import (
     get_transcript_source,
     normalize_transcript_source,
     resolve_transcript_source,
+    response_id_can_chain,
 )
 
 # --- pure routing logic ----------------------------------------------------
@@ -60,6 +63,62 @@ def test_source_registry_protocol_conformance() -> None:
     assert isinstance(get_transcript_source("ocr"), TranscriptSource)
     assert isinstance(AudioTranscriptSource(), TranscriptSource)
     assert isinstance(OcrTranscriptSource(frame_interval=2.0), TranscriptSource)
+
+
+def test_response_id_chaining_requires_same_responses_endpoint() -> None:
+    endpoint = "https://vision.example/v1/responses"
+    assert response_id_can_chain(endpoint, endpoint + "/")
+    assert not response_id_can_chain(endpoint, "https://llm.example/v1/responses")
+    assert not response_id_can_chain(endpoint, "https://vision.example/v1/chat/completions")
+
+
+def test_ocr_context_id_is_dropped_for_split_provider() -> None:
+    config = ScreenScribeConfig(
+        vision_endpoint="https://vision.example/v1/responses",
+        llm_endpoint="https://llm.example/v1/responses",
+    )
+
+    assert (
+        _transcription_context_id(
+            "ocr-response",
+            "batch-response",
+            source="ocr",
+            config=config,
+        )
+        == "batch-response"
+    )
+
+
+def test_ocr_context_id_is_kept_for_same_responses_endpoint() -> None:
+    endpoint = "https://same.example/v1/responses"
+    config = ScreenScribeConfig(vision_endpoint=endpoint, llm_endpoint=endpoint)
+
+    assert (
+        _transcription_context_id(
+            "ocr-response",
+            "batch-response",
+            source="ocr",
+            config=config,
+        )
+        == "ocr-response"
+    )
+
+
+def test_context_id_is_dropped_for_chat_completions_endpoint() -> None:
+    config = ScreenScribeConfig(
+        vision_endpoint="https://same.example/v1/responses",
+        llm_endpoint="https://same.example/v1/chat/completions",
+    )
+
+    assert (
+        _transcription_context_id(
+            "ocr-response",
+            "batch-response",
+            source="ocr",
+            config=config,
+        )
+        == ""
+    )
 
 
 # --- review wiring ----------------------------------------------------------
@@ -132,7 +191,10 @@ def test_no_audio_routes_to_ocr(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     assert [(s.start, s.end, s.text) for s in transcription.segments] == [
         (0.0, 5.0, "Przycisk Zapisz nie reaguje")
     ]
-    assert (output_dir / "silent_report.json").exists()
+    report_path = output_dir / "silent_report.json"
+    assert report_path.exists()
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["transcript_source"] == "ocr"
 
 
 def test_auto_without_audio_routes_to_ocr(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

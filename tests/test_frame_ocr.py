@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -96,7 +98,7 @@ def test_ocr_frame_request_shape_and_prompt_override(
     assert text == "Save button\nError: quota exceeded"
     assert response_id == "resp-1"
     assert captured["endpoint"] == "https://vision.example/v1/responses"
-    assert captured["api_key"] == "test-key"
+    assert captured["api_key"] == "test-key"  # pragma: allowlist secret
     payload = captured["payload"]
     assert isinstance(payload, dict)
     assert payload["model"] == "grok-test"
@@ -115,7 +117,12 @@ def test_ocr_frame_uses_cache_without_http(monkeypatch: pytest.MonkeyPatch, tmp_
     cfg = _ocr_config()
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
-    cache_key = frame_ocr._ocr_cache_key(frame, cfg.vision_model)
+    cache_key = frame_ocr._ocr_cache_key(
+        frame,
+        cfg.vision_model,
+        endpoint=cfg.vision_endpoint,
+        prompt=frame_ocr.OCR_FRAME_PROMPT,
+    )
     (cache_dir / f"{cache_key}.json").write_text(
         json.dumps({"text": "cached text", "response_id": "cached-id"}), encoding="utf-8"
     )
@@ -126,6 +133,73 @@ def test_ocr_frame_uses_cache_without_http(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setattr(frame_ocr, "_post_ocr_request", fail_if_called)
 
     assert frame_ocr.ocr_frame(frame, cfg, cache_dir=cache_dir) == ("cached text", "cached-id")
+
+
+def test_ocr_cache_key_covers_endpoint_and_effective_prompt(tmp_path: Path) -> None:
+    frame = tmp_path / "frame.jpg"
+    frame.write_bytes(b"jpeg-bytes")
+
+    base = frame_ocr._ocr_cache_key(
+        frame, "model", endpoint="https://one.example/v1/responses", prompt="prompt one"
+    )
+    changed_endpoint = frame_ocr._ocr_cache_key(
+        frame, "model", endpoint="https://two.example/v1/responses", prompt="prompt one"
+    )
+    changed_prompt = frame_ocr._ocr_cache_key(
+        frame, "model", endpoint="https://one.example/v1/responses", prompt="prompt two"
+    )
+
+    assert len({base, changed_endpoint, changed_prompt}) == 3
+
+
+@pytest.mark.parametrize("cached_payload", [[], None])
+def test_ocr_frame_ignores_non_object_cache_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cached_payload: object
+) -> None:
+    frame = tmp_path / "frame.jpg"
+    frame.write_bytes(b"jpeg-bytes")
+    cfg = _ocr_config()
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    cache_key = frame_ocr._ocr_cache_key(
+        frame,
+        cfg.vision_model,
+        endpoint=cfg.vision_endpoint,
+        prompt=frame_ocr.OCR_FRAME_PROMPT,
+    )
+    (cache_dir / f"{cache_key}.json").write_text(json.dumps(cached_payload), encoding="utf-8")
+    calls: list[str] = []
+
+    def fake_post(endpoint: str, api_key: str, payload: dict[str, object]) -> dict[str, object]:
+        calls.append(endpoint)
+        return _responses_payload("fresh text", "fresh-id")
+
+    monkeypatch.setattr(frame_ocr, "_post_ocr_request", fake_post)
+
+    assert frame_ocr.ocr_frame(frame, cfg, cache_dir=cache_dir) == ("fresh text", "fresh-id")
+    assert calls == [cfg.vision_endpoint]
+
+
+def test_ocr_cache_directory_and_entry_are_private(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    if os.name == "nt":
+        pytest.skip("POSIX permission bits are not enforced on Windows")
+    frame = tmp_path / "frame.jpg"
+    frame.write_bytes(b"jpeg-bytes")
+    cfg = _ocr_config()
+    cache_dir = tmp_path / "cache"
+    monkeypatch.setattr(
+        frame_ocr,
+        "_post_ocr_request",
+        lambda *args, **kwargs: _responses_payload("private text", "private-id"),
+    )
+
+    frame_ocr.ocr_frame(frame, cfg, cache_dir=cache_dir)
+
+    (cache_entry,) = list(cache_dir.iterdir())
+    assert stat.S_IMODE(cache_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(cache_entry.stat().st_mode) == 0o600
 
 
 def test_ocr_frame_requires_vision_key(tmp_path: Path) -> None:
@@ -216,3 +290,41 @@ def test_transcribe_video_ocr_skips_empty_text(
     assert result.segments == []
     assert result.text == ""
     assert result.response_id == "resp-x"
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_transcribe_video_ocr_cleans_owned_work_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fail: bool
+) -> None:
+    monkeypatch.setattr(frame_ocr, "get_video_duration", lambda _p: 1.0)
+    seen: dict[str, Path] = {}
+
+    def fake_extract(
+        video_path: Path, interval: float, output_dir: Path, *, duration: float | None = None
+    ) -> list[tuple[float, Path]]:
+        seen["work_dir"] = output_dir
+        assert output_dir.exists()
+        if fail:
+            raise RuntimeError("frame extraction failed")
+        frame = output_dir / "frame.jpg"
+        frame.write_bytes(b"jpeg")
+        return [(0.0, frame)]
+
+    monkeypatch.setattr(frame_ocr, "extract_interval_frames", fake_extract)
+    monkeypatch.setattr(frame_ocr, "dedupe_frames", lambda frames: frames)
+    monkeypatch.setattr(
+        frame_ocr,
+        "ocr_frame",
+        lambda *args, **kwargs: ("text", "response-id"),
+    )
+    video = tmp_path / "clip.mov"
+    video.write_bytes(b"video")
+
+    if fail:
+        with pytest.raises(RuntimeError, match="frame extraction failed"):
+            frame_ocr.transcribe_video_ocr(video, _ocr_config())
+    else:
+        result = frame_ocr.transcribe_video_ocr(video, _ocr_config())
+        assert result.text == "text"
+
+    assert not seen["work_dir"].exists()

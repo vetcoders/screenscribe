@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess  # nosec B404 - ffmpeg/ffprobe invocation, no shell
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from rich.console import Console
@@ -50,8 +51,12 @@ Rules:
 
 
 def default_ocr_cache_dir() -> Path:
-    """Process-local temp cache for OCR results (keyed by frame content hash)."""
-    return Path(tempfile.gettempdir()) / "screenscribe-ocr"
+    """Private per-user cache for OCR results (keyed by request fingerprint)."""
+    configured_root = os.environ.get("XDG_CACHE_HOME", "").strip()
+    cache_root = Path(configured_root).expanduser() if configured_root else Path.home() / ".cache"
+    if not cache_root.is_absolute():
+        cache_root = Path.home() / ".cache"
+    return cache_root / "screenscribe" / "ocr"
 
 
 def extract_interval_frames(
@@ -131,9 +136,45 @@ def dedupe_frames(frames: list[tuple[float, Path]]) -> list[tuple[float, Path]]:
     return kept
 
 
-def _ocr_cache_key(frame_path: Path, model: str) -> str:
-    digest = hashlib.sha256(frame_path.read_bytes()).hexdigest()
-    return hashlib.sha256(f"{model}:{digest}".encode()).hexdigest()
+def _ocr_cache_key(frame_path: Path, model: str, *, endpoint: str, prompt: str) -> str:
+    """Fingerprint every input that can change the OCR response."""
+    frame_digest = hashlib.sha256(frame_path.read_bytes()).hexdigest()
+    fingerprint = json.dumps(
+        {
+            "endpoint": endpoint.rstrip("/"),
+            "model": model,
+            "prompt": prompt,
+            "frame_sha256": frame_digest,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(fingerprint.encode()).hexdigest()
+
+
+def _prepare_private_cache_dir(cache_dir: Path) -> None:
+    """Create/tighten the persistent cache directory before any read or write."""
+    cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    cache_dir.chmod(0o700)
+
+
+def _write_private_cache_entry(cache_path: Path, payload: dict[str, str]) -> None:
+    """Write one cache entry without a world-readable creation window."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(cache_path, flags, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as cache_file:
+            json.dump(payload, cache_file, ensure_ascii=False)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+    cache_path.chmod(0o600)
 
 
 def _post_ocr_request(endpoint: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -148,7 +189,10 @@ def _post_ocr_request(endpoint: str, api_key: str, payload: dict[str, Any]) -> d
             json=payload,
         )
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        if not isinstance(result, dict):
+            raise ValueError("Frame OCR endpoint returned a non-object JSON payload")
+        return cast(dict[str, Any], result)
 
 
 def ocr_frame(
@@ -169,17 +213,30 @@ def ocr_frame(
             "Run `screenscribe auth login` or set SCREENSCRIBE_VISION_API_KEY."
         )
 
+    prompt = apply_analysis_prompt_override(OCR_FRAME_PROMPT, config.analysis_prompt_override)
     cache_dir = cache_dir or default_ocr_cache_dir()
-    cache_key = _ocr_cache_key(frame_path, config.vision_model)
+    cache_key = _ocr_cache_key(
+        frame_path,
+        config.vision_model,
+        endpoint=config.vision_endpoint,
+        prompt=prompt,
+    )
     cache_path = cache_dir / f"{cache_key}.json"
-    if cache_path.exists():
+    cache_available = True
+    try:
+        _prepare_private_cache_dir(cache_dir)
+    except OSError:
+        cache_available = False
+
+    if cache_available and cache_path.exists():
         try:
+            cache_path.chmod(0o600)
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
-            return str(cached.get("text", "")), str(cached.get("response_id", ""))
+            if isinstance(cached, dict):
+                return str(cached.get("text", "")), str(cached.get("response_id", ""))
         except (OSError, ValueError):
             pass  # Corrupt cache entry: fall through and re-request.
 
-    prompt = apply_analysis_prompt_override(OCR_FRAME_PROMPT, config.analysis_prompt_override)
     payload = _build_unified_payload(
         endpoint=config.vision_endpoint,
         model=config.vision_model,
@@ -201,13 +258,11 @@ def ocr_frame(
     text = extract_response_content(result, endpoint=config.vision_endpoint).strip()
     response_id = str(result.get("id", ""))
 
-    try:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(
-            json.dumps({"text": text, "response_id": response_id}), encoding="utf-8"
-        )
-    except OSError:
-        pass  # Cache is an optimization; never fail the OCR over it.
+    if cache_available:
+        try:
+            _write_private_cache_entry(cache_path, {"text": text, "response_id": response_id})
+        except OSError:
+            pass  # Cache is an optimization; never fail the OCR over it.
 
     return text, response_id
 
@@ -227,39 +282,47 @@ def transcribe_video_ocr(
     duration, so timestamps come from the frame grid, not from the model.
     """
     duration = get_video_duration(video_path)
+    owned_work_dir: tempfile.TemporaryDirectory[str] | None = None
     if work_dir is None:
-        work_dir = Path(tempfile.mkdtemp(prefix="screenscribe-ocr-frames-"))
+        owned_work_dir = tempfile.TemporaryDirectory(prefix="screenscribe-ocr-frames-")
+        work_dir = Path(owned_work_dir.name)
 
-    console.print(f"[blue]OCR transcript:[/] frames every {frame_interval:g}s over {duration:.0f}s")
-    frames = extract_interval_frames(video_path, frame_interval, work_dir, duration=duration)
-    kept = dedupe_frames(frames)
-    if len(kept) < len(frames):
-        console.print(f"[dim]  Frame dedup: {len(frames)} → {len(kept)}[/]")
-
-    segments: list[Segment] = []
-    last_response_id = ""
-    for timestamp, frame_path in kept:
-        text, response_id = ocr_frame(frame_path, config, cache_dir=cache_dir)
-        if response_id:
-            last_response_id = response_id
-        if not text:
-            continue
-        segments.append(
-            Segment(
-                id=len(segments),
-                start=timestamp,
-                end=min(timestamp + frame_interval, duration),
-                text=text,
-            )
+    try:
+        console.print(
+            f"[blue]OCR transcript:[/] frames every {frame_interval:g}s over {duration:.0f}s"
         )
+        frames = extract_interval_frames(video_path, frame_interval, work_dir, duration=duration)
+        kept = dedupe_frames(frames)
+        if len(kept) < len(frames):
+            console.print(f"[dim]  Frame dedup: {len(frames)} → {len(kept)}[/]")
 
-    full_text = "\n".join(segment.text for segment in segments)
-    console.print(
-        f"[green]OCR transcript:[/] {len(segments)} segment(s) from {len(kept)} unique frame(s)"
-    )
-    return TranscriptionResult(
-        text=full_text,
-        segments=segments,
-        language=config.language,
-        response_id=last_response_id,
-    )
+        segments: list[Segment] = []
+        last_response_id = ""
+        for timestamp, frame_path in kept:
+            text, response_id = ocr_frame(frame_path, config, cache_dir=cache_dir)
+            if response_id:
+                last_response_id = response_id
+            if not text:
+                continue
+            segments.append(
+                Segment(
+                    id=len(segments),
+                    start=timestamp,
+                    end=min(timestamp + frame_interval, duration),
+                    text=text,
+                )
+            )
+
+        full_text = "\n".join(segment.text for segment in segments)
+        console.print(
+            f"[green]OCR transcript:[/] {len(segments)} segment(s) from {len(kept)} unique frame(s)"
+        )
+        return TranscriptionResult(
+            text=full_text,
+            segments=segments,
+            language=config.language,
+            response_id=last_response_id,
+        )
+    finally:
+        if owned_work_dir is not None:
+            owned_work_dir.cleanup()

@@ -759,6 +759,51 @@ def review(
     config.verbose = verbose
     config.analysis_prompt_override = (prompt or "").strip()
 
+    # --- Preset block (w1-03-presets) ---------------------------------------
+    # Resolve the analysis preset FIRST: it decides the keyword dictionary,
+    # the finding categories, and the prompt focus. 'custom' has no built-in
+    # definition and must be backed by the user's own --keywords-file.
+    from .presets import PresetError, load_custom_preset, load_preset
+
+    if preset == "custom":
+        if keywords_file is None:
+            console.print(
+                "[red]Error:[/] --preset custom requires your own keyword dictionary.\n\n"
+                "Usage: [bold]screenscribe review <video> --preset custom "
+                "--keywords-file my-keywords.yaml[/]\n\n"
+                "The file is a YAML mapping of your finding categories to phrases, e.g.:\n"
+                "  regression:\n"
+                '    - "nie działa po zmianie"\n'
+                '    - "used to work"'
+            )
+            raise typer.Exit(1)
+        try:
+            active_preset = load_custom_preset(keywords_file)
+        except PresetError as e:
+            console.print(f"[red]Error:[/] {e}")
+            raise typer.Exit(1) from None
+    else:
+        try:
+            active_preset = load_preset(preset)
+        except PresetError as e:
+            console.print(f"[red]Error:[/] {e}")
+            raise typer.Exit(1) from None
+
+    # Load the active keyword vocabulary once (explicit --keywords-file, else
+    # global user file, else preset dictionary, else built-in default). These
+    # are passed to the AI as hints during detection; an empty/absent
+    # dictionary is a safe no-op.
+    keywords = KeywordsConfig.load(keywords_file, preset=active_preset)
+    config.keywords = keywords
+
+    # The preset's prompt fragment rides the same channel as --prompt: both are
+    # appended to analysis prompts as schema-preserving instructions.
+    if active_preset.prompt:
+        config.analysis_prompt_override = "\n\n".join(
+            part for part in (active_preset.prompt, config.analysis_prompt_override) if part
+        )
+    # --- end preset block ----------------------------------------------------
+
     if not estimate:
         # STT is only paid for videos routed to the audio source; OCR videos
         # hit the vision endpoint instead, so vision credentials are required
@@ -803,57 +848,18 @@ def review(
     # this module so the monkeypatch surface is preserved.
     from . import review_pipeline
 
-    # --- Preset block (w1-03-presets) ---------------------------------------
-    # Resolve the analysis preset FIRST: it decides the keyword dictionary,
-    # the finding categories, and the prompt focus. 'custom' has no built-in
-    # definition and must be backed by the user's own --keywords-file.
-    from .presets import PresetError, load_custom_preset, load_preset
-
-    if preset == "custom":
-        if keywords_file is None:
-            console.print(
-                "[red]Error:[/] --preset custom requires your own keyword dictionary.\n\n"
-                "Usage: [bold]screenscribe review <video> --preset custom "
-                "--keywords-file my-keywords.yaml[/]\n\n"
-                "The file is a YAML mapping of your finding categories to phrases, e.g.:\n"
-                "  regression:\n"
-                '    - "nie działa po zmianie"\n'
-                '    - "used to work"'
-            )
-            raise typer.Exit(1)
-        try:
-            active_preset = load_custom_preset(keywords_file)
-        except PresetError as e:
-            console.print(f"[red]Error:[/] {e}")
-            raise typer.Exit(1) from None
-    else:
-        try:
-            active_preset = load_preset(preset)
-        except PresetError as e:
-            console.print(f"[red]Error:[/] {e}")
-            raise typer.Exit(1) from None
-
-    # Load the active keyword vocabulary once (explicit --keywords-file, else
-    # global user file, else preset dictionary, else built-in default). These
-    # are passed to the AI as hints during detection; an empty/absent
-    # dictionary is a safe no-op.
-    keywords = KeywordsConfig.load(keywords_file, preset=active_preset)
-
-    # The preset's prompt fragment rides the same channel as --prompt: both are
-    # appended to analysis prompts as schema-preserving instructions.
-    if active_preset.prompt:
-        config.analysis_prompt_override = "\n\n".join(
-            part for part in (active_preset.prompt, config.analysis_prompt_override) if part
-        )
-    # --- end preset block ----------------------------------------------------
-
     # C6.3: --dry-run does NOT mean zero-cost. Despite the name, it still runs
     # Step 2 transcription (paid STT unless --local) and Step 3 issue detection
     # (the LLM semantic prefilter, ALWAYS paid) before exiting -- it only skips
     # report artifacts. Warn before the first paid call so the user can abort.
     # (--estimate is the real zero-cost path and exits before any paid call.)
     if dry_run and not estimate:
-        if local:
+        if needs_ocr:
+            cost_line = (
+                "Frame transcription uses paid vision OCR, followed by LLM issue detection. "
+                "Audio STT is used only for recordings routed to the audio source."
+            )
+        elif local:
             cost_line = (
                 "Transcription runs locally (--local, no STT cost), but issue "
                 "detection still calls the LLM and incurs API cost."
@@ -1746,7 +1752,7 @@ def config(
 
 @config_app.command("setup")
 def config_setup() -> None:
-    """Interactively create one coherent provider preset using a hidden key prompt."""
+    """Create a coherent provider preset using an API key or a signed-in account."""
     console.print("[bold]Choose your provider:[/]")
     console.print("  1. LibraxisAI")
     console.print("  2. OpenAI")
@@ -1759,12 +1765,26 @@ def config_setup() -> None:
         console.print("[red]Error:[/] Choose 1, 2, 3, or 4.")
         raise typer.Exit(1)
 
-    api_key = typer.prompt("API key", hide_input=True).strip()
-    if not api_key:
+    provider = provider_by_choice[choice]
+    use_account = False
+    if provider == "xai":
+        from .account_auth import AccountAuthError, account_status
+
+        try:
+            status = account_status(provider)
+        except AccountAuthError as error:
+            console.print(f"[yellow]Account sign-in is unavailable ({error.kind}).[/]")
+        else:
+            if status.signed_in and status.api_bearer_usable:
+                use_account = typer.confirm(
+                    "Use your signed-in xAI account instead of an API key?", default=True
+                )
+
+    api_key = "" if use_account else typer.prompt("API key", hide_input=True).strip()
+    if not use_account and not api_key:
         console.print("[red]Error:[/] API key cannot be empty.")
         raise typer.Exit(1)
 
-    provider = provider_by_choice[choice]
     kwargs: dict[str, str] = {}
     if provider == "custom":
         kwargs = {

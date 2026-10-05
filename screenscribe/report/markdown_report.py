@@ -12,6 +12,7 @@ from .data import (
     _format_timestamped_transcript,
     _is_degraded_analysis,
     console,
+    count_report_categories,
     fold_screenshots,
 )
 
@@ -86,6 +87,8 @@ def save_enhanced_markdown_report(
     errors: list[dict[str, str]] | None = None,
     transcript: str = "",
     transcript_segments: list[Segment] | None = None,
+    preset_meta: dict[str, Any] | None = None,
+    transcript_source: str | None = None,
 ) -> Path:
     """Save enhanced report with unified VLM analysis as Markdown.
 
@@ -106,6 +109,9 @@ def save_enhanced_markdown_report(
         visual_summary: Visual summary text
         errors: List of pipeline errors
         transcript: Full transcript text (embedded at start for AI context)
+        preset_meta: Optional active preset metadata with declared categories.
+        transcript_source: ``audio`` narration, ``ocr`` screen text, or another
+            source rendered as unknown. ``None`` preserves the legacy output.
 
     Returns:
         Path to saved report
@@ -185,9 +191,24 @@ def save_enhanced_markdown_report(
     ]
 
     # Quick stats - one line (folded: count survivor rows, not merged-away frames)
-    bug_count = sum(1 for d, _ in folded_screenshots if d.category == "bug")
-    change_count = sum(1 for d, _ in folded_screenshots if d.category == "change")
-    ui_count = sum(1 for d, _ in folded_screenshots if d.category == "ui")
+    preset_categories = (
+        tuple(str(category) for category in preset_meta.get("categories", []))
+        if preset_meta
+        else ()
+    )
+    category_summary = ""
+    if preset_categories:
+        category_counts = count_report_categories(
+            (detection for detection, _ in folded_screenshots), preset_categories
+        )
+        category_summary = ", ".join(
+            f"{count} {category}" for category, count in category_counts.items()
+        )
+    else:
+        bug_count = sum(1 for d, _ in folded_screenshots if d.category == "bug")
+        change_count = sum(1 for d, _ in folded_screenshots if d.category == "change")
+        ui_count = sum(1 for d, _ in folded_screenshots if d.category == "ui")
+        category_summary = f"{bug_count} bugs, {change_count} changes, {ui_count} UI"
 
     if unified_findings or pending_user_marked:
         issues_only = [f for f in (unified_findings or []) if f.is_issue]
@@ -205,19 +226,22 @@ def save_enhanced_markdown_report(
             severity_breakdown += f", {no_priority} no-priority"
         lines.append(
             f"**Stats:** {len(issues)} issues ({severity_breakdown}) "
-            f"| {bug_count} bugs, {change_count} changes, {ui_count} UI "
+            f"| {category_summary} "
             f"| {len(non_issues)} non-issues filtered"
             f" | {len(pending_user_marked)} pending user-marked"
         )
     else:
-        lines.append(
-            f"**Stats:** {len(folded_screenshots)} findings | "
-            f"{bug_count} bugs, {change_count} changes, {ui_count} UI"
-        )
+        lines.append(f"**Stats:** {len(folded_screenshots)} findings | {category_summary}")
     lines.append("")
 
     # Transcript (at the top for AI context)
     if transcript:
+        if transcript_source is not None:
+            source_label = {
+                "audio": "audio narration",
+                "ocr": "OCR screen text",
+            }.get(transcript_source, "unknown")
+            lines.extend([f"**Source:** {source_label}", ""])
         lines.extend(["## Transcript", "", transcript, ""])
 
     timestamped_transcript = _format_timestamped_transcript(transcript_segments)
