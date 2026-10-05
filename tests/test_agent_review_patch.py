@@ -299,7 +299,7 @@ def test_stream_set_severity_round_trips_patch_in_tool_result(
     patch = results[0]
     assert patch["type"] == "review_patch"
     assert patch["ops"] == [{"op": "set_severity", "finding_id": "3", "severity": "high"}]
-    assert '"response_id": "resp_final"' in body
+    assert '"response_id": null' in body
 
 
 def test_agent_uses_account_bearer_when_api_key_empty(

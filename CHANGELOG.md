@@ -121,6 +121,10 @@
   CRLF SSE and clears stale cursors. Responses tool-call IDs and Anthropic
   continuations preserve their protocol contracts; fallback never combines a
   partial response from one provider with another.
+- **Fixed: repeated xAI agent turns keep their policy and context.** xAI rejects
+  top-level instructions alongside a response cursor, so its agent uses full
+  history without `previous_response_id`, including output items/tool results
+  on tool continuations. Other Responses providers keep bound stateful cursors.
 - **Fixed: signed-in xAI setup can use its account bearer without a pasted key.**
   API-key setup remains available through the same wizard.
 - **Fixed: TTS and live STT account access follows the actual destination.**

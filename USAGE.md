@@ -614,11 +614,14 @@ the provider generates them. Requests
 contain `message`, `history`, and an optional cursor bundle:
 `previous_response_id`, `previous_response_provider`,
 `previous_response_protocol`, `previous_response_host`. The cursor is reused
-only when the complete identity matches the primary Responses provider;
+only when the complete identity matches a stateful primary Responses provider;
 otherwise the backend uses full history and the report seed. `done` includes
 `response_id`, `provider`, `protocol`, `host`. Fallback, errors, incomplete
 streams and identity changes clear the cursor. Finding response IDs are
 evidence, not a shared conversation head.
+The xAI agent uses stateless full history: each round includes trusted
+instructions, the report seed, prior output items and tool results. It sends
+no `previous_response_id` and returns `done.response_id=null`.
 
 ### xAI, TTS and live STT
 

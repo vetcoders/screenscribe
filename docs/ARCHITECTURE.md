@@ -118,6 +118,8 @@ but each registers its own routes.
   path and records the exact applied user request in reviewer notes. Cursor
   identity is bound to provider/protocol/host; report finding IDs do not become
   a shared conversation head.
+  xAI uses stateless full history so trusted instructions can be repeated on
+  every user/tool round.
 - `processing_provenance.llm` records an actually successful semantic request.
   Agent processor trust uses this receipt, not the currently configured
   endpoint list. Missing/legacy receipts establish no processor trust.
