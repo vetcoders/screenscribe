@@ -2,6 +2,12 @@
 
 ## [0.1.20.dev0] - Unreleased
 
+- **Fixed: development-tool dependency security updates.** The lockfile uses
+  patched PyJWT, urllib3 and virtualenv releases. Semgrep's development floor
+  and repository hook are aligned at 1.179.0, whose dependency range permits
+  the patched PyJWT release; the local ruleset and fail-closed gates remain
+  enforced.
+
 - **Changed: reasoning-effort default is now per provider preset; `minimal`
   removed, `xhigh`/`max` added.** `SCREENSCRIBE_LLM_REASONING_EFFORT` accepts
   `none|low|medium|high|xhigh|max`. `minimal` was never supported by any
