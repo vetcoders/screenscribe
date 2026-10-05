@@ -2,6 +2,75 @@
 
 ## Unreleased
 
+- **Fixed: model-validation messages redact provider-supplied URLs.** Both
+  streaming failure bodies and model-unavailable errors remove URL credentials
+  and query/path data; validation warnings also escape Rich markup.
+
+- **Fixed: `review -o <existing folder>` no longer mistakes an ordinary folder
+  for a previous review.** A folder is a previous review only when it holds a
+  `.screenscribe_cache/` checkpoint or this video's own `<video>_report.*`
+  (legacy `report.json`/`report.html` still count); an unrelated
+  `*_report.md` no longer qualifies. An existing ordinary folder is now used as
+  a parent (`<folder>/<video>_review`, re-runs version inside it), matching
+  batch mode, instead of creating a `<folder>_2` sibling. A path that does not
+  exist, or a real previous review, behaves as before.
+- **Hardened: review ownership markers never follow symlinks.** Report files and
+  `.screenscribe_cache/` prove ownership only as real entries, so `--force`
+  cannot write through a foreign marker symlink into its target.
+- **Fixed: an output directory that cannot be created is a clear error.**
+  Permission denied, read-only volumes and file-in-the-way paths now print an
+  "Output Directory Error" with the path and reason and exit with code 1,
+  instead of a raw traceback.
+- **Fixed: `review` never writes into a folder screenscribe does not own.** An
+  existing file or non-empty non-review folder at `<video>_review` is skipped
+  (the next free `_2`, `_3`, … is used, without the overwrite/resume prompt),
+  a version slot is used only when missing (an existing empty directory may be
+  another process's live claim and is skipped), and running out of
+  versions prints an "Output Directory Error" instead of a traceback.
+  `--force` refuses (exit 1, nothing changed) when the target is a file or a
+  non-empty folder that is not a screenscribe review, and a checkpoint cache it
+  cannot remove is reported as an error instead of a traceback. The output
+  folder is reserved right before use (created exclusively, re-checked, and
+  reselected after a lost `mkdir` race), so a slot taken in the meantime or a read-only
+  folder stops with an error instead of being written into or crashing.
+- **Fixed: semantic pre-filter failures name the real cause.** Provider error
+  events inside a 200 response stream (`error`, `response.failed`,
+  `response.incomplete`) are captured and shown with their message and code
+  instead of "Empty response"; transient ones (server error, overload, rate
+  limit) that arrive before any model output are retried, also for the
+  per-finding vision stream. Empty streams and
+  unreachable hosts (connect/TLS handshake timeout) get explicit reasons, and
+  the "Issue Detection Failed" panel shows the LLM endpoint host.
+- **Fixed: truncated LLM answers fail loudly instead of passing as results.**
+  When a stream ends with `error`, `response.failed` or `response.incomplete`
+  after some text arrived, the pre-filter now fails (no partial findings, not
+  checkpointed as complete) even if that text parses, and per-finding analysis
+  falls back instead of accepting the truncated answer.
+- **Hardening: pre-filter failure reasons never include the endpoint URL.**
+  HTTP errors are reported as status, host and a short provider message, and
+  transport errors as type and host, so credentials or query parameters in a
+  configured endpoint URL cannot leak into output. The same defense in depth now
+  covers logs: retry messages, verbose endpoint and analysis-failure lines,
+  summary/LLM-merge warnings, model-validation errors and config mismatch
+  messages redact URLs (userinfo and query values masked, fragment dropped),
+  including URLs inside provider-supplied error messages and response bodies
+  (speech-to-text failure details included).
+  Screenscribe never reads credentials from endpoint URLs; keys are sent only in
+  the Authorization header.
+- **Fixed: semantic pre-filter no longer hangs reasoning without an answer.**
+  Root cause: the pre-filter sent no reasoning effort, so on a full transcript
+  the default LLM reasoned in a loop for 11-20 minutes, emitted no text and
+  ended with `response.failed`. All text-LLM Responses API requests (pre-filter,
+  text-only finding analysis, executive summaries, LLM merge) now send
+  `reasoning.effort`, default `medium`,
+  configurable with the new `SCREENSCRIBE_LLM_REASONING_EFFORT`
+  (`minimal`/`low`/`medium`/`high`); Chat Completions endpoints and the vision
+  request are unchanged. An in-stream provider error is retried only if it
+  arrives before the model streamed any output, so such a failure is reported
+  once (with a hint to lower the effort) instead of being retried for close to
+  an hour. Non-streaming summary and merge calls also treat a 200 response with
+  status `failed` or `incomplete` as a failure (local summary / merge skipped)
+  instead of using its partial text.
 - **Internal: bandit pre-commit hook runs from the project environment.** The
   remote `PyCQA/bandit` hook's pbr-based build ran `git describe` against our
   tags from inside git hooks and broke on the non-PEP440 recovery tag; the

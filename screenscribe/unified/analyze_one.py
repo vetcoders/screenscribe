@@ -12,8 +12,15 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
+from rich.markup import escape
 
-from ..api_utils import retry_request
+from ..api_utils import (
+    extract_response_payload_error,
+    extract_stream_error_event,
+    redact_error_message,
+    retry_request,
+    stream_chunk_has_model_output,
+)
 from ..config import ScreenScribeConfig
 from ..detect import Detection
 from ..keywords import format_keywords_hint
@@ -22,7 +29,6 @@ from ._console import console
 from .finding import UnifiedFinding
 from .response_parsing import (
     _build_unified_finding,
-    _extract_response_error,
     extract_response_content,
     parse_json_response,
 )
@@ -31,7 +37,6 @@ from .wire import (
     _extract_reasoning_delta,
     _extract_response_id_from_stream,
     _extract_stream_delta,
-    _extract_stream_error,
 )
 
 
@@ -148,6 +153,9 @@ def analyze_finding_unified_streaming(
             same_provider=_may_chain_previous_response(
                 config, use_text_only_backend=use_text_only_backend
             ),
+            # Text-only goes to the LLM endpoint: bound its reasoning like the
+            # pre-filter. The vision request keeps the provider default.
+            reasoning_effort=config.get_llm_reasoning_effort() if use_text_only_backend else None,
         )
 
         # Tracks whether a *prior* attempt already forwarded stream deltas to the
@@ -173,12 +181,19 @@ def analyze_finding_unified_streaming(
             that, once any delta has been forwarded (``emitted``), later attempts
             suppress the callbacks -- ``collected_content`` is still rebuilt from
             scratch and returned correctly, only the live re-emission is dropped. A
-            provider error-event (RuntimeError) is non-retriable and propagates
-            straight to the outer fallback, matching the previous behavior.
+            provider error-event (``StreamEventError``) is retried only when it is
+            transient (overload / rate limit / server fault) AND arrived before
+            this attempt streamed any reasoning or text; otherwise it propagates
+            straight to the outer fallback, as before.
             """
             nonlocal emitted
             collected_content = ""
             response_id = ""
+            # Any reasoning/text delta in THIS attempt makes a later provider
+            # error event non-transient (see the stream loop).
+            model_output_seen = False
+            # Bounded non-SSE body (a plain JSON error reply to a 200 request).
+            non_sse_body = ""
 
             # A retry that follows a mid-stream drop must not re-forward the
             # prefix the failed attempt already streamed to the consumer.
@@ -221,6 +236,14 @@ def analyze_finding_unified_streaming(
                         if line.startswith("event:"):
                             continue
 
+                        if not line.startswith(("data:", ":", "id:", "retry:")):
+                            # Not an SSE line: a provider that answered with a
+                            # plain (e.g. JSON error) body. Keep a bounded copy
+                            # so the error can be surfaced after the loop.
+                            if len(non_sse_body) < 2000:
+                                non_sse_body += line
+                            continue
+
                         if line.startswith("data:"):
                             line_data = line[5:].strip()
                             if line_data == "[DONE]":
@@ -240,9 +263,22 @@ def analyze_finding_unified_streaming(
                                 if not isinstance(chunk, dict):
                                     continue
 
-                                stream_error = _extract_stream_error(chunk)
-                                if stream_error:
-                                    raise RuntimeError(stream_error)
+                                # A provider error event inside the 200 stream.
+                                # Transient ones (overload / rate limit / server
+                                # fault) are retried by retry_request, but only
+                                # before this attempt streamed any model output;
+                                # after that it fails fast to the text-only /
+                                # non-streaming fallback instead of re-running a
+                                # long generation. response.incomplete is terminal
+                                # too: a truncated answer must not be accepted as a
+                                # normal finding.
+                                stream_error = extract_stream_error_event(chunk)
+                                if stream_error is not None:
+                                    if model_output_seen:
+                                        stream_error.transient = False
+                                    raise stream_error
+                                if stream_chunk_has_model_output(chunk):
+                                    model_output_seen = True
 
                                 # Extract response ID FIRST, before any content
                                 # reconciliation. The canonical id often rides on the
@@ -306,15 +342,28 @@ def analyze_finding_unified_streaming(
                                 # (e.g. {"choices": [42]} -> choices[0].get(...)), a
                                 # shape-error the top-level isinstance guard cannot
                                 # catch. Skip this one chunk; keep the stream alive.
-                                # A provider error-event raises RuntimeError, which is
+                                # A provider error-event raises StreamEventError, which is
                                 # deliberately NOT caught here so it still propagates.
                                 continue
+
+            if not collected_content and not model_output_seen and non_sse_body.strip():
+                # A 200 reply that was not an event stream but a JSON error body:
+                # raise the provider error (transient ones are retried, since no
+                # model output was streamed) instead of ending with empty content.
+                try:
+                    body_json = json.loads(non_sse_body)
+                except json.JSONDecodeError:
+                    body_json = None
+                if isinstance(body_json, dict):
+                    body_error = extract_stream_error_event(body_json)
+                    if body_error is not None:
+                        raise body_error
 
             return collected_content, response_id
 
         # Retry transient transport/HTTP failures (429/5xx/timeout/network,
         # honoring Retry-After) on the image-backed call before degrading. A
-        # non-retriable error (400/401/403 or a provider RuntimeError) and an
+        # non-retriable error (400/401/403 or a non-transient provider error event) and an
         # exhausted retry both propagate to the except below -> text-only /
         # non-streaming fallback, exactly as before.
         collected_content, response_id = retry_request(
@@ -358,7 +407,9 @@ def analyze_finding_unified_streaming(
     except Exception as e:
         if has_screenshot and not use_text_only_backend:
             if config.verbose:
-                console.print(f"[dim]Streaming image-backed analysis failed: {e}[/]")
+                console.print(
+                    f"[dim]Streaming image-backed analysis failed: {escape(redact_error_message(e))}[/]"
+                )
                 console.print("[dim]Retrying unified analysis without image...[/]")
             return analyze_finding_unified_streaming(
                 detection,
@@ -370,7 +421,7 @@ def analyze_finding_unified_streaming(
                 force_text_only=True,
             )
         if config.verbose:
-            console.print(f"[dim]Streaming analysis failed: {e}[/]")
+            console.print(f"[dim]Streaming analysis failed: {escape(redact_error_message(e))}[/]")
             console.print("[dim]Retrying unified analysis without streaming...[/]")
         return analyze_finding_unified(
             detection,
@@ -441,6 +492,9 @@ def analyze_finding_unified(
                     same_provider=_may_chain_previous_response(
                         config, use_text_only_backend=use_text_only_backend
                     ),
+                    reasoning_effort=(
+                        config.get_llm_reasoning_effort() if use_text_only_backend else None
+                    ),
                 )
 
                 response = client.post(
@@ -472,9 +526,12 @@ def analyze_finding_unified(
             console.print(f"[yellow]Failed to parse API response: {e}[/]")
             return None
 
-        response_error = _extract_response_error(result)
-        if response_error:
-            raise RuntimeError(response_error)
+        # status failed OR incomplete (or an error object) in a 200 body: the
+        # output is not a finished answer, so raise into the existing fallback
+        # instead of building a finding from partial text.
+        response_error = extract_response_payload_error(result)
+        if response_error is not None:
+            raise response_error
 
         # Extract content from response (supports both API formats)
         content_text = extract_response_content(result, endpoint=endpoint)
@@ -515,7 +572,9 @@ def analyze_finding_unified(
     except Exception as e:
         if has_screenshot and not use_text_only_backend:
             if config.verbose:
-                console.print(f"[dim]Unified image-backed analysis failed: {e}[/]")
+                console.print(
+                    f"[dim]Unified image-backed analysis failed: {escape(redact_error_message(e))}[/]"
+                )
                 console.print("[dim]Retrying unified analysis without image...[/]")
             return analyze_finding_unified(
                 detection,
@@ -524,5 +583,5 @@ def analyze_finding_unified(
                 previous_response_id=previous_response_id,
                 force_text_only=True,
             )
-        console.print(f"[yellow]Unified analysis failed: {e}[/]")
+        console.print(f"[yellow]Unified analysis failed: {escape(redact_error_message(e))}[/]")
         return None

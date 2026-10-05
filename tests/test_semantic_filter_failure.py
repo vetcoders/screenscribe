@@ -555,3 +555,563 @@ def test_prefilter_retry_midstream_timeout_no_duplicate_pois(
     assert result.failed is False
     assert len(result.pois) == 1  # only the clean retry's content, not 1 + partial
     assert len(attempts) == 2
+
+
+# --- Provider error events inside a 200 stream ------------------------------
+#
+# A Responses-API stream can fail AFTER the 200 status by sending `error`,
+# `response.failed` or `response.incomplete` events. The user must see the
+# provider's concrete reason, not a generic "Empty response".
+
+
+def _event(payload: dict[str, Any]) -> str:
+    import json
+
+    return "data: " + json.dumps(payload)
+
+
+def test_prefilter_response_failed_event_carries_provider_message(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """A non-transient ``response.failed`` surfaces its message, with no retry."""
+    attempts: list[int] = []
+    lines = [
+        _event({"type": "response.created", "response": {"id": "resp_1"}}),
+        _event(
+            {
+                "type": "response.failed",
+                "response": {
+                    "id": "resp_1",
+                    "status": "failed",
+                    "error": {"code": "invalid_prompt", "message": "Prompt was rejected"},
+                },
+            }
+        ),
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client", _sequenced_client([lines], attempts)
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert "Prompt was rejected" in result.error
+    assert "invalid_prompt" in result.error
+    assert "Empty response" not in result.error
+    assert len(attempts) == 1
+
+
+def test_prefilter_incomplete_event_names_the_reason(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """``response.incomplete`` with no text reports ``incomplete_details.reason``."""
+    lines = [
+        _event(
+            {
+                "type": "response.incomplete",
+                "response": {"incomplete_details": {"reason": "max_output_tokens"}},
+            }
+        ),
+    ]
+    monkeypatch.setattr("screenscribe.semantic_filter.httpx.Client", _sequenced_client([lines], []))
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert "max_output_tokens" in result.error
+
+
+def test_prefilter_top_level_error_event_message(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """``{"type": "error", "code", "message"}`` (top-level fields) is captured."""
+    lines = [_event({"type": "error", "code": "invalid_api_key", "message": "Key revoked"})]
+    monkeypatch.setattr("screenscribe.semantic_filter.httpx.Client", _sequenced_client([lines], []))
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert "Key revoked" in result.error
+    assert "invalid_api_key" in result.error
+
+
+def test_prefilter_transient_error_event_is_retried(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """An in-stream ``server_error`` is transient: retried, then succeeds."""
+    attempts: list[int] = []
+    failing = [
+        _event(
+            {"type": "error", "error": {"code": "server_error", "message": "Upstream overloaded"}}
+        )
+    ]
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client",
+        _sequenced_client([failing, _OK_LINES], attempts),
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is False
+    assert len(result.pois) == 1
+    assert len(attempts) == 2
+
+
+def test_prefilter_transient_error_event_exhausted_keeps_reason(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """A persistent transient event fails after retries WITH the provider reason."""
+    attempts: list[int] = []
+    failing = [
+        _event(
+            {
+                "type": "response.failed",
+                "response": {"error": {"code": "rate_limit_exceeded", "message": "Slow down"}},
+            }
+        )
+    ]
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client", _sequenced_client([failing], attempts)
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert "Slow down" in result.error
+    assert len(attempts) == 4
+
+
+def test_prefilter_empty_stream_has_clear_reason(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """A 200 with zero events reports an empty stream, not a generic empty response."""
+    monkeypatch.setattr("screenscribe.semantic_filter.httpx.Client", _sequenced_client([[]], []))
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert result.error == "LLM endpoint returned an empty stream (no events)"
+
+
+def test_prefilter_non_sse_json_error_body_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """A 200 plain JSON error body (not an event stream) names the provider error."""
+    body = ['{"error": {"message": "Model is loading", "code": "model_not_ready"}}']
+    monkeypatch.setattr("screenscribe.semantic_filter.httpx.Client", _sequenced_client([body], []))
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert "Model is loading" in result.error
+
+
+def test_prefilter_content_still_parsed_alongside_events(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """Normal content keeps working with the error-event handling in place."""
+    lines = [
+        _event({"type": "response.created", "response": {"id": "resp_ok"}}),
+        _OK_POI_DELTA,
+        _event(
+            {"type": "response.completed", "response": {"id": "resp_ok", "status": "completed"}}
+        ),
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr("screenscribe.semantic_filter.httpx.Client", _sequenced_client([lines], []))
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is False
+    assert len(result.pois) == 1
+    assert result.response_id == "resp_ok"
+
+
+def test_prefilter_connect_timeout_names_unreachable_host(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """A connect/TLS handshake timeout says the LLM host was unreachable."""
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client",
+        _client_raising_at_stream(httpx.ConnectTimeout("")),
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert (
+        result.error == "LLM host api.example.com was unreachable "
+        "(connection or TLS handshake timed out)"
+    )
+    assert "test-key" not in result.error
+
+
+# --- Reasoning effort + no retry after the model produced output -------------
+#
+# Live root cause (api.libraxis.cloud, model `programmer`): without an explicit
+# reasoning effort the model reasoned in a loop for 11-20 minutes, emitted no
+# output_text and ended with response.failed / server_error. Retrying that
+# "transient" code would multiply the hang, so a provider error after any model
+# output fails fast with an actionable reason.
+
+
+def _recording_client(lines: list[str], bodies: list[dict[str, Any]], attempts: list[int]) -> type:
+    """Like ``_sequenced_client`` but records each request JSON body."""
+    base = _sequenced_client([lines], attempts)
+
+    class _Client(base):  # type: ignore[misc,valid-type]
+        def stream(self, *args: Any, **kwargs: Any) -> Any:
+            bodies.append(kwargs.get("json") or {})
+            return super().stream(*args, **kwargs)
+
+    return _Client
+
+
+def test_prefilter_sends_default_medium_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    bodies: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client", _recording_client(_OK_LINES, bodies, [])
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is False
+    assert bodies[0]["reasoning"] == {"summary": "auto", "effort": "medium"}
+
+
+def test_prefilter_uses_configured_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    config.llm_reasoning_effort = "low"
+    bodies: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client", _recording_client(_OK_LINES, bodies, [])
+    )
+
+    semantic_prefilter(transcription, config)
+
+    assert bodies[0]["reasoning"]["effort"] == "low"
+
+
+def test_prefilter_chat_completions_request_has_no_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    config.llm_endpoint = "https://api.example.com/v1/chat/completions"
+    bodies: list[dict[str, Any]] = []
+    chat_lines = [
+        'data: {"choices": [{"delta": {"content": "{\\"points_of_interest\\": []}"}}]}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client", _recording_client(chat_lines, bodies, [])
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is False
+    assert "reasoning" not in bodies[0]
+
+
+def _reasoning_delta(text: str) -> str:
+    return _event({"type": "response.reasoning_summary_text.delta", "delta": text})
+
+
+def test_prefilter_failed_after_reasoning_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """The live failure: reasoning deltas, no text, then response.failed with a
+    transient-looking server_error -> exactly ONE attempt and an actionable reason."""
+    attempts: list[int] = []
+    lines = [
+        _event({"type": "response.created", "response": {"id": "resp_loop"}}),
+        _reasoning_delta("Need maybe include X covers..."),
+        _reasoning_delta("Need maybe include X covers..."),
+        _event(
+            {
+                "type": "response.failed",
+                "response": {
+                    "status": "failed",
+                    "error": {
+                        "code": "server_error",
+                        "message": (
+                            "The compatible provider rejected the request before it "
+                            "could be completed."
+                        ),
+                    },
+                },
+            }
+        ),
+    ]
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client", _sequenced_client([lines], attempts)
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert len(attempts) == 1
+    assert "The compatible provider rejected the request" in result.error
+    assert "server_error" in result.error
+    assert "SCREENSCRIBE_LLM_REASONING_EFFORT=low" in result.error
+
+
+def test_prefilter_failed_before_any_delta_is_retried(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """A server_error response.failed before any model output stays transient."""
+    attempts: list[int] = []
+    failing = [
+        _event(
+            {
+                "type": "response.failed",
+                "response": {"error": {"code": "server_error", "message": "Upstream down"}},
+            }
+        )
+    ]
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client",
+        _sequenced_client([failing, _OK_LINES], attempts),
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is False
+    assert len(attempts) == 2
+
+
+def test_prefilter_reasoning_only_stream_without_error_is_actionable(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    lines = [_reasoning_delta("thinking"), "data: [DONE]"]
+    monkeypatch.setattr("screenscribe.semantic_filter.httpx.Client", _sequenced_client([lines], []))
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert "without an answer" in result.error
+    assert "SCREENSCRIBE_LLM_REASONING_EFFORT=low" in result.error
+
+
+# --- PR #29 review: terminal errors after partial text, sanitized HTTP reasons --
+
+
+@pytest.mark.parametrize(
+    ("terminal_event", "expected_error"),
+    [
+        (
+            {
+                "type": "response.failed",
+                "response": {"error": {"code": "server_error", "message": "Upstream cut off"}},
+            },
+            "LLM endpoint reported an error: Upstream cut off (code: server_error); "
+            "the partial output was discarded",
+        ),
+        (
+            {
+                "type": "response.incomplete",
+                "response": {"incomplete_details": {"reason": "max_output_tokens"}},
+            },
+            "LLM endpoint reported an error: Response incomplete: max_output_tokens; "
+            "the partial output was discarded",
+        ),
+    ],
+)
+def test_prefilter_terminal_error_after_valid_partial_json_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+    terminal_event: dict[str, Any],
+    expected_error: str,
+) -> None:
+    """Partial text that parses as valid JSON must NOT become a result when the
+    stream then ends with a terminal provider error: failed=True, no POIs, no retry."""
+    attempts: list[int] = []
+    lines = [_OK_POI_DELTA, _event(terminal_event)]
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client", _sequenced_client([lines], attempts)
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert result.pois == []
+    assert result.error == expected_error
+    assert len(attempts) == 1
+
+
+_USERINFO_ENDPOINT = (
+    "https://user:secret@api.example.com/v1/responses?key=abc"  # pragma: allowlist secret
+)
+
+
+def _assert_no_url_secrets(reason: str) -> None:
+    assert "secret" not in reason
+    assert "key=abc" not in reason
+    assert "user:" not in reason
+    assert "/v1/responses" not in reason
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected_error"),
+    [
+        (
+            401,
+            {"error": {"message": "Invalid API key"}},
+            "HTTP 401 from api.example.com: Invalid API key",
+        ),
+        (500, None, "HTTP 500 from api.example.com"),
+    ],
+)
+def test_prefilter_http_status_reason_hides_url_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+    status: int,
+    body: dict[str, Any] | None,
+    expected_error: str,
+) -> None:
+    """A real streamed HTTP error (MockTransport) reports status + host + the
+    provider message, never the endpoint URL's userinfo, path or query."""
+    config.llm_endpoint = _USERINFO_ENDPOINT
+    real_client = httpx.Client
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if body is None:
+            return httpx.Response(status)
+        return httpx.Response(status, json=body)
+
+    monkeypatch.setattr(
+        "screenscribe.semantic_filter.httpx.Client",
+        lambda *a, **k: real_client(transport=httpx.MockTransport(handler), **k),
+    )
+
+    result = semantic_prefilter(transcription, config)
+
+    assert result.failed is True
+    assert result.error == expected_error
+    _assert_no_url_secrets(result.error)
+
+
+def test_prefilter_reason_never_uses_raw_httpx_strings() -> None:
+    """Transport errors whose message embeds the URL are reduced to type + host."""
+    from screenscribe.semantic_filter import _describe_prefilter_failure
+
+    request = httpx.Request("POST", _USERINFO_ENDPOINT)
+    connect = httpx.ConnectError(f"connect failed for {_USERINFO_ENDPOINT}", request=request)
+    read = httpx.ReadError(f"read failed for {_USERINFO_ENDPOINT}", request=request)
+
+    connect_reason = _describe_prefilter_failure(connect, _USERINFO_ENDPOINT)
+    read_reason = _describe_prefilter_failure(read, _USERINFO_ENDPOINT)
+
+    assert connect_reason == "LLM host api.example.com was unreachable (connection failed)"
+    assert read_reason == "ReadError talking to api.example.com"
+    _assert_no_url_secrets(connect_reason)
+    _assert_no_url_secrets(read_reason)
+    assert _describe_prefilter_failure(ValueError("bad json"), _USERINFO_ENDPOINT) == (
+        "ValueError: bad json"
+    )
+
+
+# --- Provider-supplied text in pre-filter reasons is URL-redacted -------------
+
+_GATEWAY_URL = "https://user:secret@gw.example.com/x?key=abc"  # pragma: allowlist secret
+
+
+def _assert_gateway_secrets_absent(text: str) -> None:
+    assert "secret" not in text
+    assert "key=abc" not in text
+    assert "user:" not in text
+
+
+def test_prefilter_response_failed_message_url_is_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    lines = [
+        _event(
+            {
+                "type": "response.failed",
+                "response": {
+                    "error": {
+                        "code": "invalid_request",
+                        "message": f"Gateway {_GATEWAY_URL} said no",
+                    }
+                },
+            }
+        )
+    ]
+    monkeypatch.setattr("screenscribe.semantic_filter.httpx.Client", _sequenced_client([lines], []))
+
+    result = semantic_prefilter(transcription, config)
+
+    _assert_gateway_secrets_absent(result.error)
+    assert result.error == (
+        "LLM endpoint reported an error: Gateway https://***@gw.example.com/x?key=*** said no "
+        "(code: invalid_request)"
+    )
+
+
+def test_prefilter_non_sse_body_url_is_redacted_before_truncation(
+    monkeypatch: pytest.MonkeyPatch,
+    transcription: TranscriptionResult,
+    config: ScreenScribeConfig,
+) -> None:
+    """A long plain-text body: the URL is redacted before the 200-char cut, so a
+    URL straddling the boundary cannot leak its query."""
+    body = ["x" * 180 + " " + _GATEWAY_URL + " " + "y" * 200]
+    monkeypatch.setattr("screenscribe.semantic_filter.httpx.Client", _sequenced_client([body], []))
+
+    result = semantic_prefilter(transcription, config)
+
+    _assert_gateway_secrets_absent(result.error)
+    redacted_body = ("x" * 180 + " https://***@gw.example.com/x?key=*** " + "y" * 200)[:200]
+    assert result.error == (
+        f"LLM endpoint returned no stream events; response body: {redacted_body}"
+    )
+
+
+def test_http_error_detail_redacts_any_url() -> None:
+    from screenscribe.semantic_filter import _http_error_detail
+
+    response = httpx.Response(
+        400, json={"error": {"message": f"Bad upstream   {_GATEWAY_URL}\n retry later"}}
+    )
+
+    detail = _http_error_detail(response)
+
+    _assert_gateway_secrets_absent(detail)
+    assert detail == "Bad upstream https://***@gw.example.com/x?key=*** retry later"

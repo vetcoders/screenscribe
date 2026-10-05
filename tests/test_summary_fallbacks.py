@@ -543,3 +543,136 @@ def test_analyze_all_findings_unified_pool_is_not_serialized_by_stagger(
     on_time = run_with_clock(now_after_submit=0.0)
     assert on_time, "stagger scheduling was dropped entirely (no sleeps applied)"
     assert max(on_time) <= (n_tasks - 1) * orch.STAGGER_DELAY + 1e-6
+
+
+# --- Reasoning effort on every text-LLM call + failed/incomplete 200 bodies ---
+
+_CHAT_ENDPOINT = "https://api.example.com/v1/chat/completions"
+
+
+class _RecordingResponse:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
+
+
+def _recording_client(payload: dict[str, Any], bodies: list[dict[str, Any]]) -> type:
+    class _Client:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def __enter__(self) -> "_Client":
+            return self
+
+        def __exit__(self, *args: object) -> Literal[False]:
+            return False
+
+        def post(self, *args: Any, **kwargs: Any) -> _RecordingResponse:
+            bodies.append(kwargs.get("json") or {})
+            return _RecordingResponse(payload)
+
+    return _Client
+
+
+_OK_RESPONSES_PAYLOAD: dict[str, Any] = {
+    "status": "completed",
+    "output": [
+        {"type": "reasoning", "summary": [{"type": "summary_text", "text": "thinking..."}]},
+        {"type": "message", "content": [{"type": "output_text", "text": "ANSWER"}]},
+    ],
+}
+_INCOMPLETE_PAYLOAD: dict[str, Any] = {
+    "status": "incomplete",
+    "incomplete_details": {"reason": "max_output_tokens"},
+    "output": [{"type": "message", "content": [{"type": "output_text", "text": "Partial summ"}]}],
+}
+
+
+def _run_detection_summary(config: ScreenScribeConfig) -> str:
+    return generate_detection_executive_summary([_sample_detection()], config)
+
+
+def _run_unified_summary(config: ScreenScribeConfig) -> str:
+    return generate_unified_summary([_sample_unified_finding("Save button broken")], config)
+
+
+@pytest.mark.parametrize(
+    ("runner", "patch_target"),
+    [
+        (_run_detection_summary, "screenscribe.summary_fallback.httpx.Client"),
+        (_run_unified_summary, "screenscribe.unified.summaries.httpx.Client"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("endpoint", "effort", "expected_reasoning"),
+    [
+        (None, None, {"summary": "auto", "effort": "medium"}),
+        (None, "low", {"summary": "auto", "effort": "low"}),
+        (_CHAT_ENDPOINT, "low", None),
+    ],
+)
+def test_summary_calls_send_configured_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: Any,
+    patch_target: str,
+    endpoint: str | None,
+    effort: str | None,
+    expected_reasoning: dict[str, str] | None,
+) -> None:
+    config = ScreenScribeConfig(api_key="test-key")  # pragma: allowlist secret
+    if endpoint:
+        config.llm_endpoint = endpoint
+    if effort:
+        config.llm_reasoning_effort = effort
+    bodies: list[dict[str, Any]] = []
+    monkeypatch.setattr(patch_target, _recording_client(_OK_RESPONSES_PAYLOAD, bodies))
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda _d: None)
+
+    runner(config)
+
+    assert len(bodies) == 1
+    assert bodies[0].get("reasoning") == expected_reasoning
+
+
+def test_detection_summary_uses_answer_not_reasoning_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = ScreenScribeConfig(api_key="test-key")  # pragma: allowlist secret
+    monkeypatch.setattr(
+        "screenscribe.summary_fallback.httpx.Client",
+        _recording_client(_OK_RESPONSES_PAYLOAD, []),
+    )
+
+    assert _run_detection_summary(config) == "ANSWER"
+
+
+def test_detection_summary_incomplete_body_is_not_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 200 body with status incomplete yields no summary, not the partial text."""
+    config = ScreenScribeConfig(api_key="test-key")  # pragma: allowlist secret
+    monkeypatch.setattr(
+        "screenscribe.summary_fallback.httpx.Client",
+        _recording_client(_INCOMPLETE_PAYLOAD, []),
+    )
+
+    assert _run_detection_summary(config) == ""
+
+
+def test_unified_summary_incomplete_body_falls_back_to_local_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = ScreenScribeConfig(api_key="test-key")  # pragma: allowlist secret
+    findings = [_sample_unified_finding("Save button broken")]
+    monkeypatch.setattr(
+        "screenscribe.unified.summaries.httpx.Client",
+        _recording_client(_INCOMPLETE_PAYLOAD, []),
+    )
+
+    summary = generate_unified_summary(findings, config)
+
+    assert summary != "Partial summ"
+    assert "Partial summ" not in summary

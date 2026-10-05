@@ -838,3 +838,79 @@ def test_saved_config_is_owner_only(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     config = ScreenScribeConfig(**{"api" + "_key": "test-key"})
     path = config.save_default_config()
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+
+class TestLlmReasoningEffort:
+    """SCREENSCRIBE_LLM_REASONING_EFFORT: default medium, validated, persisted."""
+
+    def test_default_is_medium(self) -> None:
+        assert ScreenScribeConfig().get_llm_reasoning_effort() == "medium"
+
+    def test_env_override_is_normalized(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCREENSCRIBE_LLM_REASONING_EFFORT", " LOW ")
+        config = ScreenScribeConfig()
+
+        config._load_from_env()
+
+        assert config.llm_reasoning_effort == "low"
+
+    def test_invalid_env_value_warns_and_uses_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCREENSCRIBE_LLM_REASONING_EFFORT", "extreme")
+        config = ScreenScribeConfig()
+
+        with pytest.warns(UserWarning, match="SCREENSCRIBE_LLM_REASONING_EFFORT"):
+            config._load_from_env()
+
+        assert config.llm_reasoning_effort == "medium"
+
+    def test_config_file_key(self) -> None:
+        config = ScreenScribeConfig()
+
+        config._set_from_key("SCREENSCRIBE_LLM_REASONING_EFFORT", "high")
+
+        assert config.llm_reasoning_effort == "high"
+        # Must not leak into the LLM model through substring routing.
+        assert config.llm_model == DEFAULT_LLM_MODEL
+
+    def test_direct_invalid_value_falls_back_at_use(self) -> None:
+        assert ScreenScribeConfig(llm_reasoning_effort="bogus").get_llm_reasoning_effort() == (
+            "medium"
+        )
+
+    def test_saved_template_round_trips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        path = ScreenScribeConfig(llm_reasoning_effort="low").save_default_config()
+
+        assert "SCREENSCRIBE_LLM_REASONING_EFFORT=low" in path.read_text()
+        reloaded = ScreenScribeConfig()
+        reloaded._load_from_file(path)
+        assert reloaded.llm_reasoning_effort == "low"
+
+
+class TestInvalidEndpointMessageRedaction:
+    """validate() never echoes a raw endpoint URL in the invalid-endpoint error."""
+
+    def test_invalid_libraxis_chat_endpoint_is_redacted(self) -> None:
+        config = ScreenScribeConfig(
+            llm_endpoint=(
+                "https://user:secret@api.libraxis.cloud/v1/chat/completions?key=abc"  # pragma: allowlist secret
+            ),
+        )
+
+        errors = config.validate(providers={"llm"})
+        first_line = errors[0].splitlines()[0]
+
+        assert first_line == (
+            "Invalid endpoint: https://***@api.libraxis.cloud/v1/chat/completions?key=***"
+        )
+        assert "secret" not in errors[0]
+        assert "key=abc" not in errors[0]
+
+    def test_unparseable_endpoint_label(self) -> None:
+        from screenscribe.config import _invalid_endpoint_label
+
+        assert _invalid_endpoint_label("not a url") == "Invalid endpoint (unparseable URL)"
