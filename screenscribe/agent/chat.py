@@ -11,7 +11,7 @@ SSE (binding for w1-05)::
     event: token        data: {"text": ...}
     event: tool_call    data: {"name", "input"}
     event: tool_result  data: {"name", "result"}
-    event: done         data: {"response_id": ...}
+    event: done         data: {"response_id", "provider", "protocol", "host"}
     event: error        data: {"message": ...}
 
 ``tool_result.result`` may be a ``review_patch`` or ``review_plan`` object from
@@ -24,15 +24,16 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
-from typing import Any
-from urllib.parse import urlsplit
+from dataclasses import dataclass, field
+from typing import Annotated, Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from ..api_utils import (
     extract_stream_error_event,
+    is_chat_completions_endpoint,
     redact_error_message,
     responses_reasoning_options,
 )
@@ -43,6 +44,9 @@ from .tools import ReportToolbelt, anthropic_tool_schemas, responses_tool_schema
 logger = logging.getLogger(__name__)
 
 _MAX_TOOL_ROUNDS = 8
+_MAX_MESSAGE_CHARS = 16_000
+_MAX_HISTORY_ITEMS = 50
+_MAX_HISTORY_FIELD_CHARS = 16_000
 _INTERNAL_HOSTS = {"api.libraxis.cloud"}
 _TRUST_LEVELS = {"local", "internal", "processor", "external"}
 _KEPT_UNDER_DENY = {"local", "internal", "processor"}
@@ -50,6 +54,7 @@ _KEPT_UNDER_DENY = {"local", "internal", "processor"}
 # Tests replace this to avoid the network.
 RoundTripper = Callable[["AgentProvider", dict[str, Any]], Awaitable["ProviderRound"]]
 round_tripper: RoundTripper | None = None
+BoundedHistoryField = Annotated[str, StringConstraints(max_length=_MAX_HISTORY_FIELD_CHARS)]
 
 
 class AgentChatError(Exception):
@@ -59,15 +64,20 @@ class AgentChatError(Exception):
 class AgentChatRequest(BaseModel):
     """POST /api/agent/chat and /api/agent/chat/stream body."""
 
-    message: str = Field(..., min_length=1)
-    history: list[dict[str, str]] = Field(default_factory=list)
-    previous_response_id: str | None = None
+    message: str = Field(..., min_length=1, max_length=_MAX_MESSAGE_CHARS)
+    history: list[dict[str, BoundedHistoryField]] = Field(
+        default_factory=list, max_length=_MAX_HISTORY_ITEMS
+    )
+    previous_response_id: str | None = Field(default=None, max_length=512)
+    previous_response_provider: str | None = Field(default=None, max_length=32)
+    previous_response_protocol: str | None = Field(default=None, max_length=32)
+    previous_response_host: str | None = Field(default=None, max_length=255)
 
 
 @dataclass(frozen=True)
 class AgentProvider:
     name: str
-    protocol: str  # "responses" | "anthropic"
+    protocol: str  # "responses" | "anthropic" | "chat_completions"
     key: str
     model: str
     url: str
@@ -89,6 +99,7 @@ class ProviderRound:
     response_id: str | None
     function_calls: list[FunctionCall]
     error: str | None = None
+    tool_use_blocks: list[dict[str, Any]] = field(default_factory=list)
 
 
 def format_sse(event: str, payload: dict[str, Any]) -> str:
@@ -100,14 +111,46 @@ def normalize_agent_egress(value: str | None) -> str:
     return "allow" if raw == "allow" else "deny"
 
 
-def analysis_hosts(config: ScreenScribeConfig) -> frozenset[str]:
-    """Hosts that already received this recording (STT, LLM, vision)."""
-    hosts: set[str] = set()
-    for url in (config.stt_endpoint, config.llm_endpoint, config.vision_endpoint):
-        host = _host_of(url)
-        if host:
-            hosts.add(host)
-    return frozenset(hosts)
+def analysis_hosts(
+    config: ScreenScribeConfig,
+    processing_provenance: dict[str, Any] | None = None,
+) -> frozenset[str]:
+    """Configured agent host only when a persisted semantic receipt proves it.
+
+    Legacy reports and configured-but-unused endpoints are unproven. They remain
+    external under ``deny`` unless the operator supplies an explicit trust
+    override.
+    """
+    if not isinstance(processing_provenance, dict):
+        return frozenset()
+    receipt = processing_provenance.get("llm")
+    if not isinstance(receipt, dict):
+        return frozenset()
+    host = receipt.get("host")
+    protocol = receipt.get("protocol")
+    provider = receipt.get("provider")
+    if not isinstance(host, str) or not host.strip():
+        return frozenset()
+    if not isinstance(protocol, str) or not protocol.strip():
+        return frozenset()
+    if not isinstance(provider, str) or not provider.strip():
+        return frozenset()
+    host = host.strip().lower()
+    if any(char.isspace() for char in host) or any(
+        marker in host for marker in ("://", "/", "@", "?", "#")
+    ):
+        return frozenset()
+    expected_host = _host_of(config.llm_endpoint)
+    expected_protocol = (
+        "chat_completions" if is_chat_completions_endpoint(config.llm_endpoint) else "responses"
+    )
+    if (
+        host != expected_host
+        or protocol != expected_protocol
+        or provider != config.recognized_provider()
+    ):
+        return frozenset()
+    return frozenset({host})
 
 
 def infer_trust(
@@ -119,9 +162,9 @@ def infer_trust(
     """Classify a provider host.
 
     Explicit ``SCREENSCRIBE_AGENT_PRIMARY_TRUST`` / fallback trust wins.
-    Loopback is ``local``; Libraxis is ``internal``. A remaining host that
-    already analyzed this recording (STT/LLM/vision) is ``processor``.
-    Everything else is ``external``.
+    Loopback is ``local``; Libraxis is ``internal``. A remaining host is
+    ``processor`` only when ``analysis_hosts`` received a matching persisted
+    semantic-LLM receipt. Everything else is ``external``.
     """
     if explicit:
         level = explicit.strip().lower()
@@ -137,10 +180,14 @@ def infer_trust(
     return "external"
 
 
-def build_providers(config: ScreenScribeConfig) -> list[AgentProvider]:
+def build_providers(
+    config: ScreenScribeConfig,
+    *,
+    processing_provenance: dict[str, Any] | None = None,
+) -> list[AgentProvider]:
     """PRIMARY = screenscribe LLM Responses endpoint; FALLBACK = optional Anthropic."""
     providers: list[AgentProvider] = []
-    processor_hosts = analysis_hosts(config)
+    processor_hosts = analysis_hosts(config, processing_provenance)
     primary_key = config.get_llm_api_key()
     if primary_key:
         url = config.llm_endpoint
@@ -148,7 +195,7 @@ def build_providers(config: ScreenScribeConfig) -> list[AgentProvider]:
         providers.append(
             AgentProvider(
                 name="primary",
-                protocol="responses",
+                protocol=("chat_completions" if is_chat_completions_endpoint(url) else "responses"),
                 key=primary_key,
                 model=config.llm_model,
                 url=url,
@@ -176,10 +223,15 @@ def build_providers(config: ScreenScribeConfig) -> list[AgentProvider]:
         host = _host_of(url)
         trust_override = os.environ.get("SCREENSCRIBE_AGENT_FALLBACK_TRUST")
         model = (os.environ.get("SCREENSCRIBE_AGENT_FALLBACK_MODEL") or "claude-opus-4-6").strip()
+        resolved_protocol = "anthropic"
+        if protocol != "anthropic":
+            resolved_protocol = (
+                "chat_completions" if is_chat_completions_endpoint(url) else "responses"
+            )
         providers.append(
             AgentProvider(
                 name="fallback",
-                protocol="anthropic" if protocol == "anthropic" else "responses",
+                protocol=resolved_protocol,
                 key=fallback_key,
                 model=model,
                 url=url,
@@ -214,21 +266,39 @@ async def stream_agent_chat(
     message: str,
     history: list[dict[str, str]] | None = None,
     previous_response_id: str | None = None,
+    previous_response_provider: str | None = None,
+    previous_response_protocol: str | None = None,
+    previous_response_host: str | None = None,
 ) -> AsyncIterator[str]:
     """Yield SSE frames for one user turn."""
+    provenance = report.get("processing_provenance")
+    providers, skipped = apply_egress(
+        build_providers(
+            config,
+            processing_provenance=provenance if isinstance(provenance, dict) else None,
+        ),
+        config.agent_egress,
+    )
+    if not providers:
+        yield format_sse("error", {"message": _no_provider_message(skipped, config)})
+        return
+    bound_previous_id = _bound_previous_response_id(
+        previous_response_id,
+        provider_name=previous_response_provider,
+        protocol=previous_response_protocol,
+        host=previous_response_host,
+        providers=providers,
+    )
     turn = prepare_turn(
         report=report,
         message=message,
         history=history,
-        previous_response_id=previous_response_id,
+        previous_response_id=bound_previous_id,
     )
-    providers, skipped = apply_egress(build_providers(config), config.agent_egress)
-    if not providers:
-        yield format_sse("error", {"message": _no_provider_message(skipped, config)})
-        return
 
     last_error: str | None = None
     for provider in providers:
+        emitted = False
         try:
             async for frame in _run_provider(
                 config=config,
@@ -236,11 +306,17 @@ async def stream_agent_chat(
                 turn=turn,
                 tools=tools,
             ):
+                emitted = True
                 yield frame
             return
         except Exception as exc:
             last_error = redact_error_message(exc)
             logger.warning("Agent provider %s failed: %s", provider.name, last_error)
+            if emitted:
+                # Retrying a whole turn after any visible token/tool frame would
+                # splice two providers' answers into one SSE response.
+                yield format_sse("error", {"message": last_error})
+                return
 
     yield format_sse(
         "error",
@@ -256,6 +332,9 @@ async def collect_agent_chat(
     message: str,
     history: list[dict[str, str]] | None = None,
     previous_response_id: str | None = None,
+    previous_response_provider: str | None = None,
+    previous_response_protocol: str | None = None,
+    previous_response_host: str | None = None,
 ) -> dict[str, Any]:
     """Non-streaming turn: concatenate token text and return the chain id."""
     text_parts: list[str] = []
@@ -268,6 +347,9 @@ async def collect_agent_chat(
         message=message,
         history=history,
         previous_response_id=previous_response_id,
+        previous_response_provider=previous_response_provider,
+        previous_response_protocol=previous_response_protocol,
+        previous_response_host=previous_response_host,
     ):
         event, payload = _parse_sse_frame(frame)
         if event == "token":
@@ -285,6 +367,29 @@ async def collect_agent_chat(
     return {"text": "".join(text_parts), "response_id": response_id}
 
 
+def _bound_previous_response_id(
+    response_id: str | None,
+    *,
+    provider_name: str | None,
+    protocol: str | None,
+    host: str | None,
+    providers: list[AgentProvider],
+) -> str | None:
+    """Accept a cursor only with the exact primary Responses identity that minted it."""
+    if not response_id or not provider_name or not protocol or not host:
+        return None
+    for provider in providers:
+        if (
+            provider.slot == "primary"
+            and provider.protocol == "responses"
+            and provider.name == provider_name
+            and provider.protocol == protocol
+            and provider.host == host.strip().lower()
+        ):
+            return response_id
+    return None
+
+
 async def _run_provider(
     *,
     config: ScreenScribeConfig,
@@ -294,24 +399,36 @@ async def _run_provider(
 ) -> AsyncIterator[str]:
     include_repo = tools.repo_root is not None
     current_input: list[dict[str, Any]] = list(turn.input_items)
-    previous = turn.previous_response_id
-    send_instructions = previous is None
+    # Chain ids are scoped to the provider endpoint that minted them. The client
+    # cursor belongs to the primary; a fallback starts from seed/history and may
+    # chain only ids minted by its own later tool rounds.
+    previous = (
+        turn.previous_response_id
+        if provider.protocol == "responses" and provider.slot == "primary"
+        else None
+    )
     last_response_id = previous
 
     for _round in range(_MAX_TOOL_ROUNDS):
+        if provider.protocol == "chat_completions":
+            raise AgentChatError(
+                "Review agent requires a Responses API endpoint; the configured "
+                "LLM endpoint uses /v1/chat/completions."
+            )
         if provider.protocol == "anthropic":
             payload = {
                 "model": provider.model,
-                "instructions": turn.instructions if send_instructions else "",
+                "instructions": turn.instructions,
                 "input": current_input,
                 "tools": anthropic_tool_schemas(include_repo=include_repo),
-                "previous_response_id": previous,
             }
         else:
             payload = _build_responses_payload(
                 config=config,
                 provider=provider,
-                instructions=turn.instructions if send_instructions else None,
+                # Responses does not carry top-level instructions across a
+                # previous_response_id chain; resend the stable policy every round.
+                instructions=turn.instructions,
                 input_items=current_input,
                 previous_response_id=previous,
                 include_repo=include_repo,
@@ -319,16 +436,25 @@ async def _run_provider(
         round_result = await _dispatch_round(provider, payload)
         if round_result.error:
             raise AgentChatError(round_result.error)
-        if round_result.response_id:
+        if round_result.response_id and provider.protocol == "responses":
             last_response_id = round_result.response_id
             previous = round_result.response_id
         if round_result.text:
             yield format_sse("token", {"text": round_result.text})
         if not round_result.function_calls:
-            yield format_sse("done", {"response_id": last_response_id})
+            yield format_sse(
+                "done",
+                {
+                    "response_id": last_response_id,
+                    "provider": provider.name,
+                    "protocol": provider.protocol,
+                    "host": provider.host,
+                },
+            )
             return
 
         outputs: list[dict[str, Any]] = []
+        anthropic_results: list[dict[str, Any]] = []
         for call in round_result.function_calls:
             yield format_sse("tool_call", {"name": call.name, "input": call.arguments})
             result_json = tools.execute(call.name, call.arguments)
@@ -344,8 +470,30 @@ async def _run_provider(
                     "output": result_json,
                 }
             )
-        current_input = outputs
-        send_instructions = False
+            anthropic_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": call.call_id,
+                    "content": result_json,
+                }
+            )
+        if provider.protocol == "anthropic":
+            tool_uses = round_result.tool_use_blocks or [
+                {
+                    "type": "tool_use",
+                    "id": call.call_id,
+                    "name": call.name,
+                    "input": call.arguments,
+                }
+                for call in round_result.function_calls
+            ]
+            current_input = [
+                *current_input,
+                {"role": "assistant", "content": tool_uses},
+                {"role": "user", "content": anthropic_results},
+            ]
+        else:
+            current_input = outputs
 
     yield format_sse(
         "error",
@@ -393,8 +541,10 @@ async def _responses_round(provider: AgentProvider, payload: dict[str, Any]) -> 
         "Accept": "text/event-stream",
     }
     text_parts: list[str] = []
+    final_text: str | None = None
     response_id: str | None = None
     calls: dict[str, dict[str, Any]] = {}
+    item_to_call: dict[str, str] = {}
     async with httpx.AsyncClient(timeout=90.0) as client:
         async with client.stream("POST", provider.url, headers=headers, json=payload) as resp:
             if resp.status_code >= 400:
@@ -417,7 +567,7 @@ async def _responses_round(provider: AgentProvider, payload: dict[str, Any]) -> 
                     continue
                 stream_error = extract_stream_error_event(event)
                 if stream_error is not None:
-                    raise AgentChatError(stream_error.message)
+                    raise AgentChatError(str(stream_error))
                 event_type = str(event.get("type") or "")
                 if event_type == "response.created":
                     created = event.get("response")
@@ -427,6 +577,10 @@ async def _responses_round(provider: AgentProvider, payload: dict[str, Any]) -> 
                     delta = event.get("delta")
                     if isinstance(delta, str) and delta:
                         text_parts.append(delta)
+                elif event_type == "response.output_text.done":
+                    text = event.get("text")
+                    if isinstance(text, str):
+                        final_text = text
                 elif event_type in {
                     "response.function_call_arguments.delta",
                     "response.function_call_arguments.done",
@@ -435,56 +589,73 @@ async def _responses_round(provider: AgentProvider, payload: dict[str, Any]) -> 
                     "response.completed",
                     "response.done",
                 }:
-                    _ingest_function_events(event, calls)
+                    _ingest_function_events(event, calls, item_to_call)
                     completed = event.get("response")
                     if isinstance(completed, dict) and completed.get("id"):
                         response_id = completed.get("id") or response_id
                         output = completed.get("output")
                         if isinstance(output, list):
-                            _ingest_output_list(output, calls)
+                            _ingest_output_list(output, calls, item_to_call)
     return ProviderRound(
-        text="".join(text_parts),
+        text="".join(text_parts) if text_parts else (final_text or ""),
         response_id=response_id if isinstance(response_id, str) else None,
         function_calls=_calls_from_bucket(calls),
     )
 
 
-def _ingest_function_events(event: dict[str, Any], calls: dict[str, dict[str, Any]]) -> None:
+def _ingest_function_events(
+    event: dict[str, Any],
+    calls: dict[str, dict[str, Any]],
+    item_to_call: dict[str, str],
+) -> None:
     item = event.get("item")
     if isinstance(item, dict) and item.get("type") in {"function_call", "tool_call"}:
-        _ingest_call_item(item, calls)
+        _ingest_call_item(item, calls, item_to_call)
     name = event.get("name")
-    call_id = event.get("item_id") or event.get("call_id") or event.get("id")
+    item_id = event.get("item_id")
+    event_call_id = event.get("call_id") or event.get("id")
+    key = item_to_call.get(str(item_id or "")) or str(event_call_id or item_id or name or "call")
     arguments = event.get("arguments")
-    if name or arguments:
-        key = str(call_id or name or "call")
+    delta = event.get("delta")
+    if name or isinstance(arguments, (str, dict)) or isinstance(delta, str):
         bucket = calls.setdefault(key, {"name": "", "call_id": key, "arguments": ""})
         if isinstance(name, str) and name:
             bucket["name"] = name
-        if isinstance(call_id, str) and call_id:
-            bucket["call_id"] = call_id
+        if isinstance(event_call_id, str) and event_call_id:
+            bucket["call_id"] = event_call_id
         if isinstance(arguments, str):
             bucket["arguments"] = arguments
-        elif event.get("type", "").endswith(".delta"):
-            delta = event.get("delta")
-            if isinstance(delta, str):
-                bucket["arguments"] = str(bucket.get("arguments") or "") + delta
+        elif isinstance(arguments, dict):
+            bucket["arguments"] = json.dumps(arguments)
+        elif isinstance(delta, str):
+            bucket["arguments"] = str(bucket.get("arguments") or "") + delta
 
 
-def _ingest_output_list(output: list[Any], calls: dict[str, dict[str, Any]]) -> None:
+def _ingest_output_list(
+    output: list[Any],
+    calls: dict[str, dict[str, Any]],
+    item_to_call: dict[str, str],
+) -> None:
     for item in output:
         if isinstance(item, dict):
-            _ingest_call_item(item, calls)
+            _ingest_call_item(item, calls, item_to_call)
 
 
-def _ingest_call_item(item: dict[str, Any], calls: dict[str, dict[str, Any]]) -> None:
+def _ingest_call_item(
+    item: dict[str, Any],
+    calls: dict[str, dict[str, Any]],
+    item_to_call: dict[str, str],
+) -> None:
     if item.get("type") not in {"function_call", "tool_call"}:
         return
-    call_id = str(item.get("call_id") or item.get("id") or "")
+    item_id = str(item.get("id") or "")
+    call_id = str(item.get("call_id") or item_id)
     name = str(item.get("name") or "")
     if not call_id and not name:
         return
     key = call_id or name
+    if item_id:
+        item_to_call[item_id] = key
     bucket = calls.setdefault(key, {"name": name, "call_id": call_id or key, "arguments": ""})
     if name:
         bucket["name"] = name
@@ -531,7 +702,7 @@ async def _anthropic_round(provider: AgentProvider, payload: dict[str, Any]) -> 
             "(pip install 'screenscribe[anthropic]')."
         ) from exc
 
-    client = AsyncAnthropic(api_key=provider.key)
+    client = AsyncAnthropic(api_key=provider.key, base_url=_anthropic_base_url(provider.url))
     messages = _anthropic_messages_from_input(payload.get("input") or [])
     system = str(payload.get("instructions") or "")
     tools = payload.get("tools") or []
@@ -557,22 +728,36 @@ async def _anthropic_round(provider: AgentProvider, payload: dict[str, Any]) -> 
         final = await stream.get_final_message()
 
     calls: list[FunctionCall] = []
+    tool_use_blocks: list[dict[str, Any]] = []
     if getattr(final, "stop_reason", None) == "tool_use":
         for block in final.content:
             if getattr(block, "type", None) != "tool_use":
                 continue
             raw_input = getattr(block, "input", {}) or {}
+            block_id = str(getattr(block, "id", "") or "")
+            block_name = str(getattr(block, "name", "") or "")
+            normalized_input = raw_input if isinstance(raw_input, dict) else {}
+            tool_use_blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": block_id,
+                    "name": block_name,
+                    "input": normalized_input,
+                }
+            )
             calls.append(
                 FunctionCall(
-                    name=str(getattr(block, "name", "") or ""),
-                    call_id=str(getattr(block, "id", "") or ""),
-                    arguments=raw_input if isinstance(raw_input, dict) else {},
+                    name=block_name,
+                    call_id=block_id,
+                    arguments=normalized_input,
                 )
             )
     return ProviderRound(
         text="".join(text_parts),
-        response_id=getattr(final, "id", None),
+        # Anthropic message ids cannot be replayed as Responses chain ids.
+        response_id=None,
         function_calls=calls,
+        tool_use_blocks=tool_use_blocks,
     )
 
 
@@ -595,20 +780,43 @@ def _anthropic_messages_from_input(items: list[Any]) -> list[dict[str, Any]]:
         if role not in {"user", "assistant"}:
             continue
         content = item.get("content")
-        text = ""
+        blocks: list[dict[str, Any]] = []
         if isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "input_text":
-                    text += str(block.get("text") or "")
+                    text = str(block.get("text") or "")
+                    if text:
+                        blocks.append({"type": "text", "text": text})
+                elif isinstance(block, dict) and block.get("type") in {
+                    "text",
+                    "tool_result",
+                    "tool_use",
+                }:
+                    blocks.append(dict(block))
         elif isinstance(content, str):
-            text = content
-        if text:
-            messages.append({"role": role, "content": text})
+            if content:
+                blocks.append({"type": "text", "text": content})
+        if blocks:
+            messages.append({"role": role, "content": blocks})
     if tool_results:
         messages.append({"role": "user", "content": tool_results})
     if not messages:
         messages.append({"role": "user", "content": ""})
     return messages
+
+
+def _anthropic_base_url(messages_url: str) -> str:
+    """Convert a configured Messages endpoint to the SDK's base URL."""
+    try:
+        parts = urlsplit(messages_url)
+    except ValueError:
+        return messages_url
+    path = parts.path.rstrip("/")
+    for suffix in ("/v1/messages", "/messages"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
 def _no_provider_message(skipped: list[AgentProvider], config: ScreenScribeConfig) -> str:
@@ -617,8 +825,8 @@ def _no_provider_message(skipped: list[AgentProvider], config: ScreenScribeConfi
         return (
             "All agent providers were skipped by egress policy "
             f"(SCREENSCRIBE_AGENT_EGRESS={normalize_agent_egress(config.agent_egress)}). "
-            f"Skipped: {names}. Hosts already used for STT, LLM, or vision "
-            "analysis are kept as trust=processor. Set "
+            f"Skipped: {names}. A host is kept as trust=processor only when the "
+            "report carries a matching successful semantic-LLM receipt. Set "
             "SCREENSCRIBE_AGENT_EGRESS=allow to permit other external providers. "
             "SCREENSCRIBE_AGENT_PRIMARY_TRUST=external opts the analysis host "
             "out of that keep-list."

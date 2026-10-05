@@ -8,6 +8,7 @@ Read tools inspect the loaded report. Write tools do **not** touch
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,52 @@ from ..work_item import VERDICT_VALUES
 
 _MAX_OPEN_FILE_BYTES = 80_000
 _MAX_TRANSCRIPT_HITS = 80
+_SAFE_REPO_FILE_SUFFIXES = frozenset(
+    {
+        ".bash",
+        ".c",
+        ".cc",
+        ".cfg",
+        ".cjs",
+        ".cpp",
+        ".css",
+        ".fish",
+        ".go",
+        ".graphql",
+        ".h",
+        ".hpp",
+        ".html",
+        ".ini",
+        ".java",
+        ".js",
+        ".json",
+        ".jsx",
+        ".kt",
+        ".kts",
+        ".md",
+        ".mjs",
+        ".proto",
+        ".py",
+        ".pyi",
+        ".rs",
+        ".rst",
+        ".scss",
+        ".sh",
+        ".sql",
+        ".swift",
+        ".toml",
+        ".ts",
+        ".tsx",
+        ".txt",
+        ".xml",
+        ".yaml",
+        ".yml",
+        ".zsh",
+    }
+)
+_SAFE_REPO_FILE_NAMES = frozenset({"dockerfile", "license", "makefile", "notice", "readme"})
+_SENSITIVE_REPO_NAME_PARTS = ("credential", "secret", "token")
+_SENSITIVE_REPO_SUFFIXES = frozenset({".der", ".jks", ".key", ".keystore", ".p12", ".pem", ".pfx"})
 
 SEVERITY_VALUES: tuple[str, ...] = ("critical", "high", "medium", "low", "none")
 EDIT_FIELD_KEYS: tuple[str, ...] = ("summary", "category", "notes", "action_items")
@@ -248,8 +295,9 @@ def responses_tool_schemas(*, include_repo: bool) -> list[dict[str, Any]]:
         tools.append(
             _function_tool(
                 "open_repo_file",
-                "Read a text file from the repo the review server was started with (--repo). "
-                "Path must stay inside that repo root.",
+                "Read an allowlisted source or documentation file from the repo root "
+                "supplied programmatically to the review server. Hidden and secret-like "
+                "paths are refused.",
                 {
                     "path": {
                         "type": "string",
@@ -352,7 +400,8 @@ class ReportToolbelt:
                 "summary": unified.get("summary") or finding.get("text"),
                 "screenshot": finding.get("screenshot"),
             }
-            hay = " ".join(str(v) for v in row.values() if v is not None).lower()
+            hay_values = [*row.values(), finding.get("text"), finding.get("context")]
+            hay = " ".join(str(v) for v in hay_values if v is not None).lower()
             if needle and needle not in hay:
                 continue
             rows.append(row)
@@ -361,6 +410,12 @@ class ReportToolbelt:
     def get_transcript(self, start: object = None, end: object = None) -> dict[str, Any]:
         start_s = _as_float(start)
         end_s = _as_float(end)
+        if start not in (None, "") and start_s is None:
+            return {"error": "start must be a finite, non-negative timestamp"}
+        if end not in (None, "") and end_s is None:
+            return {"error": "end must be a finite, non-negative timestamp"}
+        if start_s is not None and end_s is not None and start_s > end_s:
+            return {"error": "start must be less than or equal to end"}
         hits: list[dict[str, Any]] = []
         for segment in self._segments():
             seg_start = _as_float(segment.get("start"))
@@ -389,7 +444,7 @@ class ReportToolbelt:
     def seek(self, timestamp: object) -> dict[str, Any]:
         ts = _as_float(timestamp)
         if ts is None:
-            return {"error": "seek requires a numeric timestamp"}
+            return {"error": "seek requires a finite, non-negative timestamp"}
         return {"action": "seek", "timestamp": ts}
 
     def show_frame(self, *, finding_id: object = None, timestamp: object = None) -> dict[str, Any]:
@@ -435,16 +490,18 @@ class ReportToolbelt:
         else:
             resolved = (self.repo_root / candidate).resolve()
         try:
-            resolved.relative_to(self.repo_root)
+            relative = resolved.relative_to(self.repo_root)
         except ValueError:
             return {"error": "path escapes the repo root"}
         if not resolved.is_file():
             return {"error": "not a file"}
+        if _repo_path_is_sensitive(relative):
+            return {"error": "path is not an allowlisted source or documentation file"}
         size = resolved.stat().st_size
         if size > _MAX_OPEN_FILE_BYTES:
             return {"error": f"file too large ({size} bytes)"}
         text = resolved.read_text(encoding="utf-8", errors="replace")
-        return {"path": str(resolved.relative_to(self.repo_root)), "content": text}
+        return {"path": str(relative), "content": text}
 
     def set_verdict(self, finding_id: object, verdict: object) -> dict[str, Any]:
         fid = self._require_finding_id(finding_id)
@@ -491,7 +548,7 @@ class ReportToolbelt:
     ) -> dict[str, Any]:
         ts = _as_float(timestamp)
         if ts is None:
-            return {"error": "add_finding requires a numeric timestamp"}
+            return {"error": "add_finding requires a finite, non-negative timestamp"}
         text = str(summary or "").strip()
         if not text:
             return {"error": "add_finding requires a non-empty summary"}
@@ -660,6 +717,23 @@ class ReportToolbelt:
         return best
 
 
+def _repo_path_is_sensitive(relative: Path) -> bool:
+    """Fail closed for hidden, credential-like, and non-source repo paths."""
+    if any(part.startswith(".") for part in relative.parts):
+        return True
+    name = relative.name.lower()
+    if name in {"id_dsa", "id_ed25519", "id_rsa", "id_ecdsa"}:
+        return True
+    if any(marker in name for marker in _SENSITIVE_REPO_NAME_PARTS):
+        return True
+    if relative.suffix.lower() in _SENSITIVE_REPO_SUFFIXES:
+        return True
+    return (
+        relative.suffix.lower() not in _SAFE_REPO_FILE_SUFFIXES
+        and name not in _SAFE_REPO_FILE_NAMES
+    )
+
+
 def _unified(finding: dict[str, Any]) -> dict[str, Any]:
     unified = finding.get("unified_analysis")
     return unified if isinstance(unified, dict) else {}
@@ -671,11 +745,13 @@ def _as_float(value: object) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) and parsed >= 0 else None
     try:
-        return float(str(value).strip())
+        parsed = float(str(value).strip())
     except (TypeError, ValueError):
         return None
+    return parsed if math.isfinite(parsed) and parsed >= 0 else None
 
 
 def _unknown_or_missing_finding(finding_id: object) -> dict[str, Any]:
