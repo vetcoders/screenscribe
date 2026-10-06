@@ -4006,11 +4006,9 @@ function renderManualFrames() {
         // .manual-frame-transcript.empty uses), instead of styling the placeholder
         // identically to a genuine summary.
         const summaryText = frame.result?.summary;
-        // An image-only capture reaches the VLM with a synthetic fallback
-        // description. Its summary cannot be attributed to the reviewer's words.
-        const summarySource = hasHumanInput ? 'ai-paraphrase' : 'visual-model-summary';
-        const summaryTitleKey = hasHumanInput ? 'review.manualFrameParaphraseSource' : 'review.manualFrameModelSummarySource';
-        const summaryHintKey = hasHumanInput ? 'review.manualFrameParaphraseHint' : 'review.manualFrameModelSummaryHint';
+        // Notes can change after analysis while the result remains unchanged.
+        // Attribute the summary to the model, without inferring its input from
+        // the current editable human fields or introducing new stored metadata.
         const summaryBody = summaryText
             ? `<div class="manual-frame-body">${escapeHtml(summaryText)}</div>`
             : `<div class="manual-frame-body empty" data-i18n="review.noSummary">${escapeHtml(t('review.noSummary'))}</div>`;
@@ -4062,9 +4060,9 @@ function renderManualFrames() {
                         ${humanEmpty}
                         ${noteEditor}
                     </section>
-                    <section class="manual-frame-source" data-content-source="${summarySource}">
-                        <h4 class="manual-frame-source-title" data-i18n="${summaryTitleKey}">${escapeHtml(t(summaryTitleKey))}</h4>
-                        <p class="manual-frame-source-hint" data-i18n="${summaryHintKey}">${escapeHtml(t(summaryHintKey))}</p>
+                    <section class="manual-frame-source" data-content-source="ai-summary">
+                        <h4 class="manual-frame-source-title" data-i18n="review.manualFrameSummarySource">${escapeHtml(t('review.manualFrameSummarySource'))}</h4>
+                        <p class="manual-frame-source-hint" data-i18n="review.manualFrameSummaryHint">${escapeHtml(t('review.manualFrameSummaryHint'))}</p>
                         ${summaryBody}
                     </section>
                     ${issues}
