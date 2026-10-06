@@ -40,6 +40,8 @@ import html as _html
 
 import pytest
 
+from .test_review_layout_manual_frame import LONG_TRANSCRIPT, _inject_long_manual_frame
+
 pytestmark = [pytest.mark.e2e, pytest.mark.browser, pytest.mark.requires_playwright]
 
 
@@ -123,6 +125,53 @@ def test_review_tabs_present(review_url, browser_context) -> None:
             f"review tab button '{tab}' missing"
         )
         assert page.locator(f"#tab-{tab}").count() == 1, f"review tab panel '{tab}' missing"
+    page.close()
+
+
+@pytest.mark.parametrize("language", ["en", "pl"])
+@pytest.mark.parametrize("width", [1440, 390])
+def test_manual_frame_sources_are_visible_and_localized(
+    review_url, browser_context, language: str, width: int
+) -> None:
+    """Source attribution survives narrow layout and the actual language toggle."""
+    page = browser_context.new_page()
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.goto(review_url, wait_until="load")
+    _inject_long_manual_frame(page)
+    page.evaluate(
+        """() => {
+            const frame = reportState.manualFrames[0];
+            frame.notes = 'HUMAN_NOTE: tylko copy, bez zmiany logiki';
+            frame.result.summary = 'AI_PARAPHRASE: użytkownik zwraca uwagę na powtórzenia';
+            frame.result.issues_detected = ['VISUAL_GUESS: obcięty placeholder'];
+            renderManualFrames();
+        }"""
+    )
+    page.locator(f'#langToggle [data-lang="{language}"]').click()
+    expected = (
+        ["Twoje słowa i notatki", "Parafraza AI", "Sugestie modelu z analizy obrazu"]
+        if language == "pl"
+        else ["Your words and notes", "AI paraphrase", "Model suggestions from image analysis"]
+    )
+    sections = page.locator("#manualFindingsList [data-content-source]")
+    assert sections.count() == 3
+    titles = sections.locator(".manual-frame-source-title").all_text_contents()
+    assert titles == expected
+    human, paraphrase, visual = (sections.nth(i) for i in range(3))
+    assert LONG_TRANSCRIPT in human.inner_text()
+    assert "HUMAN_NOTE:" in human.inner_text()
+    assert "AI_PARAPHRASE:" not in human.inner_text()
+    assert "VISUAL_GUESS:" not in human.inner_text()
+    assert "AI_PARAPHRASE:" in paraphrase.inner_text()
+    assert "VISUAL_GUESS:" in visual.inner_text()
+    positions = []
+    for section in (human, paraphrase, visual):
+        assert section.is_visible()
+        box = section.bounding_box()
+        assert box is not None and box["width"] >= 200
+        assert box["x"] >= 0 and box["x"] + box["width"] <= width + 1
+        positions.append(box["y"])
+    assert positions == sorted(positions)
     page.close()
 
 

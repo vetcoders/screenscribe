@@ -871,6 +871,13 @@ restarts. Keep the report directory with its `manual_frames/` images, or export
 the reviewed ZIP to carry those images together. Older pathless captures can
 recover their existing image from that directory.
 
+Manual-moment cards separate three content sources: **Your words and notes**
+contains the captured spoken description and reviewer notes, **AI paraphrase**
+contains the model's summary of that description, and **Model suggestions from
+image analysis** contains additional observations produced by the vision model
+for human review. The human source appears first. These labels change
+presentation only; original wording and the stored/exported fields are preserved.
+
 ### Handoff to a coding agent
 
 Review the findings, add scope limits in the reviewer notes, then export TODO
