@@ -3976,10 +3976,28 @@ function renderManualFrames() {
         }).join('');
         const findingId = manualFindingId(frame.marker_id);
         const markerIdAttr = escapeHtml(frame.marker_id);
-        const transcript = frame.transcript ? `<div class="manual-frame-body">${escapeHtml(frame.transcript)}</div>` : '';
-        const notes = frame.notes ? `<div class="manual-frame-notes-copy">${escapeHtml(frame.notes)}</div>` : '';
+        const transcript = frame.transcript ? `
+            <div class="manual-frame-human-entry">
+                <div class="manual-frame-source-label" data-i18n="media.manualFrameSpokenDescription">${escapeHtml(t('media.manualFrameSpokenDescription'))}</div>
+                <div class="manual-frame-body">${escapeHtml(frame.transcript)}</div>
+            </div>` : '';
+        const notes = frame.notes ? `
+            <div class="manual-frame-human-entry">
+                <div class="manual-frame-source-label" data-i18n="media.manualFrameNotes">${escapeHtml(t('media.manualFrameNotes'))}</div>
+                <div class="manual-frame-notes-copy">${escapeHtml(frame.notes)}</div>
+            </div>` : '';
+        const humanEmpty = !frame.transcript && !frame.notes
+            ? `<div class="manual-frame-body empty" data-i18n="review.manualFrameNoHumanInput">${escapeHtml(t('review.manualFrameNoHumanInput'))}</div>`
+            : '';
         const issues = Array.isArray(frame.result?.issues_detected) && frame.result.issues_detected.length > 0
-            ? `<div class="manual-frame-notes-copy">${escapeHtml(frame.result.issues_detected.join('; '))}</div>`
+            ? `
+                <section class="manual-frame-source" data-content-source="visual-model">
+                    <h4 class="manual-frame-source-title" data-i18n="review.manualFrameVisualSource">${escapeHtml(t('review.manualFrameVisualSource'))}</h4>
+                    <p class="manual-frame-source-hint" data-i18n="review.manualFrameVisualHint">${escapeHtml(t('review.manualFrameVisualHint'))}</p>
+                    <ul class="manual-frame-suggestions">
+                        ${frame.result.issues_detected.map((issue) => `<li>${escapeHtml(issue)}</li>`).join('')}
+                    </ul>
+                </section>`
             : '';
         // R13: the "no AI summary" fallback must read as an empty state, not as
         // real reviewer/AI content. Without a result, tag the body `.empty` so it
@@ -3989,7 +4007,7 @@ function renderManualFrames() {
         const summaryText = frame.result?.summary;
         const summaryBody = summaryText
             ? `<div class="manual-frame-body">${escapeHtml(summaryText)}</div>`
-            : `<div class="manual-frame-body empty">${escapeHtml(t('review.noSummary'))}</div>`;
+            : `<div class="manual-frame-body empty" data-i18n="review.noSummary">${escapeHtml(t('review.noSummary'))}</div>`;
         // Inline note editor (R12). A manual note is no longer write-once: the
         // reviewer can reopen it, edit the text, and persist the change through
         // the same path a fresh capture uses (updateManualFrameMarker -> PATCH
@@ -4031,9 +4049,18 @@ function renderManualFrames() {
                                 aria-label="${escapeHtml(t('review.manualFrameDelete'))}"
                                 title="${escapeHtml(t('review.manualFrameDelete'))}">&times;</button>
                     </div>
-                    ${summaryBody}
-                    ${transcript}
-                    ${notes}
+                    <section class="manual-frame-source manual-frame-source-human" data-content-source="human">
+                        <h4 class="manual-frame-source-title" data-i18n="review.manualFrameHumanSource">${escapeHtml(t('review.manualFrameHumanSource'))}</h4>
+                        ${transcript}
+                        ${notes}
+                        ${humanEmpty}
+                        ${noteEditor}
+                    </section>
+                    <section class="manual-frame-source" data-content-source="ai-paraphrase">
+                        <h4 class="manual-frame-source-title" data-i18n="review.manualFrameParaphraseSource">${escapeHtml(t('review.manualFrameParaphraseSource'))}</h4>
+                        <p class="manual-frame-source-hint" data-i18n="review.manualFrameParaphraseHint">${escapeHtml(t('review.manualFrameParaphraseHint'))}</p>
+                        ${summaryBody}
+                    </section>
                     ${issues}
                     <div class="manual-frame-priority">
                         <label class="manual-frame-priority-label" for="manual-severity-select-${markerIdAttr}">${escapeHtml(t('review.changePriority'))}</label>
@@ -4041,7 +4068,6 @@ function renderManualFrames() {
                             ${severityOptions}
                         </select>
                     </div>
-                    ${noteEditor}
                 </div>
             </article>
         `;

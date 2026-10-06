@@ -1864,6 +1864,104 @@ def test_f0_manual_frame_no_summary_placeholder_is_visually_muted() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("language", "human_label", "paraphrase_label", "visual_label"),
+    [
+        ("en", "Your words and notes", "AI paraphrase", "Model suggestions from image analysis"),
+        ("pl", "Twoje słowa i notatki", "Parafraza AI", "Sugestie modelu z analizy obrazu"),
+    ],
+)
+def test_f0_manual_frame_content_has_explicit_sources(
+    language: str, human_label: str, paraphrase_label: str, visual_label: str
+) -> None:
+    """Human input, an AI paraphrase and visual-model opinions cannot blend."""
+    _run_review_app_smoke(
+        f"""
+        currentLang = {language!r};
+        bindThumbnailClicks = () => {{}};
+        initAnnotationTools = () => {{}};
+        // This witness checks source attribution, not the shared HTML escaper.
+        escapeHtml = (v) => String(v == null ? '' : v);
+        const list = {{ innerHTML: '', replaceChildren() {{}} }};
+        const els = {{
+            manualFindingsSection: {{ hidden: false }},
+            manualFindingsList: list,
+            manualFindingsCount: {{ textContent: '' }},
+        }};
+        document.getElementById = (id) => els[id] || null;
+        reportState.manualFrames = [{{
+            marker_id: 'source-test', timestamp: 48.094,
+            timestamp_formatted: '00:48.094', frameDataUrl: 'data:image/jpeg;base64,AAA',
+            transcript: 'SPOKEN_WORDS: eee, jest tu dużo powtórzeń',
+            notes: 'HUMAN_NOTE: tylko copy, bez zmiany logiki',
+            result: {{
+                summary: 'AI_PARAPHRASE: użytkownik wskazuje powtórzenia',
+                severity: 'low',
+                issues_detected: ['VISUAL_GUESS: obcięty placeholder', 'VISUAL_GUESS: długi onboarding'],
+            }},
+        }}];
+        const before = JSON.stringify(reportState.manualFrames);
+        renderManualFrames();
+        const html = list.innerHTML;
+        const section = (source) => {{
+            const pattern = new RegExp('<section[^>]*data-content-source="' + source + '"[^>]*>[\\\\s\\\\S]*?</section>');
+            const match = html.match(pattern);
+            if (!match) throw new Error('missing explicit source section: ' + source);
+            return match[0];
+        }};
+        const human = section('human');
+        const paraphrase = section('ai-paraphrase');
+        const visual = section('visual-model');
+        if (!human.includes({human_label!r}) || !human.includes('SPOKEN_WORDS:') || !human.includes('HUMAN_NOTE:'))
+            throw new Error('human source or its label was lost');
+        if (human.includes('AI_PARAPHRASE:') || human.includes('VISUAL_GUESS:'))
+            throw new Error('model text is attributed to the human');
+        if (!paraphrase.includes({paraphrase_label!r}) || !paraphrase.includes('AI_PARAPHRASE:'))
+            throw new Error('AI paraphrase is not identified');
+        if (paraphrase.includes('SPOKEN_WORDS:') || paraphrase.includes('VISUAL_GUESS:'))
+            throw new Error('paraphrase mixes content sources');
+        if (!visual.includes({visual_label!r}) || !visual.includes('VISUAL_GUESS:'))
+            throw new Error('suggestion does not identify visual-model origin');
+        if (visual.includes('SPOKEN_WORDS:') || visual.includes('AI_PARAPHRASE:'))
+            throw new Error('visual-model section mixes content sources');
+        if (!(html.indexOf(human) < html.indexOf(paraphrase) && html.indexOf(paraphrase) < html.indexOf(visual)))
+            throw new Error('human source must precede derived model content');
+        if (JSON.stringify(reportState.manualFrames) !== before)
+            throw new Error('presentation changed stored source data');
+        """
+    )
+
+
+def test_f0_manual_frame_without_human_input_keeps_an_explicit_empty_source() -> None:
+    """An AI summary must never stand in for missing human words."""
+    _run_review_app_smoke(
+        """
+        bindThumbnailClicks = () => {};
+        initAnnotationTools = () => {};
+        escapeHtml = (v) => String(v == null ? '' : v);
+        const list = { innerHTML: '', replaceChildren() {} };
+        const els = {
+            manualFindingsSection: { hidden: false },
+            manualFindingsList: list,
+            manualFindingsCount: { textContent: '' },
+        };
+        document.getElementById = (id) => els[id] || null;
+        reportState.manualFrames = [{
+            marker_id: 'no-words', timestamp: 1, timestamp_formatted: '00:01',
+            frameDataUrl: 'data:image/png;base64,AAA', result: null,
+        }];
+        renderManualFrames();
+        const human = list.innerHTML.match(/<section[^>]*data-content-source="human"[^>]*>[\\s\\S]*?<\\/section>/);
+        if (!human || !human[0].includes(t('review.manualFrameNoHumanInput')))
+            throw new Error('missing human input has no explicit empty state');
+        if (!list.innerHTML.includes(t('review.noSummary')))
+            throw new Error('pending AI summary has no empty state');
+        if (list.innerHTML.includes('data-content-source="visual-model"'))
+            throw new Error('a pending frame pretends to have model suggestions');
+        """
+    )
+
+
 def test_f0_manual_frame_priority_select_reflects_override_and_hides_badge_on_none() -> None:
     """R14: the per-card priority <select> shows the effective priority, and the
     explicit 'none' override clears the badge (mirroring Analyze).

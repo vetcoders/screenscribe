@@ -133,6 +133,11 @@ The report is a single self-contained HTML file: all CSS/JS/fonts are inlined as
 `data:` URIs at generation time (a strict-CSP-friendly artifact that opens from
 `file://`).
 
+The client-rendered manual-moment card identifies human words/notes, the AI
+paraphrase and additional vision-model suggestions as separate sections. This
+presentation uses the existing transcript, notes, summary and issues fields;
+it does not rewrite source data or change the model prompt.
+
 | Package | Role |
 |---------|------|
 | `report/` | Output writers: `data.py` (finding/frame folding), `json_report.py`, `markdown_report.py`, `html_report.py`, `console.py`. |
