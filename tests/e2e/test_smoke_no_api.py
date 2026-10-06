@@ -175,6 +175,34 @@ def test_manual_frame_sources_are_visible_and_localized(
     page.close()
 
 
+@pytest.mark.parametrize("language", ["en", "pl"])
+def test_image_only_manual_summary_is_not_a_human_paraphrase(
+    review_url, browser_context, language: str
+) -> None:
+    page = browser_context.new_page()
+    page.goto(review_url, wait_until="load")
+    _inject_long_manual_frame(page)
+    page.evaluate(
+        """() => {
+            const frame = reportState.manualFrames[0];
+            frame.transcript = '';
+            frame.notes = '';
+            frame.result.summary = 'MODEL_SUMMARY: user captured this frame during review.';
+            renderManualFrames();
+        }"""
+    )
+    page.locator(f'#langToggle [data-lang="{language}"]').click()
+    section = page.locator('#manualFindingsList [data-content-source="visual-model-summary"]')
+    expected = (
+        "Podsumowanie analizy obrazu przez AI" if language == "pl" else "AI image analysis summary"
+    )
+    assert section.is_visible()
+    assert section.locator(".manual-frame-source-title").inner_text() == expected
+    assert "MODEL_SUMMARY:" in section.inner_text()
+    assert page.locator('#manualFindingsList [data-content-source="ai-paraphrase"]').count() == 0
+    page.close()
+
+
 def test_review_has_no_statistics_tab(review_url, browser_context) -> None:
     """A4: the removed Statistics tab must not come back (PKG-3 monochrome)."""
     page = browser_context.new_page()

@@ -137,6 +137,8 @@ The client-rendered manual-moment card identifies human words/notes, the AI
 paraphrase and additional vision-model suggestions as separate sections. This
 presentation uses the existing transcript, notes, summary and issues fields;
 it does not rewrite source data or change the model prompt.
+Without human input, the summary is attributed to image analysis; the server's
+synthetic capture description is never presented as a reviewer paraphrase.
 
 | Package | Role |
 |---------|------|

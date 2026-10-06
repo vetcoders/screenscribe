@@ -877,6 +877,8 @@ contains the model's summary of that description, and **Model suggestions from
 image analysis** contains additional observations produced by the vision model
 for human review. The human source appears first. These labels change
 presentation only; original wording and the stored/exported fields are preserved.
+When a moment has no spoken description or notes, the second section is labelled
+**AI image analysis summary**, rather than claiming to paraphrase human input.
 
 ### Handoff to a coding agent
 
