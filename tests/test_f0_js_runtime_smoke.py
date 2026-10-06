@@ -1864,6 +1864,194 @@ def test_f0_manual_frame_no_summary_placeholder_is_visually_muted() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("language", "human_label", "summary_label", "visual_label"),
+    [
+        ("en", "Your words and notes", "AI summary", "Model suggestions from image analysis"),
+        ("pl", "Twoje słowa i notatki", "Podsumowanie AI", "Sugestie modelu z analizy obrazu"),
+    ],
+)
+def test_f0_manual_frame_content_has_explicit_sources(
+    language: str, human_label: str, summary_label: str, visual_label: str
+) -> None:
+    """Human input, an AI summary and visual-model opinions cannot blend."""
+    _run_review_app_smoke(
+        f"""
+        currentLang = {language!r};
+        bindThumbnailClicks = () => {{}};
+        initAnnotationTools = () => {{}};
+        // This witness checks source attribution, not the shared HTML escaper.
+        escapeHtml = (v) => String(v == null ? '' : v);
+        const list = {{ innerHTML: '', replaceChildren() {{}} }};
+        const els = {{
+            manualFindingsSection: {{ hidden: false }},
+            manualFindingsList: list,
+            manualFindingsCount: {{ textContent: '' }},
+        }};
+        document.getElementById = (id) => els[id] || null;
+        reportState.manualFrames = [{{
+            marker_id: 'source-test', timestamp: 48.094,
+            timestamp_formatted: '00:48.094', frameDataUrl: 'data:image/jpeg;base64,AAA',
+            transcript: 'SPOKEN_WORDS: eee, jest tu dużo powtórzeń',
+            notes: 'HUMAN_NOTE: tylko copy, bez zmiany logiki',
+            result: {{
+                summary: 'AI_PARAPHRASE: użytkownik wskazuje powtórzenia',
+                severity: 'low',
+                issues_detected: ['VISUAL_GUESS: obcięty placeholder', 'VISUAL_GUESS: długi onboarding'],
+            }},
+        }}];
+        const before = JSON.stringify(reportState.manualFrames);
+        renderManualFrames();
+        const html = list.innerHTML;
+        const section = (source) => {{
+            const pattern = new RegExp('<section[^>]*data-content-source="' + source + '"[^>]*>[\\\\s\\\\S]*?</section>');
+            const match = html.match(pattern);
+            if (!match) throw new Error('missing explicit source section: ' + source);
+            return match[0];
+        }};
+        const human = section('human');
+        const summary = section('ai-summary');
+        const visual = section('visual-model');
+        if (!human.includes({human_label!r}) || !human.includes('SPOKEN_WORDS:') || !human.includes('HUMAN_NOTE:'))
+            throw new Error('human source or its label was lost');
+        if (human.includes('AI_PARAPHRASE:') || human.includes('VISUAL_GUESS:'))
+            throw new Error('model text is attributed to the human');
+        if (!summary.includes({summary_label!r}) || !summary.includes('AI_PARAPHRASE:'))
+            throw new Error('AI summary is not identified');
+        if (summary.includes('SPOKEN_WORDS:') || summary.includes('VISUAL_GUESS:'))
+            throw new Error('summary mixes content sources');
+        if (!visual.includes({visual_label!r}) || !visual.includes('VISUAL_GUESS:'))
+            throw new Error('suggestion does not identify visual-model origin');
+        if (visual.includes('SPOKEN_WORDS:') || visual.includes('AI_PARAPHRASE:'))
+            throw new Error('visual-model section mixes content sources');
+        if (!(html.indexOf(human) < html.indexOf(summary) && html.indexOf(summary) < html.indexOf(visual)))
+            throw new Error('human source must precede derived model content');
+        if (JSON.stringify(reportState.manualFrames) !== before)
+            throw new Error('presentation changed stored source data');
+        """
+    )
+
+
+@pytest.mark.parametrize(
+    ("language", "model_label"),
+    [
+        ("en", "AI summary"),
+        ("pl", "Podsumowanie AI"),
+    ],
+)
+def test_f0_manual_frame_without_human_input_does_not_claim_a_paraphrase(
+    language: str, model_label: str
+) -> None:
+    """The server's synthetic capture fallback is not a human description."""
+    _run_review_app_smoke(
+        f"""
+        currentLang = {language!r};
+        bindThumbnailClicks = () => {{}};
+        initAnnotationTools = () => {{}};
+        escapeHtml = (v) => String(v == null ? '' : v);
+        const list = {{ innerHTML: '', replaceChildren() {{}} }};
+        const els = {{
+            manualFindingsSection: {{ hidden: false }},
+            manualFindingsList: list,
+            manualFindingsCount: {{ textContent: '' }},
+        }};
+        document.getElementById = (id) => els[id] || null;
+        reportState.manualFrames = [{{
+            marker_id: 'image-only', timestamp: 1, timestamp_formatted: '00:01',
+            transcript: '', notes: '', frameDataUrl: 'data:image/png;base64,AAA',
+            result: {{ summary: 'MODEL_SUMMARY: user captured this frame during review.', issues_detected: [] }},
+        }}];
+        const before = JSON.stringify(reportState.manualFrames);
+        renderManualFrames();
+        const html = list.innerHTML;
+        if (!html.includes({model_label!r}) || !html.includes('data-content-source="ai-summary"'))
+            throw new Error('image-only summary has no model-analysis attribution');
+        if (html.includes('data-content-source="ai-paraphrase"') || html.includes('Your description summarized by AI.'))
+            throw new Error('synthetic fallback is attributed to a human description');
+        if (!html.includes('MODEL_SUMMARY:') || JSON.stringify(reportState.manualFrames) !== before)
+            throw new Error('source attribution dropped or changed model content');
+        """
+    )
+
+
+@pytest.mark.parametrize("language", ["en", "pl"])
+def test_f0_manual_summary_attribution_survives_note_edits(language: str) -> None:
+    """Adding/removing notes cannot change the source of an existing result."""
+    _run_review_app_smoke(
+        f"""
+        currentLang = {language!r};
+        bindThumbnailClicks = () => {{}};
+        initAnnotationTools = () => {{}};
+        flushSharedStateSync = () => {{}};
+        fetch = async () => ({{ ok: true }});
+        escapeHtml = (v) => String(v == null ? '' : v);
+        const list = {{ innerHTML: '', replaceChildren() {{}} }};
+        const els = {{
+            manualFindingsSection: {{ hidden: false }},
+            manualFindingsList: list,
+            manualFindingsCount: {{ textContent: '' }},
+        }};
+        document.getElementById = (id) => els[id] || null;
+        reportState.manualFrames = [{{
+            marker_id: 'image-only', timestamp: 1, timestamp_formatted: '00:01',
+            transcript: '', notes: '', frameDataUrl: 'data:image/png;base64,AAA',
+            result: {{ summary: 'MODEL_SUMMARY: captured before the note.', issues_detected: [] }},
+        }}];
+        const resultBefore = JSON.stringify(reportState.manualFrames[0].result);
+        const keysBefore = Object.keys(reportState.manualFrames[0]).sort().join(',');
+        const summarySection = () => {{
+            const match = list.innerHTML.match(/<section[^>]*data-content-source="(?:ai-summary|ai-paraphrase|visual-model-summary)"[^>]*>[\\s\\S]*?<\\/section>/);
+            if (!match) throw new Error('model summary section missing');
+            return match[0];
+        }};
+        const title = () => summarySection().match(/<h4[^>]*>(.*?)<\\/h4>/)[1];
+        renderManualFrames();
+        const originalTitle = title();
+        for (const note of ['LATER_HUMAN_NOTE: add', 'LATER_HUMAN_NOTE: edit', '']) {{
+            await updateManualFrameMarker('image-only', '', note);
+            if (title() !== originalTitle || summarySection().includes('data-content-source="ai-paraphrase"'))
+                throw new Error('note edit changed the attribution of an existing result');
+            if (JSON.stringify(reportState.manualFrames[0].result) !== resultBefore)
+                throw new Error('note edit changed model content');
+        }}
+        reportState.manualFrames = JSON.parse(JSON.stringify(reportState.manualFrames));
+        renderManualFrames();
+        if (title() !== originalTitle || Object.keys(reportState.manualFrames[0]).sort().join(',') !== keysBefore)
+            throw new Error('source attribution requires new persisted metadata');
+        """
+    )
+
+
+def test_f0_manual_frame_without_human_input_keeps_an_explicit_empty_source() -> None:
+    """An AI summary must never stand in for missing human words."""
+    _run_review_app_smoke(
+        """
+        bindThumbnailClicks = () => {};
+        initAnnotationTools = () => {};
+        escapeHtml = (v) => String(v == null ? '' : v);
+        const list = { innerHTML: '', replaceChildren() {} };
+        const els = {
+            manualFindingsSection: { hidden: false },
+            manualFindingsList: list,
+            manualFindingsCount: { textContent: '' },
+        };
+        document.getElementById = (id) => els[id] || null;
+        reportState.manualFrames = [{
+            marker_id: 'no-words', timestamp: 1, timestamp_formatted: '00:01',
+            frameDataUrl: 'data:image/png;base64,AAA', result: null,
+        }];
+        renderManualFrames();
+        const human = list.innerHTML.match(/<section[^>]*data-content-source="human"[^>]*>[\\s\\S]*?<\\/section>/);
+        if (!human || !human[0].includes(t('review.manualFrameNoHumanInput')))
+            throw new Error('missing human input has no explicit empty state');
+        if (!list.innerHTML.includes(t('review.noSummary')))
+            throw new Error('pending AI summary has no empty state');
+        if (list.innerHTML.includes('data-content-source="visual-model"'))
+            throw new Error('a pending frame pretends to have model suggestions');
+        """
+    )
+
+
 def test_f0_manual_frame_priority_select_reflects_override_and_hides_badge_on_none() -> None:
     """R14: the per-card priority <select> shows the effective priority, and the
     explicit 'none' override clears the badge (mirroring Analyze).
