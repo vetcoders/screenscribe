@@ -85,8 +85,8 @@ def _measure(page) -> dict:
             const content = item
                 ? item.querySelector('.manual-frame-content')
                 : null;
-            // The transcript body is the SECOND .manual-frame-body in the card
-            // (the first is the summary). Both share the bug; pick the longest.
+            // Human words and the AI paraphrase share the text-body contract.
+            // Pick the longest body independently of the source section order.
             const bodies = item
                 ? Array.from(item.querySelectorAll('.manual-frame-body'))
                 : [];

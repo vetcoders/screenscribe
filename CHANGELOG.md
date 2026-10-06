@@ -2,6 +2,13 @@
 
 ## [0.1.20.dev0] - Unreleased
 
+- **Changed: manual review cards identify their content sources.** Human words
+  and notes appear first, followed by an explicitly labelled AI summary and
+  separate suggestions from the model's image analysis. Visual suggestions remain
+  available for human review; source wording, stored data and exports are unchanged.
+  Summary attribution stays with the model for image-only captures and after
+  note edits, without attributing synthetic or later input to the reviewer.
+
 - **Fixed: legacy screenshot references in reviewed ZIPs are portable.**
   `findings[].screenshot_path` now points to the same bundled original image
   as `screenshot_original`, including merged findings. Inherited image-path
