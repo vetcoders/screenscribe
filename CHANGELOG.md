@@ -6,6 +6,8 @@
   and notes appear first, followed by an explicitly labelled AI paraphrase and
   separate suggestions from the model's image analysis. Visual suggestions remain
   available for human review; source wording, stored data and exports are unchanged.
+  Image-only captures label the summary as model analysis, without attributing
+  the synthetic capture description to the reviewer.
 
 - **Fixed: legacy screenshot references in reviewed ZIPs are portable.**
   `findings[].screenshot_path` now points to the same bundled original image

@@ -1932,6 +1932,48 @@ def test_f0_manual_frame_content_has_explicit_sources(
     )
 
 
+@pytest.mark.parametrize(
+    ("language", "model_label"),
+    [
+        ("en", "AI image analysis summary"),
+        ("pl", "Podsumowanie analizy obrazu przez AI"),
+    ],
+)
+def test_f0_manual_frame_without_human_input_does_not_claim_a_paraphrase(
+    language: str, model_label: str
+) -> None:
+    """The server's synthetic capture fallback is not a human description."""
+    _run_review_app_smoke(
+        f"""
+        currentLang = {language!r};
+        bindThumbnailClicks = () => {{}};
+        initAnnotationTools = () => {{}};
+        escapeHtml = (v) => String(v == null ? '' : v);
+        const list = {{ innerHTML: '', replaceChildren() {{}} }};
+        const els = {{
+            manualFindingsSection: {{ hidden: false }},
+            manualFindingsList: list,
+            manualFindingsCount: {{ textContent: '' }},
+        }};
+        document.getElementById = (id) => els[id] || null;
+        reportState.manualFrames = [{{
+            marker_id: 'image-only', timestamp: 1, timestamp_formatted: '00:01',
+            transcript: '', notes: '', frameDataUrl: 'data:image/png;base64,AAA',
+            result: {{ summary: 'MODEL_SUMMARY: user captured this frame during review.', issues_detected: [] }},
+        }}];
+        const before = JSON.stringify(reportState.manualFrames);
+        renderManualFrames();
+        const html = list.innerHTML;
+        if (!html.includes({model_label!r}) || !html.includes('data-content-source="visual-model-summary"'))
+            throw new Error('image-only summary has no model-analysis attribution');
+        if (html.includes('data-content-source="ai-paraphrase"') || html.includes(t('review.manualFrameParaphraseHint')))
+            throw new Error('synthetic fallback is attributed to a human description');
+        if (!html.includes('MODEL_SUMMARY:') || JSON.stringify(reportState.manualFrames) !== before)
+            throw new Error('source attribution dropped or changed model content');
+        """
+    )
+
+
 def test_f0_manual_frame_without_human_input_keeps_an_explicit_empty_source() -> None:
     """An AI summary must never stand in for missing human words."""
     _run_review_app_smoke(
