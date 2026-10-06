@@ -1865,16 +1865,16 @@ def test_f0_manual_frame_no_summary_placeholder_is_visually_muted() -> None:
 
 
 @pytest.mark.parametrize(
-    ("language", "human_label", "paraphrase_label", "visual_label"),
+    ("language", "human_label", "summary_label", "visual_label"),
     [
-        ("en", "Your words and notes", "AI paraphrase", "Model suggestions from image analysis"),
-        ("pl", "Twoje słowa i notatki", "Parafraza AI", "Sugestie modelu z analizy obrazu"),
+        ("en", "Your words and notes", "AI summary", "Model suggestions from image analysis"),
+        ("pl", "Twoje słowa i notatki", "Podsumowanie AI", "Sugestie modelu z analizy obrazu"),
     ],
 )
 def test_f0_manual_frame_content_has_explicit_sources(
-    language: str, human_label: str, paraphrase_label: str, visual_label: str
+    language: str, human_label: str, summary_label: str, visual_label: str
 ) -> None:
-    """Human input, an AI paraphrase and visual-model opinions cannot blend."""
+    """Human input, an AI summary and visual-model opinions cannot blend."""
     _run_review_app_smoke(
         f"""
         currentLang = {language!r};
@@ -1910,21 +1910,21 @@ def test_f0_manual_frame_content_has_explicit_sources(
             return match[0];
         }};
         const human = section('human');
-        const paraphrase = section('ai-paraphrase');
+        const summary = section('ai-summary');
         const visual = section('visual-model');
         if (!human.includes({human_label!r}) || !human.includes('SPOKEN_WORDS:') || !human.includes('HUMAN_NOTE:'))
             throw new Error('human source or its label was lost');
         if (human.includes('AI_PARAPHRASE:') || human.includes('VISUAL_GUESS:'))
             throw new Error('model text is attributed to the human');
-        if (!paraphrase.includes({paraphrase_label!r}) || !paraphrase.includes('AI_PARAPHRASE:'))
-            throw new Error('AI paraphrase is not identified');
-        if (paraphrase.includes('SPOKEN_WORDS:') || paraphrase.includes('VISUAL_GUESS:'))
-            throw new Error('paraphrase mixes content sources');
+        if (!summary.includes({summary_label!r}) || !summary.includes('AI_PARAPHRASE:'))
+            throw new Error('AI summary is not identified');
+        if (summary.includes('SPOKEN_WORDS:') || summary.includes('VISUAL_GUESS:'))
+            throw new Error('summary mixes content sources');
         if (!visual.includes({visual_label!r}) || !visual.includes('VISUAL_GUESS:'))
             throw new Error('suggestion does not identify visual-model origin');
         if (visual.includes('SPOKEN_WORDS:') || visual.includes('AI_PARAPHRASE:'))
             throw new Error('visual-model section mixes content sources');
-        if (!(html.indexOf(human) < html.indexOf(paraphrase) && html.indexOf(paraphrase) < html.indexOf(visual)))
+        if (!(html.indexOf(human) < html.indexOf(summary) && html.indexOf(summary) < html.indexOf(visual)))
             throw new Error('human source must precede derived model content');
         if (JSON.stringify(reportState.manualFrames) !== before)
             throw new Error('presentation changed stored source data');
@@ -1935,8 +1935,8 @@ def test_f0_manual_frame_content_has_explicit_sources(
 @pytest.mark.parametrize(
     ("language", "model_label"),
     [
-        ("en", "AI image analysis summary"),
-        ("pl", "Podsumowanie analizy obrazu przez AI"),
+        ("en", "AI summary"),
+        ("pl", "Podsumowanie AI"),
     ],
 )
 def test_f0_manual_frame_without_human_input_does_not_claim_a_paraphrase(
@@ -1964,12 +1964,60 @@ def test_f0_manual_frame_without_human_input_does_not_claim_a_paraphrase(
         const before = JSON.stringify(reportState.manualFrames);
         renderManualFrames();
         const html = list.innerHTML;
-        if (!html.includes({model_label!r}) || !html.includes('data-content-source="visual-model-summary"'))
+        if (!html.includes({model_label!r}) || !html.includes('data-content-source="ai-summary"'))
             throw new Error('image-only summary has no model-analysis attribution');
-        if (html.includes('data-content-source="ai-paraphrase"') || html.includes(t('review.manualFrameParaphraseHint')))
+        if (html.includes('data-content-source="ai-paraphrase"') || html.includes('Your description summarized by AI.'))
             throw new Error('synthetic fallback is attributed to a human description');
         if (!html.includes('MODEL_SUMMARY:') || JSON.stringify(reportState.manualFrames) !== before)
             throw new Error('source attribution dropped or changed model content');
+        """
+    )
+
+
+@pytest.mark.parametrize("language", ["en", "pl"])
+def test_f0_manual_summary_attribution_survives_note_edits(language: str) -> None:
+    """Adding/removing notes cannot change the source of an existing result."""
+    _run_review_app_smoke(
+        f"""
+        currentLang = {language!r};
+        bindThumbnailClicks = () => {{}};
+        initAnnotationTools = () => {{}};
+        flushSharedStateSync = () => {{}};
+        fetch = async () => ({{ ok: true }});
+        escapeHtml = (v) => String(v == null ? '' : v);
+        const list = {{ innerHTML: '', replaceChildren() {{}} }};
+        const els = {{
+            manualFindingsSection: {{ hidden: false }},
+            manualFindingsList: list,
+            manualFindingsCount: {{ textContent: '' }},
+        }};
+        document.getElementById = (id) => els[id] || null;
+        reportState.manualFrames = [{{
+            marker_id: 'image-only', timestamp: 1, timestamp_formatted: '00:01',
+            transcript: '', notes: '', frameDataUrl: 'data:image/png;base64,AAA',
+            result: {{ summary: 'MODEL_SUMMARY: captured before the note.', issues_detected: [] }},
+        }}];
+        const resultBefore = JSON.stringify(reportState.manualFrames[0].result);
+        const keysBefore = Object.keys(reportState.manualFrames[0]).sort().join(',');
+        const summarySection = () => {{
+            const match = list.innerHTML.match(/<section[^>]*data-content-source="(?:ai-summary|ai-paraphrase|visual-model-summary)"[^>]*>[\\s\\S]*?<\\/section>/);
+            if (!match) throw new Error('model summary section missing');
+            return match[0];
+        }};
+        const title = () => summarySection().match(/<h4[^>]*>(.*?)<\\/h4>/)[1];
+        renderManualFrames();
+        const originalTitle = title();
+        for (const note of ['LATER_HUMAN_NOTE: add', 'LATER_HUMAN_NOTE: edit', '']) {{
+            await updateManualFrameMarker('image-only', '', note);
+            if (title() !== originalTitle || summarySection().includes('data-content-source="ai-paraphrase"'))
+                throw new Error('note edit changed the attribution of an existing result');
+            if (JSON.stringify(reportState.manualFrames[0].result) !== resultBefore)
+                throw new Error('note edit changed model content');
+        }}
+        reportState.manualFrames = JSON.parse(JSON.stringify(reportState.manualFrames));
+        renderManualFrames();
+        if (title() !== originalTitle || Object.keys(reportState.manualFrames[0]).sort().join(',') !== keysBefore)
+            throw new Error('source attribution requires new persisted metadata');
         """
     )
 

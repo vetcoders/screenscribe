@@ -149,23 +149,23 @@ def test_manual_frame_sources_are_visible_and_localized(
     )
     page.locator(f'#langToggle [data-lang="{language}"]').click()
     expected = (
-        ["Twoje słowa i notatki", "Parafraza AI", "Sugestie modelu z analizy obrazu"]
+        ["Twoje słowa i notatki", "Podsumowanie AI", "Sugestie modelu z analizy obrazu"]
         if language == "pl"
-        else ["Your words and notes", "AI paraphrase", "Model suggestions from image analysis"]
+        else ["Your words and notes", "AI summary", "Model suggestions from image analysis"]
     )
     sections = page.locator("#manualFindingsList [data-content-source]")
     assert sections.count() == 3
     titles = sections.locator(".manual-frame-source-title").all_text_contents()
     assert titles == expected
-    human, paraphrase, visual = (sections.nth(i) for i in range(3))
+    human, summary, visual = (sections.nth(i) for i in range(3))
     assert LONG_TRANSCRIPT in human.inner_text()
     assert "HUMAN_NOTE:" in human.inner_text()
     assert "AI_PARAPHRASE:" not in human.inner_text()
     assert "VISUAL_GUESS:" not in human.inner_text()
-    assert "AI_PARAPHRASE:" in paraphrase.inner_text()
+    assert "AI_PARAPHRASE:" in summary.inner_text()
     assert "VISUAL_GUESS:" in visual.inner_text()
     positions = []
-    for section in (human, paraphrase, visual):
+    for section in (human, summary, visual):
         assert section.is_visible()
         box = section.bounding_box()
         assert box is not None and box["width"] >= 200
@@ -176,7 +176,7 @@ def test_manual_frame_sources_are_visible_and_localized(
 
 
 @pytest.mark.parametrize("language", ["en", "pl"])
-def test_image_only_manual_summary_is_not_a_human_paraphrase(
+def test_image_only_manual_summary_stays_model_attributed_after_edit(
     review_url, browser_context, language: str
 ) -> None:
     page = browser_context.new_page()
@@ -188,18 +188,26 @@ def test_image_only_manual_summary_is_not_a_human_paraphrase(
             frame.transcript = '';
             frame.notes = '';
             frame.result.summary = 'MODEL_SUMMARY: user captured this frame during review.';
+            window.fetch = async () => ({ ok: true });
             renderManualFrames();
         }"""
     )
     page.locator(f'#langToggle [data-lang="{language}"]').click()
-    section = page.locator('#manualFindingsList [data-content-source="visual-model-summary"]')
-    expected = (
-        "Podsumowanie analizy obrazu przez AI" if language == "pl" else "AI image analysis summary"
-    )
+    section = page.locator('#manualFindingsList [data-content-source="ai-summary"]')
+    expected = "Podsumowanie AI" if language == "pl" else "AI summary"
     assert section.is_visible()
     assert section.locator(".manual-frame-source-title").inner_text() == expected
     assert "MODEL_SUMMARY:" in section.inner_text()
     assert page.locator('#manualFindingsList [data-content-source="ai-paraphrase"]').count() == 0
+    page.locator('[data-action="edit-note-manual"]').click()
+    page.locator('textarea[id^="manual-note-input-"]').fill(
+        "LATER_HUMAN_NOTE: written after analysis"
+    )
+    page.locator('[data-action="save-note-manual"]').click()
+    assert section.locator(".manual-frame-source-title").inner_text() == expected
+    assert "MODEL_SUMMARY:" in section.inner_text()
+    assert "LATER_HUMAN_NOTE:" not in section.inner_text()
+    assert "LATER_HUMAN_NOTE:" in page.locator('[data-content-source="human"]').inner_text()
     page.close()
 
 
