@@ -847,7 +847,7 @@ def _anthropic_messages_from_input(items: list[Any]) -> list[dict[str, Any]]:
         blocks: list[dict[str, Any]] = []
         if isinstance(content, list):
             for block in content:
-                if isinstance(block, dict) and block.get("type") == "input_text":
+                if isinstance(block, dict) and block.get("type") in {"input_text", "output_text"}:
                     text = str(block.get("text") or "")
                     if text:
                         blocks.append({"type": "text", "text": text})

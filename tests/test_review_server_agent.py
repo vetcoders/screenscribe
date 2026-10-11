@@ -10,8 +10,13 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from screenscribe.agent.chat import AgentChatError, AgentProvider, FunctionCall, ProviderRound, format_sse
-
+from screenscribe.agent.chat import (
+    AgentChatError,
+    AgentProvider,
+    FunctionCall,
+    ProviderRound,
+    format_sse,
+)
 from screenscribe.config import ScreenScribeConfig
 from screenscribe.review_server import create_review_app
 
@@ -301,7 +306,7 @@ def test_agent_chat_stream_tool_events(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def test_agent_chat_stream_midturn_error_frame(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     for key in (
         "ANTHROPIC_API_KEY",
@@ -347,5 +352,7 @@ def test_agent_chat_stream_midturn_error_frame(
     assert "partial" in body
     assert "event: tool_call\n" in body
     assert "event: error\n" in body
-    assert "provider exploded" in body
+    assert format_sse("error", {"message": "Review agent request failed. Check server logs."}) in body
+    assert "provider exploded" not in body
+    assert "provider exploded" in caplog.text
     assert "event: done\n" not in body

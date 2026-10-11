@@ -191,10 +191,11 @@ def _history_items(history: list[dict[str, str]] | None) -> list[dict[str, Any]]
         content = str(entry.get("content") or "")
         if role not in {"user", "assistant"} or not content:
             continue
+        content_type = "output_text" if role == "assistant" else "input_text"
         items.append(
             {
                 "role": role,
-                "content": [{"type": "input_text", "text": content}],
+                "content": [{"type": content_type, "text": content}],
             }
         )
     if len(items) > _HISTORY_TURN_CAP:

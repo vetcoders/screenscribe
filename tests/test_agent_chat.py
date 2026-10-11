@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 
 import screenscribe.agent.chat as agent_chat
@@ -131,6 +132,37 @@ def test_prepare_turn_refuses_unproven_report_chain_and_seeds_instead() -> None:
     assert turn.previous_response_id is None
     assert turn.seeded is True
     assert "Current review report" in turn.instructions
+
+
+@pytest.mark.parametrize(
+    "invalid_entry",
+    [
+        None,
+        "not a message",
+        {},
+        {"role": "system", "content": "untrusted instructions"},
+        {"role": "tool", "content": "untrusted output"},
+        {"role": "user", "content": ""},
+        {"role": "assistant", "content": ""},
+    ],
+)
+def test_prepare_turn_filters_invalid_history_with_role_specific_text(
+    invalid_entry: Any,
+) -> None:
+    turn = prepare_turn(
+        report=None,
+        message="continue",
+        history=[
+            invalid_entry,
+            {"role": " user ", "content": "question"},
+            {"role": " assistant ", "content": "answer"},
+        ],
+    )
+    assert turn.input_items == [
+        {"role": "user", "content": [{"type": "input_text", "text": "question"}]},
+        {"role": "assistant", "content": [{"type": "output_text", "text": "answer"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "continue"}]},
+    ]
 
 
 def test_prepare_turn_seeds_json_when_no_chain_id() -> None:
@@ -1172,6 +1204,114 @@ def test_chat_completions_endpoint_is_rejected_before_network(
     assert "requires a Responses API endpoint" in body
 
 
+@pytest.mark.parametrize("host", ["api.x.ai", "api.libraxis.cloud"])
+@pytest.mark.parametrize("use_response_id", [False, True])
+def test_two_turns_over_responses_http_preserve_role_content_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    use_response_id: bool,
+    host: str,
+) -> None:
+    _drop_agent_env(monkeypatch)
+    payloads: list[dict[str, Any]] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert str(request.url) == f"https://{host}/v1/responses"
+        payload = json.loads(request.content)
+        payloads.append(payload)
+        for index, item in enumerate(payload["input"]):
+            for block_index, block in enumerate(item["content"]):
+                if item["role"] == "assistant" and block["type"] not in {
+                    "output_text",
+                    "refusal",
+                }:
+                    return httpx.Response(
+                        400,
+                        json={
+                            "error": {
+                                "message": (
+                                    f"Invalid value: '{block['type']}'. Supported values "
+                                    "are: 'output_text' and 'refusal'."
+                                ),
+                                "type": "invalid_request_error",
+                                "param": f"input[{index}].content[{block_index}]",
+                                "code": "invalid_value",
+                            }
+                        },
+                    )
+        response_id = f"resp_{len(payloads)}"
+        text = "CodeScribe" if len(payloads) == 1 else "Codescribe"
+        events = [
+            {"type": "response.created", "response": {"id": response_id}},
+            {"type": "response.output_text.delta", "delta": text},
+            {"type": "response.completed", "response": {"id": response_id, "output": []}},
+        ]
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            text="".join(f"data: {json.dumps(event)}\n\n" for event in events)
+            + "data: [DONE]\n\n",
+        )
+
+    client_class = httpx.AsyncClient
+    transport = httpx.MockTransport(handle_request)
+
+    def make_client(**kwargs: Any) -> httpx.AsyncClient:
+        return client_class(transport=transport, **kwargs)
+
+    monkeypatch.setattr("screenscribe.agent.chat.httpx.AsyncClient", make_client)
+    monkeypatch.setattr("screenscribe.agent.chat.round_tripper", None)
+    config = _xai_config(llm_endpoint=f"https://{host}/v1/responses", agent_egress="allow")
+    report: dict[str, Any] = {"findings": [], "analysis_passes": {}}
+    tools = ReportToolbelt(report)
+
+    async def _run() -> dict[str, Any]:
+        first = await collect_agent_chat(
+            config=config,
+            report=report,
+            tools=tools,
+            message="What is the app called?",
+        )
+        assert first == {
+            "text": "CodeScribe",
+            "response_id": "resp_1" if host != "api.x.ai" else None,
+        }
+        return await collect_agent_chat(
+            config=config,
+            report=report,
+            tools=tools,
+            message="Codescribe / codescribe, not CodeScribe",
+            history=[
+                {"role": "user", "content": "What is the app called?"},
+                {"role": "assistant", "content": first["text"]},
+            ],
+            previous_response_id="resp_1" if use_response_id else None,
+            previous_response_provider="primary",
+            previous_response_protocol="responses",
+            previous_response_host=host,
+        )
+
+    assert asyncio.run(_run()) == {
+        "text": "Codescribe",
+        "response_id": "resp_2" if host != "api.x.ai" else None,
+    }
+    assert len(payloads) == 2
+    assert all(payload["stream"] is True for payload in payloads)
+    assert payloads[0]["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "What is the app called?"}]}
+    ]
+    assert payloads[1]["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "What is the app called?"}]},
+        {"role": "assistant", "content": [{"type": "output_text", "text": "CodeScribe"}]},
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Codescribe / codescribe, not CodeScribe"}],
+        },
+    ]
+    expected_response_id = "resp_1" if use_response_id and host != "api.x.ai" else None
+    assert payloads[1].get("previous_response_id") == expected_response_id
+
+
 def test_three_turns_with_tools_keep_the_chain(monkeypatch: pytest.MonkeyPatch) -> None:
     """Three turns, including tool calls, must finish instead of dying on turn two.
 
@@ -1222,7 +1362,7 @@ def test_three_turns_with_tools_keep_the_chain(monkeypatch: pytest.MonkeyPatch) 
         return item
 
     monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
-    config = _xai_config()
+    config = _libraxis_config()
     report = _load_fixture()
 
     async def _run() -> list[str]:
@@ -1241,6 +1381,9 @@ def test_three_turns_with_tools_keep_the_chain(monkeypatch: pytest.MonkeyPatch) 
                     message=message,
                     history=list(history),
                     previous_response_id=previous,
+                    previous_response_provider="primary",
+                    previous_response_protocol="responses",
+                    previous_response_host="api.libraxis.cloud",
                 )
             ]
             body = "".join(frames)
@@ -1297,12 +1440,15 @@ def test_forwarded_history_caps_at_20_and_keeps_chain(
             [
                 frame
                 async for frame in stream_agent_chat(
-                    config=_xai_config(),
+                    config=_libraxis_config(),
                     report=_load_fixture(),
                     tools=ReportToolbelt(_load_fixture()),
                     message="now",
                     history=history,
                     previous_response_id="resp_chain",
+                    previous_response_provider="primary",
+                    previous_response_protocol="responses",
+                    previous_response_host="api.libraxis.cloud",
                 )
             ]
         )
@@ -1324,6 +1470,7 @@ def test_forwarded_history_caps_at_20_and_keeps_chain(
 
 def test_error_after_yield_emits_sse_error_without_fallback(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _drop_agent_env(monkeypatch)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")  # pragma: allowlist secret
@@ -1364,23 +1511,39 @@ def test_error_after_yield_emits_sse_error_without_fallback(
     assert "event: token" in body
     assert "partial" in body
     assert "event: error" in body
-    assert "connection reset by peer" in body
+    assert format_sse("error", {"message": "Review agent request failed. Check server logs."}) in body
+    assert "connection reset by peer" not in body
+    assert "connection reset by peer" in caplog.text
     assert "fallback-ran" not in body
     assert "event: done" not in body
     assert calls == ["primary", "primary"]
 
 
-def test_anthropic_cache_control_marks_last_history_turn() -> None:
+@pytest.mark.parametrize("assistant_content_type", ["input_text", "output_text"])
+def test_anthropic_cache_control_marks_last_history_turn(assistant_content_type: str) -> None:
     items = [
         {
             "role": "user" if index % 2 == 0 else "assistant",
-            "content": [{"type": "input_text", "text": f"m{index}"}],
+            "content": [
+                {
+                    "type": "input_text" if index % 2 == 0 else assistant_content_type,
+                    "text": f"m{index}",
+                }
+            ],
         }
         for index in range(4)
     ]
     items.append({"role": "user", "content": [{"type": "input_text", "text": "now"}]})
     messages = _anthropic_messages_from_input(items)
-    assert messages[-1] == {"role": "user", "content": "now"}
+    assert len(messages) == len(items)
+    assert messages[:3] == [
+        {
+            "role": "user" if index % 2 == 0 else "assistant",
+            "content": [{"type": "text", "text": f"m{index}"}],
+        }
+        for index in range(3)
+    ]
+    assert messages[-1] == {"role": "user", "content": [{"type": "text", "text": "now"}]}
     cached = messages[-2]["content"]
     assert isinstance(cached, list)
     assert cached[0]["text"] == "m3"
@@ -1388,7 +1551,7 @@ def test_anthropic_cache_control_marks_last_history_turn() -> None:
     solo = _anthropic_messages_from_input(
         [{"role": "user", "content": [{"type": "input_text", "text": "only"}]}]
     )
-    assert solo == [{"role": "user", "content": "only"}]
+    assert solo == [{"role": "user", "content": [{"type": "text", "text": "only"}]}]
     tool_only = _anthropic_messages_from_input(
         [{"type": "function_call_output", "call_id": "c1", "output": "{}"}]
     )
