@@ -962,20 +962,30 @@
     }
 
     async function readFailureMessage(response) {
-        var fallback = tx('review.agentPatchRetry');
-        if (!response || typeof response.text !== 'function') return fallback;
-        try {
-            var raw = await response.text();
-            if (!raw) return fallback;
+        // The HTTP status is the one fact the reviewer can act on; the server's
+        // own detail (when it sent one) follows it, never replaces it.
+        var status = response && Number.isFinite(Number(response.status))
+            ? String(response.status)
+            : '?';
+        var headline = tx('review.agentRequestFailed', { status: status });
+        var detail = '';
+        if (response && typeof response.text === 'function') {
             try {
-                var parsed = JSON.parse(raw);
-                if (parsed && typeof parsed.detail === 'string' && parsed.detail) return parsed.detail;
-                if (parsed && typeof parsed.message === 'string' && parsed.message) return parsed.message;
-            } catch (_err) { /* body was not JSON */ }
-            return String(raw).slice(0, 500);
-        } catch (_err) {
-            return fallback;
+                var raw = await response.text();
+                if (raw) {
+                    detail = String(raw).slice(0, 500);
+                    try {
+                        var parsed = JSON.parse(raw);
+                        if (parsed && typeof parsed.detail === 'string' && parsed.detail) {
+                            detail = parsed.detail;
+                        } else if (parsed && typeof parsed.message === 'string' && parsed.message) {
+                            detail = parsed.message;
+                        }
+                    } catch (_err) { /* body was not JSON */ }
+                }
+            } catch (_err) { /* body unreadable; the status still explains the failure */ }
         }
+        return detail ? headline + ' ' + detail : headline;
     }
 
     function canSend(text) {

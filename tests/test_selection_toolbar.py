@@ -278,7 +278,7 @@ def test_selection_toolbar_shows_hides_and_emits_reference_envelope() -> None:
     output = _run_toolbar(
         textwrap.dedent(
             """
-            const api = ScreenScribeSelectionToolbar;
+            const api = screenscribeSelectionToolbar;
             if (api.HIDE_DELAY_MS !== 250) throw new Error('delay ' + api.HIDE_DELAY_MS);
             const bar = document.getElementById('ss-selection-toolbar');
             if (!bar) throw new Error('toolbar was not built');
@@ -408,7 +408,7 @@ def test_transcript_error_summary_fallback_and_silent_dispatch() -> None:
     output = _run_toolbar(
         textwrap.dedent(
             """
-            const api = ScreenScribeSelectionToolbar;
+            const api = screenscribeSelectionToolbar;
             const bar = document.getElementById('ss-selection-toolbar');
             const captured = [];
             document.addEventListener('screenscribe:agent-insert-reference', (event) => {
@@ -590,9 +590,9 @@ def test_review_report_inlines_selection_toolbar_and_analyze_does_not() -> None:
         language="en",
     )
     assert "screenscribe:agent-insert-reference" in html
-    assert "ScreenScribeSelectionToolbar" in html
+    assert "screenscribeSelectionToolbar" in html
     assert ".ss-selection-toolbar" in html
-    assert html.index("ScreenScribeAgentPanel") < html.index("ScreenScribeSelectionToolbar")
+    assert html.index("screenscribeAgentPanel") < html.index("screenscribeSelectionToolbar")
     assert "cdnjs.cloudflare.com" not in html
     assert 'src="http' not in html
 

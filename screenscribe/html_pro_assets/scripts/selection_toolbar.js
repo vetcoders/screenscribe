@@ -413,7 +413,7 @@
         if (typeof root.addEventListener === 'function') root.addEventListener('resize', onViewport);
     }
 
-    root.ScreenScribeSelectionToolbar = {
+    root.screenscribeSelectionToolbar = {
         EVENT_NAME: EVENT_NAME,
         QUOTE_CAP: QUOTE_CAP,
         HIDE_DELAY_MS: HIDE_DELAY_MS,

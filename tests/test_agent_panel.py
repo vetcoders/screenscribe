@@ -1195,7 +1195,7 @@ def test_provider_error_is_retryable_and_composer_stays_live() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             const bodies = [];
             fetch = async (_url, opts) => {
                 bodies.push(JSON.parse(opts.body));
@@ -1207,7 +1207,7 @@ def test_provider_error_is_retryable_and_composer_stays_live() -> None:
                 }
                 return {
                     ok: true,
-                    text: async () => 'event: token\\ndata: {"text":"recovered"}\\n\\nevent: done\\ndata: {"response_id":"resp_ok"}\\n\\n',
+                    text: async () => 'event: token\\ndata: {"text":"recovered"}\\n\\nevent: done\\ndata: {"response_id":"resp_ok","provider":"primary","protocol":"responses","host":"api.openai.com"}\\n\\n',
                 };
             };
             window.fetch = fetch;
@@ -1301,7 +1301,7 @@ def test_thread_restores_messages_and_chain_from_indexeddb() -> None:
                 };
             }
             window.indexedDB = makeIdb();
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             const bodies = [];
             fetch = async (_url, opts) => {
                 bodies.push(JSON.parse(opts.body));
@@ -1310,7 +1310,7 @@ def test_thread_restores_messages_and_chain_from_indexeddb() -> None:
                 const id = n === 1 ? 'resp_a' : 'resp_b';
                 return {
                     ok: true,
-                    text: async () => 'event: token\\ndata: {"text":"' + text + '"}\\n\\nevent: done\\ndata: {"response_id":"' + id + '"}\\n\\n',
+                    text: async () => 'event: token\\ndata: {"text":"' + text + '"}\\n\\nevent: done\\ndata: {"response_id":"' + id + '","provider":"primary","protocol":"responses","host":"api.openai.com"}\\n\\n',
                 };
             };
             window.fetch = fetch;
@@ -1353,7 +1353,7 @@ def test_reference_event_inserts_quote_and_opens_panel() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
-            const api = ScreenScribeAgentPanel;
+            const api = screenscribeAgentPanel;
             api.init();
             await api.whenThreadReady();
             api.setCollapsed(true);

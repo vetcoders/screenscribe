@@ -2,6 +2,25 @@
 
 ## [0.1.20.dev0] - Unreleased
 
+- **Fixed: the review agent can see the frames.** Previously the agent received
+  only a one-line summary per finding; `show_frame` only moved the browser, so
+  questions about what is on screen were answered from that summary. The new
+  `view_frame` tool attaches the real screenshot pixels to the model
+  conversation (main frame plus merged frames, a merged member, a manual marker,
+  the frame nearest a timestamp, or one named file), as Responses `input_image`
+  or Anthropic image blocks inside the tool result. The new `get_finding` tool
+  returns the full visual analysis: UI elements, detected issues, accessibility,
+  design and technical observations, suggested fix and every merged frame with
+  its narration. Frames are read only from inside the report directory, checked
+  by magic bytes, capped per call and per turn, and never sent to the browser
+  over SSE. Text inside screenshots is marked as screen data, not instructions.
+
+- **Fixed: agent panel failures show the HTTP status again.** A failed agent
+  request without a response body showed only the word "Retry". The error row
+  now states the HTTP status and appends the server's detail when present. The
+  selection toolbar's browser global is `screenscribeSelectionToolbar`, matching
+  `screenscribeAgentPanel`.
+
 - **Changed: manual review cards identify their content sources.** Human words
   and notes appear first, followed by an explicitly labelled AI summary and
   separate suggestions from the model's image analysis. Visual suggestions remain
