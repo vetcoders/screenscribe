@@ -7,6 +7,7 @@ Read tools inspect the loaded report. Write tools do **not** touch
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import math
@@ -20,6 +21,16 @@ logger = logging.getLogger(__name__)
 
 _MAX_OPEN_FILE_BYTES = 80_000
 _MAX_TRANSCRIPT_HITS = 80
+# view_frame: real pixels for the model. A frame is a full-resolution screenshot
+# (~1-2 MB JPEG); the per-call and per-turn caps keep the provider payload bounded,
+# especially on stateless providers that resend the whole turn every tool round.
+_MAX_FRAME_BYTES = 8_000_000
+_MAX_FRAMES_PER_CALL = 4
+_MAX_FRAMES_PER_TURN = 8
+_MAX_DETAIL_STRING_CHARS = 6_000
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_JPEG_MAGIC = b"\xff\xd8\xff"
+_SCREENSHOTS_DIRNAME = "screenshots"
 _SAFE_REPO_FILE_SUFFIXES = frozenset(
     {
         ".bash",
@@ -80,6 +91,8 @@ _EDIT_FIELD_TO_PATCH: dict[str, str] = {
 
 READ_TOOL_NAMES = (
     "list_findings",
+    "get_finding",
+    "view_frame",
     "get_transcript",
     "seek",
     "show_frame",
@@ -120,6 +133,47 @@ def responses_tool_schemas(*, include_repo: bool) -> list[dict[str, Any]]:
                     "type": "string",
                     "description": "Optional substring filter, e.g. 'critical' or 'layout'.",
                 }
+            },
+        ),
+        _function_tool(
+            "get_finding",
+            "Return the complete record of one finding: narration text and context, "
+            "the full visual analysis (ui_elements, issues_detected, "
+            "accessibility_notes, design_feedback, technical_observations, "
+            "suggested_fix, action_items, affected_components) and every merged "
+            "frame with its own narration and screenshot. The seed and "
+            "list_findings carry only a one-line summary; call this before "
+            "answering detailed questions about a finding. Also accepts a merged "
+            "member id or a manual marker id.",
+            {
+                "finding_id": {
+                    "description": "Finding id, merged member id, or manual marker id.",
+                }
+            },
+            required=["finding_id"],
+        ),
+        _function_tool(
+            "view_frame",
+            "Look at the actual screenshot pixels yourself. The frames are attached "
+            "to the conversation right after this tool result, so you can read the "
+            "screen, UI state, text and errors directly instead of relying on the "
+            "stored summary. Pass finding_id (a finding returns its main frame "
+            "plus merged frames; a merged member id or manual marker id returns "
+            "that frame), or timestamp for the nearest frame, or frame for one "
+            "specific screenshot file name from get_finding. This does not change "
+            "the user's UI; use show_frame for that.",
+            {
+                "finding_id": {
+                    "description": "Finding id, merged member id, or manual marker id.",
+                },
+                "timestamp": {
+                    "type": "number",
+                    "description": "Video timestamp in seconds; picks the nearest frame.",
+                },
+                "frame": {
+                    "type": "string",
+                    "description": "Screenshot file name, e.g. 03_bug_11-59.jpg.",
+                },
             },
         ),
         _function_tool(
@@ -373,12 +427,32 @@ class ReportToolbelt:
         self.repo_root = repo_root.resolve() if repo_root is not None else None
         self.report_stem = report_stem or ""
         self.glossary_dir = glossary_dir
+        self._pending_images: list[dict[str, str]] = []
+        self._frames_attached = 0
+
+    def drain_images(self) -> list[dict[str, str]]:
+        """Return and clear frames loaded by ``view_frame`` since the last drain.
+
+        Each entry is ``{"media_type", "data" (base64), "label"}``. The chat loop
+        attaches them to the provider conversation; they never enter the SSE
+        stream or the JSON tool result.
+        """
+        images, self._pending_images = self._pending_images, []
+        return images
 
     def execute(self, name: str, arguments: dict[str, Any] | None) -> str:
         args = arguments if isinstance(arguments, dict) else {}
         try:
             if name == "list_findings":
                 result = self.list_findings(str(args.get("filter") or ""))
+            elif name == "get_finding":
+                result = self.get_finding(args.get("finding_id"))
+            elif name == "view_frame":
+                result = self.view_frame(
+                    finding_id=args.get("finding_id"),
+                    timestamp=args.get("timestamp"),
+                    frame=args.get("frame"),
+                )
             elif name == "get_transcript":
                 result = self.get_transcript(args.get("start"), args.get("end"))
             elif name == "seek":
@@ -443,6 +517,7 @@ class ReportToolbelt:
                 "is_issue": unified.get("is_issue"),
                 "summary": unified.get("summary") or finding.get("text"),
                 "screenshot": finding.get("screenshot"),
+                "frame_count": len(self._finding_frames(finding)),
             }
             hay_values = [*row.values(), finding.get("text"), finding.get("context")]
             hay = " ".join(str(v) for v in hay_values if v is not None).lower()
@@ -507,6 +582,87 @@ class ReportToolbelt:
             "timestamp": ts,
             "screenshot": screenshot,
         }
+
+    def get_finding(self, finding_id: object) -> dict[str, Any]:
+        target = self._frame_target(finding_id)
+        if target is None:
+            return _unknown_or_missing_finding(finding_id)
+        kind, record, parent = target
+        if kind == "manual_marker":
+            detail: dict[str, Any] = dict(_detail_copy(record))
+            detail["kind"] = "manual_marker"
+            detail["frames"] = [
+                {"frame": record.get("frame_path"), "timestamp": record.get("timestamp")}
+            ]
+            return detail
+        finding = parent if parent is not None else record
+        detail = dict(_detail_copy(finding))
+        detail["kind"] = "finding"
+        if parent is not None:
+            detail["matched_member_id"] = record.get("id")
+        detail["frames"] = [
+            {
+                "frame": frame["ref"],
+                "timestamp": frame["timestamp"],
+                "member_id": frame["member_id"],
+                "text": frame["text"],
+            }
+            for frame in self._finding_frames(finding)
+        ]
+        return detail
+
+    def view_frame(
+        self,
+        *,
+        finding_id: object = None,
+        timestamp: object = None,
+        frame: object = None,
+    ) -> dict[str, Any]:
+        if self.output_dir is None:
+            return {"error": "view_frame is unavailable: the report directory is unknown."}
+        frames = self._select_frames(finding_id, timestamp, frame)
+        if isinstance(frames, dict):
+            return frames
+        rows: list[dict[str, Any]] = []
+        attached = 0
+        for entry in frames[:_MAX_FRAMES_PER_CALL]:
+            row: dict[str, Any] = {
+                "frame": entry["ref"],
+                "timestamp": entry["timestamp"],
+                "label": entry["label"],
+            }
+            if self._frames_attached >= _MAX_FRAMES_PER_TURN:
+                row["attached"] = False
+                row["error"] = f"frame budget for this turn ({_MAX_FRAMES_PER_TURN}) is used up"
+                rows.append(row)
+                continue
+            loaded = self._load_frame(entry["ref"])
+            if isinstance(loaded, str):
+                row["attached"] = False
+                row["error"] = loaded
+            else:
+                media_type, raw = loaded
+                self._pending_images.append(
+                    {
+                        "media_type": media_type,
+                        "data": base64.b64encode(raw).decode("ascii"),
+                        "label": entry["label"],
+                    }
+                )
+                self._frames_attached += 1
+                attached += 1
+                row["attached"] = True
+            rows.append(row)
+        result: dict[str, Any] = {"attached": attached, "frames": rows}
+        if len(frames) > _MAX_FRAMES_PER_CALL:
+            result["omitted"] = len(frames) - _MAX_FRAMES_PER_CALL
+            result["hint"] = "Call view_frame with frame=<name> for the remaining frames."
+        if attached:
+            result["note"] = (
+                "The attached images follow this tool result in the same order as "
+                "frames[]. Base your answer on what is visible in them."
+            )
+        return result
 
     def get_report_summary(self) -> dict[str, Any]:
         passes = self.report.get("analysis_passes")
@@ -798,6 +954,160 @@ class ReportToolbelt:
             return None
         return wanted
 
+    def _manual_markers(self) -> list[dict[str, Any]]:
+        markers: list[dict[str, Any]] = []
+        manual = self.report.get("manual_review")
+        if isinstance(manual, dict):
+            for marker in manual.get("markers") or []:
+                if isinstance(marker, dict):
+                    markers.append(marker)
+        human = self.report.get("human_review")
+        if isinstance(human, dict):
+            for frame in human.get("manual_frames") or []:
+                if isinstance(frame, dict):
+                    markers.append(frame)
+        return markers
+
+    def _frame_target(
+        self, finding_id: object
+    ) -> tuple[str, dict[str, Any], dict[str, Any] | None] | None:
+        """Resolve a finding, merged member, or manual marker id.
+
+        Returns ``(kind, record, parent_finding)``; ``parent_finding`` is set only
+        when the id names a member folded into another finding.
+        """
+        if finding_id is None or finding_id == "":
+            return None
+        wanted = str(finding_id)
+        finding = self._finding_by_id(wanted)
+        if finding is not None:
+            return ("finding", finding, None)
+        for parent in self._findings():
+            members = parent.get("merged_frames")
+            if not isinstance(members, list):
+                continue
+            for member in members:
+                if isinstance(member, dict) and str(member.get("id")) == wanted:
+                    return ("member", member, parent)
+        for marker in self._manual_markers():
+            marker_id = marker.get("marker_id", marker.get("id"))
+            if marker_id is not None and str(marker_id) == wanted:
+                return ("manual_marker", marker, None)
+        return None
+
+    def _finding_frames(self, finding: dict[str, Any]) -> list[dict[str, Any]]:
+        frames: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def add(ref: object, timestamp: object, member_id: object, text: object) -> None:
+            if not isinstance(ref, str) or not ref.strip() or ref in seen:
+                return
+            seen.add(ref)
+            frames.append(
+                {
+                    "ref": ref,
+                    "timestamp": _as_float(timestamp),
+                    "member_id": member_id,
+                    "text": text if isinstance(text, str) else None,
+                    "label": f"finding {finding.get('id')}"
+                    + (f" / member {member_id}" if member_id is not None else "")
+                    + f" @ {_format_ts(_as_float(timestamp))}",
+                }
+            )
+
+        add(finding.get("screenshot"), finding.get("timestamp_start"), None, finding.get("text"))
+        members = finding.get("merged_frames")
+        if isinstance(members, list):
+            for member in members:
+                if isinstance(member, dict):
+                    add(
+                        member.get("screenshot"),
+                        member.get("timestamp_start"),
+                        member.get("id"),
+                        member.get("text"),
+                    )
+        return frames
+
+    def _all_frames(self) -> list[dict[str, Any]]:
+        frames: list[dict[str, Any]] = []
+        for finding in self._findings():
+            frames.extend(self._finding_frames(finding))
+        for marker in self._manual_markers():
+            ref = marker.get("frame_path")
+            if isinstance(ref, str) and ref.strip():
+                ts = _as_float(marker.get("timestamp"))
+                marker_id = marker.get("marker_id", marker.get("id"))
+                frames.append(
+                    {
+                        "ref": ref,
+                        "timestamp": ts,
+                        "member_id": None,
+                        "text": marker.get("transcript") or marker.get("notes"),
+                        "label": f"manual marker {marker_id} @ {_format_ts(ts)}",
+                    }
+                )
+        return frames
+
+    def _select_frames(
+        self, finding_id: object, timestamp: object, frame: object
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        if isinstance(frame, str) and frame.strip():
+            wanted = frame.strip()
+            for entry in self._all_frames():
+                if entry["ref"] == wanted or Path(entry["ref"]).name == wanted:
+                    return [entry]
+            return {"error": f"Unknown frame: {wanted}. Use get_finding to list frame names."}
+        if finding_id not in (None, ""):
+            target = self._frame_target(finding_id)
+            if target is None:
+                return _unknown_or_missing_finding(finding_id)
+            kind, record, parent = target
+            if kind == "finding":
+                frames = self._finding_frames(record)
+            elif kind == "member" and parent is not None:
+                ref = record.get("screenshot")
+                frames = [e for e in self._finding_frames(parent) if e["ref"] == ref]
+            else:
+                ref = record.get("frame_path")
+                frames = [e for e in self._all_frames() if e["ref"] == ref]
+            if not frames:
+                return {"error": f"Finding {finding_id} has no stored frame."}
+            return frames
+        ts = _as_float(timestamp)
+        if ts is None:
+            return {"error": "view_frame requires finding_id, timestamp, or frame."}
+        timed = [e for e in self._all_frames() if e["timestamp"] is not None]
+        if not timed:
+            return {"error": "This report has no timestamped frames."}
+        return [min(timed, key=lambda e: abs(e["timestamp"] - ts))]
+
+    def _load_frame(self, ref: str) -> tuple[str, bytes] | str:
+        """Read one report-owned image, confined to the report directory."""
+        assert self.output_dir is not None
+        base = Path(self.output_dir).resolve()
+        rel = Path(ref)
+        if rel.is_absolute() or ".." in rel.parts:
+            return "frame path is not report-relative"
+        candidates = [base / rel]
+        if len(rel.parts) == 1:
+            candidates.insert(0, base / _SCREENSHOTS_DIRNAME / rel)
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if base != resolved and base not in resolved.parents:
+                continue
+            if not resolved.is_file():
+                continue
+            size = resolved.stat().st_size
+            if size > _MAX_FRAME_BYTES:
+                return f"frame too large ({size} bytes)"
+            raw = resolved.read_bytes()
+            if raw.startswith(_PNG_MAGIC):
+                return ("image/png", raw)
+            if raw.startswith(_JPEG_MAGIC):
+                return ("image/jpeg", raw)
+            return "stored file is not a JPEG or PNG image"
+        return "frame file is missing from the report directory"
+
     def _finding_nearest(self, timestamp: float) -> dict[str, Any] | None:
         best: dict[str, Any] | None = None
         best_delta = None
@@ -827,6 +1137,33 @@ def _repo_path_is_sensitive(relative: Path) -> bool:
         relative.suffix.lower() not in _SAFE_REPO_FILE_SUFFIXES
         and name not in _SAFE_REPO_FILE_NAMES
     )
+
+
+def _detail_copy(value: Any, *, key: str = "") -> Any:
+    """JSON-safe deep copy for the model: no inline pixels, bounded strings."""
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            name = str(k)
+            if name.endswith("base64") or name in {"frame_base64", "response_id"}:
+                continue
+            out[name] = _detail_copy(v, key=name)
+        return out
+    if isinstance(value, list):
+        return [_detail_copy(item, key=key) for item in value]
+    if isinstance(value, str):
+        if value.startswith("data:"):
+            return "(inline image omitted; use view_frame)"
+        if len(value) > _MAX_DETAIL_STRING_CHARS:
+            return value[:_MAX_DETAIL_STRING_CHARS] + "…(truncated)"
+    return value
+
+
+def _format_ts(seconds: float | None) -> str:
+    if seconds is None:
+        return "?"
+    total = int(seconds)
+    return f"{total // 60:02d}:{total % 60:02d}"
 
 
 def _unified(finding: dict[str, Any]) -> dict[str, Any]:

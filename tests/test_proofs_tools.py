@@ -47,7 +47,7 @@ def test_probe_tool_handles_unknown_tool(tmp_path: Path) -> None:
 
 
 def test_run_tool_probes_covers_all_inventoryed_tools() -> None:
-    """All 14 ReportToolbelt tools are probed and produce receipts."""
+    """Every ReportToolbelt tool is probed and produces a receipt."""
     receipts = run_tool_probes()
     elements = {r.element for r in receipts}
     assert elements == set(TOOL_NAMES)

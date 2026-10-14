@@ -17,6 +17,10 @@ from .receipts import VERDICT_NOT_PROVEN, VERDICT_PROVEN, ProofReceipt
 _EXAMPLE_REPORT = "example_report.json"
 _EXAMPLE_TRANSCRIPT = "example_transcript.vtt"
 _PACKAGED_FIXTURES = Path(__file__).resolve().parent / "fixtures"
+_PROOF_FRAME = "proof_frame.jpg"
+# Smallest byte string the frame loader accepts as JPEG (magic-byte gate). The
+# probe proves the read path and the image hand-off, not the model's vision.
+_PROOF_FRAME_BYTES = b"\xff\xd8\xff\xe0" + b"screenscribe-proof-frame" + b"\xff\xd9"
 
 
 def _fixture_source() -> Path:
@@ -74,6 +78,13 @@ def _build_fixture(tmp_dir: Path) -> tuple[dict[str, Any], ReportToolbelt]:
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["transcript_segments"] = _parse_vtt(transcript_path)
+    # view_frame reads real files from <output_dir>/screenshots/.
+    findings = report.get("findings")
+    if isinstance(findings, list) and findings and isinstance(findings[0], dict):
+        findings[0]["screenshot"] = _PROOF_FRAME
+    screenshots = tmp_dir / "screenshots"
+    screenshots.mkdir(parents=True, exist_ok=True)
+    (screenshots / _PROOF_FRAME).write_bytes(_PROOF_FRAME_BYTES)
 
     # Write a canonical report.json in the fixture dir so tools see it.
     fixture_report_path = tmp_dir / "report.json"
@@ -102,6 +113,13 @@ def _probe_tool(toolbelt: ReportToolbelt, name: str) -> ProofReceipt:
     try:
         if name == "list_findings":
             result = toolbelt.execute(name, {"filter": "bug"})
+        elif name == "get_finding":
+            result = toolbelt.execute(name, {"finding_id": 1})
+        elif name == "view_frame":
+            result = toolbelt.execute(name, {"finding_id": 1})
+            images = toolbelt.drain_images()
+            if json.loads(result).get("attached") != 1 or len(images) != 1:
+                raise RuntimeError("view_frame did not hand one frame to the model")
         elif name == "get_transcript":
             result = toolbelt.execute(name, {"start": 0.0, "end": 10.0})
         elif name == "seek":
@@ -192,7 +210,7 @@ def _probe_tool(toolbelt: ReportToolbelt, name: str) -> ProofReceipt:
 
 
 def run_tool_probes() -> list[ProofReceipt]:
-    """Run all 14 ReportToolbelt tools against the example fixture.
+    """Run every ReportToolbelt tool against the example fixture.
 
     A missing fixture stamps every tool NOT-PROVEN with the reason instead of
     killing the whole doctor run — the harness exists to surface truth, and a
