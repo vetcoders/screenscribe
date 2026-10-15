@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.20.dev0] - Unreleased
+## [0.1.20] - 2026-10-15
 
 - **Added: a conversation panel built for real use.** Agent answers now
   stream: the server forwards provider text deltas as they arrive instead of
