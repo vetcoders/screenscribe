@@ -8,7 +8,7 @@ dossiers, or abstract translation.
 
 SSE (binding for w1-05)::
 
-    event: token        data: {"text": ...}
+    event: token        data: {"text": ...}   (one provider text delta; many per turn)
     event: tool_call    data: {"name", "input"}
     event: tool_result  data: {"name", "result"}
     event: done         data: {"response_id", "provider", "protocol", "host"}
@@ -16,10 +16,18 @@ SSE (binding for w1-05)::
 
 ``tool_result.result`` may be a ``review_patch`` or ``review_plan`` object from
 the write tools. The SSE envelope is unchanged; the browser applies the patch.
+
+``token`` frames are forwarded as the provider streams them: the first words of
+an answer reach the browser while the model is still generating. While a round
+produces no output (reasoning, slow first token) the stream carries SSE comment
+frames (``: keepalive``) so clients can tell a live turn from a dead connection.
+Closing the HTTP stream cancels the provider request.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -50,6 +58,9 @@ _MAX_HISTORY_FIELD_CHARS = 16_000
 _INTERNAL_HOSTS = {"api.libraxis.cloud"}
 _TRUST_LEVELS = {"local", "internal", "processor", "external"}
 _KEPT_UNDER_DENY = {"local", "internal", "processor"}
+# Seconds of provider silence before an SSE keepalive comment is emitted.
+_KEEPALIVE_SECONDS = 10.0
+KEEPALIVE_FRAME = ": keepalive\n\n"
 
 # Tests replace this to avoid the network.
 RoundTripper = Callable[["AgentProvider", dict[str, Any]], Awaitable["ProviderRound"]]
@@ -309,7 +320,10 @@ async def stream_agent_chat(
                 turn=turn,
                 tools=tools,
             ):
-                emitted = True
+                if frame != KEEPALIVE_FRAME:
+                    # A keepalive carries no answer text; a failing primary that
+                    # only kept the connection warm may still fall back.
+                    emitted = True
                 yield frame
             return
         except Exception as exc:
@@ -449,13 +463,19 @@ async def _run_provider(
                 previous_response_id=previous,
                 include_repo=include_repo,
             )
-        round_result = await _dispatch_round(provider, payload)
+        holder: list[ProviderRound] = []
+        streamed: list[str] = []
+        async for frame in _stream_round(provider, payload, holder, streamed):
+            yield frame
+        round_result = holder[0]
         if round_result.error:
             raise AgentChatError(round_result.error)
         if round_result.response_id and stateful_chain:
             last_response_id = round_result.response_id
             previous = round_result.response_id
-        if round_result.text:
+        if round_result.text and not streamed:
+            # A provider (or test double) that delivered no deltas: send the
+            # round's text as one frame rather than dropping it.
             yield format_sse("token", {"text": round_result.text})
         if not round_result.function_calls:
             yield format_sse(
@@ -627,15 +647,72 @@ def _build_responses_payload(
     return payload
 
 
-async def _dispatch_round(provider: AgentProvider, payload: dict[str, Any]) -> ProviderRound:
+async def _stream_round(
+    provider: AgentProvider,
+    payload: dict[str, Any],
+    holder: list[ProviderRound],
+    streamed: list[str],
+) -> AsyncIterator[str]:
+    """Run one provider round, yielding ``token`` frames as deltas arrive.
+
+    The finished ``ProviderRound`` is appended to ``holder``; every forwarded
+    delta is appended to ``streamed``. Provider silence longer than
+    ``_KEEPALIVE_SECONDS`` yields an SSE comment frame. If the consumer stops
+    iterating (client disconnect), the provider request is cancelled.
+    """
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    task = asyncio.create_task(_dispatch_round(provider, payload, on_delta=queue.put_nowait))
+    getter: asyncio.Future[str] | None = None
+    try:
+        while True:
+            if task.done() and queue.empty():
+                break
+            getter = asyncio.ensure_future(queue.get())
+            done, _pending = await asyncio.wait(
+                {getter, task},
+                timeout=_KEEPALIVE_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if getter in done:
+                piece = getter.result()
+                if piece:
+                    streamed.append(piece)
+                    yield format_sse("token", {"text": piece})
+                continue
+            getter.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await getter
+            if not done:
+                yield KEEPALIVE_FRAME
+        holder.append(task.result())
+    finally:
+        if getter is not None and not getter.done():
+            getter.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await getter
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
+
+async def _dispatch_round(
+    provider: AgentProvider,
+    payload: dict[str, Any],
+    on_delta: Callable[[str], None] | None = None,
+) -> ProviderRound:
     if round_tripper is not None:
         return await round_tripper(provider, payload)
     if provider.protocol == "anthropic":
-        return await _anthropic_round(provider, payload)
-    return await _responses_round(provider, payload)
+        return await _anthropic_round(provider, payload, on_delta=on_delta)
+    return await _responses_round(provider, payload, on_delta=on_delta)
 
 
-async def _responses_round(provider: AgentProvider, payload: dict[str, Any]) -> ProviderRound:
+async def _responses_round(
+    provider: AgentProvider,
+    payload: dict[str, Any],
+    on_delta: Callable[[str], None] | None = None,
+) -> ProviderRound:
     headers = {
         "Authorization": f"Bearer {provider.key}",
         "Content-Type": "application/json",
@@ -679,6 +756,8 @@ async def _responses_round(provider: AgentProvider, payload: dict[str, Any]) -> 
                     delta = event.get("delta")
                     if isinstance(delta, str) and delta:
                         text_parts.append(delta)
+                        if on_delta is not None:
+                            on_delta(delta)
                 elif event_type == "response.output_text.done":
                     text = event.get("text")
                     if isinstance(text, str):
@@ -813,7 +892,11 @@ def _calls_from_bucket(calls: dict[str, dict[str, Any]]) -> list[FunctionCall]:
     return parsed
 
 
-async def _anthropic_round(provider: AgentProvider, payload: dict[str, Any]) -> ProviderRound:
+async def _anthropic_round(
+    provider: AgentProvider,
+    payload: dict[str, Any],
+    on_delta: Callable[[str], None] | None = None,
+) -> ProviderRound:
     try:
         from anthropic import AsyncAnthropic
     except ImportError as exc:
@@ -845,6 +928,8 @@ async def _anthropic_round(provider: AgentProvider, payload: dict[str, Any]) -> 
                 piece = getattr(delta, "text", "")
                 if piece:
                     text_parts.append(piece)
+                    if on_delta is not None:
+                        on_delta(piece)
         final = await stream.get_final_message()
 
     calls: list[FunctionCall] = []

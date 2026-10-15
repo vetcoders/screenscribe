@@ -252,8 +252,12 @@ def serialize_stt_result(
     return payload
 
 
+# Browser audio upload routes sharing the MAX_AUDIO_BYTES cap.
+_STT_UPLOAD_PATHS = frozenset({"/api/stt", "/api/agent/stt"})
+
+
 def install_stt_upload_cap(app: FastAPI) -> None:
-    """Register the ``/api/stt`` upload-cap middleware on ``app``.
+    """Register the browser-audio upload-cap middleware on ``app``.
 
     Rejects an honestly-declared oversized STT upload before the body is
     parsed/spooled at all (the handler still enforces the cap chunk-wise
@@ -262,7 +266,7 @@ def install_stt_upload_cap(app: FastAPI) -> None:
 
     @app.middleware("http")
     async def _stt_upload_cap(request: Request, call_next):  # type: ignore[no-untyped-def]
-        if request.url.path == "/api/stt":
+        if request.url.path in _STT_UPLOAD_PATHS:
             declared = request.headers.get("content-length", "")
             # Small slack on top of the cap for multipart framing overhead.
             if declared.isdigit() and int(declared) > MAX_AUDIO_BYTES + 64 * 1024:

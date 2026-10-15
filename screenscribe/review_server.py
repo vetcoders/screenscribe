@@ -1490,7 +1490,47 @@ def create_review_app(
             ):
                 yield frame
 
-        return StreamingResponse(event_frames(), media_type="text/event-stream")
+        # no-cache + X-Accel-Buffering: a proxy or browser must hand each token
+        # frame on immediately instead of buffering the turn.
+        return StreamingResponse(
+            event_frames(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.post("/api/agent/stt")
+    async def agent_dictation(
+        audio: Annotated[UploadFile, File(description="Browser-recorded agent dictation")],
+    ) -> JSONResponse:
+        """Transcribe a dictated agent message into an editable draft.
+
+        Same upload limits and STT path as ``/api/stt``, but it never touches
+        the manual-frame conversation chain: dictating a chat message must not
+        advance or race the review session's VLM/STT ``response_id``. Audio
+        bytes are neither stored nor logged.
+        """
+        audio_data = await read_upload_capped(audio, max_bytes=MAX_AUDIO_BYTES)
+        validate_browser_stt_upload(audio_data)
+        filename = audio.filename or "dictation.webm"
+        content_type = audio.content_type or "audio/webm"
+        try:
+            result = await run_in_threadpool(
+                transcribe_browser_audio,
+                audio_data,
+                filename=filename,
+                content_type=content_type,
+                config=config,
+            )
+            quality_warning = validate_browser_stt_result(result)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("Agent dictation STT failed (%s): %s", content_type, type(exc).__name__)
+            raise HTTPException(
+                status_code=502,
+                detail="Voice transcription failed. Try again in a moment.",
+            ) from exc
+        return JSONResponse(content=serialize_stt_result(result, quality_warning=quality_warning))
 
     @app.post("/api/agent/chat")
     async def agent_chat(payload: AgentChatRequest) -> dict[str, Any]:
