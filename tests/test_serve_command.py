@@ -145,7 +145,7 @@ def test_serve_explicit_video_outside_the_directory(
         ("missing", "Review directory not found"),
         ("empty", "No review report"),
         ("file", "Not a directory"),
-        ("html-only", "no matching source video"),
+        ("html-only", "not the recording it was made from"),
     ],
 )
 def test_serve_rejects_missing_or_invalid_dir_without_traceback(
@@ -189,3 +189,55 @@ def test_auto_review_still_injects_review_for_a_video(monkeypatch: pytest.Monkey
     monkeypatch.setattr(sys, "argv", argv)
     _auto_review_if_video()
     assert argv == ["screenscribe", "review", "clip.mov"]
+
+
+def _renamed_recording_layout(tmp_path: Path) -> tuple[Path, Path]:
+    """The real failure: review made from "Screen Recording X.mov", recording
+    later renamed to "Screen_Recording_X.mov" (dir too), link left dangling."""
+    old_video = tmp_path / "Screen Recording 2026-10-15 at 04.04.09.mov"
+    review_dir = tmp_path / "Screen_Recording_2026-10-15_at_04.04.09_review"
+    review_dir.mkdir()
+    (review_dir / "Screen Recording 2026-10-15 at 04.04.09_report.html").write_text(
+        '<html><video id="videoPlayer" src="Screen Recording 2026-10-15 at 04.04.09.mov">'
+        "</video></html>",
+        encoding="utf-8",
+    )
+    (review_dir / "Screen Recording 2026-10-15 at 04.04.09.mov").symlink_to(old_video)
+    renamed = tmp_path / "Screen_Recording_2026-10-15_at_04.04.09.mov"
+    renamed.write_bytes(_VIDEO_BYTES)
+    return review_dir, renamed
+
+
+def test_serve_finds_a_recording_renamed_after_the_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Falsification: drop the renamed-recording lookup and serve refuses with
+    "not the recording it was made from" although the file sits beside the dir."""
+    review_dir, renamed = _renamed_recording_layout(tmp_path)
+    result, created, served = _invoke_serve(monkeypatch, ["serve", str(review_dir)])
+    assert result.exit_code == 0, result.output
+    assert created["report_filename"] == "Screen Recording 2026-10-15 at 04.04.09_report.html"
+    assert Path(created["video_path"]).resolve() == renamed.resolve()
+    assert served["host"] == "127.0.0.1"
+
+
+def test_serve_explicit_renamed_video_uses_the_only_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Falsification: derive the report only from the --video stem again and this
+    fails with "No Screen_Recording_..._report.html"."""
+    review_dir, renamed = _renamed_recording_layout(tmp_path)
+    result, created, _served = _invoke_serve(
+        monkeypatch, ["serve", str(review_dir), "--video", str(renamed)]
+    )
+    assert result.exit_code == 0, result.output
+    assert created["report_filename"] == "Screen Recording 2026-10-15 at 04.04.09_report.html"
+    assert Path(created["video_path"]).resolve() == renamed.resolve()
+
+
+def test_serve_explicit_video_with_several_reports_still_refuses(tmp_path: Path) -> None:
+    review_dir, renamed = _renamed_recording_layout(tmp_path)
+    (review_dir / "other_report.html").write_text("<html></html>", encoding="utf-8")
+    result = CliRunner().invoke(app, ["serve", str(review_dir), "--video", str(renamed)])
+    assert result.exit_code == 1
+    assert "several reports" in " ".join(result.output.split())
