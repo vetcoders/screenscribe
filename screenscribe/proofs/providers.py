@@ -16,8 +16,8 @@ from ..agent.chat import AgentProvider, _dispatch_round
 from ..config import ScreenScribeConfig
 from ..detect import Detection
 from ..frame_ocr import ocr_frame
-from ..providers.xai import XAI_STT_ENDPOINT, transcribe_file_xai
-from ..transcribe import transcribe_audio_bytes
+from ..providers.xai import transcribe_file_xai
+from ..transcribe import _is_xai_endpoint, transcribe_audio_bytes
 from ..transcribe_types import Segment
 from ..unified.analyze_one import analyze_finding_unified
 from .receipts import VERDICT_NOT_PROVEN, VERDICT_PROVEN, ProofReceipt
@@ -107,6 +107,19 @@ def _run_stt_openai(ctx: _ProbeContext) -> ProofReceipt:
 def _run_stt_xai(ctx: _ProbeContext) -> ProofReceipt:
     """Probe the xAI STT path via ``screenscribe.providers.xai``."""
     element = "screenscribe.providers.xai:stt_xai"
+    if not _is_xai_endpoint(ctx.config.stt_endpoint):
+        # The STT key belongs to the configured STT provider; it must never be
+        # sent to xAI just because this probe exists.
+        return ProofReceipt(
+            element=element,
+            kind="provider",
+            request_essence="POST /v1/stt (tiny wav)",
+            response_essence="no request sent",
+            duration_ms=0,
+            verdict=VERDICT_NOT_PROVEN,
+            reason="STT routing does not target xAI",
+            key_state=_key_state(bool(ctx.config.get_stt_api_key())),
+        )
     key = ctx.config.get_stt_api_key()
     if not key:
         return ProofReceipt(
@@ -127,13 +140,13 @@ def _run_stt_xai(ctx: _ProbeContext) -> ProofReceipt:
             "proof.wav",
             api_key=key,
             language="en",
-            endpoint=XAI_STT_ENDPOINT,
+            endpoint=ctx.config.stt_endpoint,
         )
         duration_ms = int((time.perf_counter() - start) * 1000)
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {XAI_STT_ENDPOINT}",
+            request_essence=f"POST {ctx.config.stt_endpoint}",
             response_essence=f"{len(result.segments)} segment(s), text_len={len(result.text)}",
             duration_ms=duration_ms,
             verdict=VERDICT_PROVEN,
@@ -148,7 +161,7 @@ def _run_stt_xai(ctx: _ProbeContext) -> ProofReceipt:
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {XAI_STT_ENDPOINT}",
+            request_essence=f"POST {ctx.config.stt_endpoint}",
             response_essence="request failed",
             duration_ms=duration_ms,
             verdict=VERDICT_NOT_PROVEN,

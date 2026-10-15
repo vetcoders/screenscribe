@@ -1158,3 +1158,62 @@ class TestSelectionSovereignty:
         assert config.stt_api_key == "lx-ambient"  # pragma: allowlist secret
         assert config.api_key == "lx-ambient"  # pragma: allowlist secret
         assert config.mismatch_warnings() == []
+
+    def test_libraxis_env_key_never_reaches_xai_stt_through_api_key(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        # STT on xAI, LLM/Vision on LibraxisAI: the ambient key fills the
+        # shared api_key for LLM, but the STT getter must not inherit it.
+        _no_account_bearer(clean_env)
+        clean_env.setenv("LIBRAXIS_API_KEY", "lx-ambient")  # pragma: allowlist secret
+        clean_env.setenv("SCREENSCRIBE_STT_ENDPOINT", "https://api.x.ai/v1/stt")
+        config = ScreenScribeConfig()
+
+        config._load_from_env()
+
+        assert config.api_key == "lx-ambient"  # pragma: allowlist secret
+        assert config.get_llm_api_key() == "lx-ambient"  # pragma: allowlist secret
+        assert config.get_stt_api_key() == ""
+        assert config.get_stt_live_api_key() == ""
+        assert config.get_tts_api_key() == ""
+
+    def test_libraxis_file_key_never_reaches_xai_stt(
+        self, clean_env: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # The config-file path fills stt_api_key and api_key unconditionally;
+        # the getters still keep the LibraxisAI key away from xAI.
+        _no_account_bearer(clean_env)
+        env_file = tmp_path / "config.env"
+        env_file.write_text(
+            "LIBRAXIS_API_KEY=lx-file\n"  # pragma: allowlist secret
+            "SCREENSCRIBE_STT_ENDPOINT=https://api.x.ai/v1/stt\n",
+            encoding="utf-8",
+        )
+        env_file.chmod(0o600)
+        config = ScreenScribeConfig()
+
+        config._load_from_file(env_file)
+
+        assert config.get_stt_api_key() == ""
+        assert config.get_llm_api_key() == "lx-file"  # pragma: allowlist secret
+
+    def test_explicit_stt_key_still_reaches_xai(self, clean_env: pytest.MonkeyPatch) -> None:
+        _no_account_bearer(clean_env)
+        clean_env.setenv("LIBRAXIS_API_KEY", "lx-ambient")  # pragma: allowlist secret
+        clean_env.setenv("SCREENSCRIBE_STT_ENDPOINT", "https://api.x.ai/v1/stt")
+        clean_env.setenv("SCREENSCRIBE_STT_API_KEY", "xai-explicit")  # pragma: allowlist secret
+        config = ScreenScribeConfig()
+
+        config._load_from_env()
+
+        assert config.get_stt_api_key() == "xai-explicit"  # pragma: allowlist secret
+
+
+def _no_account_bearer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep a signed-in account on this machine out of key-routing assertions."""
+    from screenscribe.account_auth import AccountAuthError
+
+    def refuse(*args: object, **kwargs: object) -> object:
+        raise AccountAuthError("not_signed_in", "no account in tests")
+
+    monkeypatch.setattr("screenscribe.account_auth.resolve_bearer", refuse)

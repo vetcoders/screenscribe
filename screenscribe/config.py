@@ -193,6 +193,11 @@ class ScreenScribeConfig:
     libraxis_env_key_slots: set[str] = field(default_factory=set, repr=False, compare=False)
     libraxis_env_ignored_slots: set[str] = field(default_factory=set, repr=False, compare=False)
     _libraxis_env_value: str = field(default="", repr=False, compare=False)
+    # Every value that came from a LIBRAXIS_API_KEY source (env or config file),
+    # whichever attribute it landed in. Getters skip such a value for a known
+    # non-LibraxisAI endpoint, so a shared ``api_key`` fallback can never carry
+    # a LibraxisAI key to xAI or OpenAI. Not persisted, not part of equality.
+    _libraxis_key_values: set[str] = field(default_factory=set, repr=False, compare=False)
     # Same sovereignty contract for OPENAI_API_KEY: an ambient OpenAI key may
     # fill LLM/Vision slots only when the selection's identity is OpenAI.
     openai_env_ignored: str = field(default="", repr=False, compare=False)
@@ -286,13 +291,32 @@ class ScreenScribeConfig:
             self.keywords = KeywordsConfig.load()
         return self.keywords
 
+    def _routed_key(self, endpoint: str, *candidates: str) -> str:
+        """First non-empty candidate allowed to reach ``endpoint``.
+
+        A value from LIBRAXIS_API_KEY is skipped when the endpoint is a known
+        non-LibraxisAI host, so the next candidate (or the account bearer)
+        serves instead of the LibraxisAI key leaking across providers.
+        """
+        foreign = self._endpoint_provider(endpoint) not in {None, "libraxis"}
+        for value in candidates:
+            if value and not (foreign and value in self._libraxis_key_values):
+                return value
+        return ""
+
     def get_stt_api_key(self) -> str:
         """Get API key for STT endpoint (explicit key, else account bearer)."""
-        return self._key_or_account_bearer(self.stt_api_key or self.api_key, self.stt_endpoint)
+        return self._key_or_account_bearer(
+            self._routed_key(self.stt_endpoint, self.stt_api_key, self.api_key),
+            self.stt_endpoint,
+        )
 
     def get_llm_api_key(self) -> str:
         """Get API key for LLM endpoint (explicit key, else account bearer)."""
-        return self._key_or_account_bearer(self.llm_api_key or self.api_key, self.llm_endpoint)
+        return self._key_or_account_bearer(
+            self._routed_key(self.llm_endpoint, self.llm_api_key, self.api_key),
+            self.llm_endpoint,
+        )
 
     def get_llm_reasoning_effort(self) -> str:
         """Reasoning effort for text-LLM Responses calls; invalid values fall back.
@@ -337,7 +361,8 @@ class ScreenScribeConfig:
     def get_vision_api_key(self) -> str:
         """Get API key for Vision endpoint (explicit key, else account bearer)."""
         return self._key_or_account_bearer(
-            self.vision_api_key or self.api_key, self.vision_endpoint
+            self._routed_key(self.vision_endpoint, self.vision_api_key, self.api_key),
+            self.vision_endpoint,
         )
 
     # Provider whose signed-in account may back requests to a given REST host.
@@ -378,7 +403,10 @@ class ScreenScribeConfig:
     def get_tts_api_key(self) -> str:
         """Explicit key fallback, or account bearer for the actual TTS host."""
         return self._key_or_account_bearer(
-            self.tts_api_key or self.stt_api_key or self.api_key, self.get_tts_endpoint()
+            self._routed_key(
+                self.get_tts_endpoint(), self.tts_api_key, self.stt_api_key, self.api_key
+            ),
+            self.get_tts_endpoint(),
         )
 
     def get_tts_endpoint(self) -> str:
@@ -403,7 +431,8 @@ class ScreenScribeConfig:
     def get_stt_live_api_key(self) -> str:
         """Resolve account access against the actual WebSocket destination."""
         return self._key_or_account_bearer(
-            self.stt_api_key or self.api_key, self.get_stt_live_endpoint()
+            self._routed_key(self.get_stt_live_endpoint(), self.stt_api_key, self.api_key),
+            self.get_stt_live_endpoint(),
         )
 
     def has_stt_fallback(self) -> bool:
@@ -831,6 +860,7 @@ class ScreenScribeConfig:
         value = self._libraxis_env_value
         if not value:
             return
+        self._libraxis_key_values.add(value)
         if self._slot_provider("stt") == "libraxis":
             if not self.stt_api_key:
                 self.stt_api_key = value
@@ -1004,7 +1034,9 @@ class ScreenScribeConfig:
             if not self.vision_api_key:
                 self.vision_api_key = value
         elif "libraxis_api_key" in key_lower:
-            # LibraxisAI key → STT + generic api_key (never over an explicit key)
+            # LibraxisAI key → STT + generic api_key (never over an explicit key).
+            # Getters keep it away from non-LibraxisAI hosts (_routed_key).
+            self._libraxis_key_values.add(value)
             if not self.stt_api_key:
                 self.stt_api_key = value
             if not self.api_key:

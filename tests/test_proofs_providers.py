@@ -68,6 +68,17 @@ class _MockAsyncClient:
         return self._stream
 
 
+@pytest.fixture(autouse=True)
+def _no_real_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Probes a test does not mock must fail locally, never reach a provider."""
+
+    def refuse(*args: object, **kwargs: object) -> Any:
+        raise httpx.ConnectError("network disabled in tests")
+
+    monkeypatch.setattr(httpx.Client, "send", refuse)
+    monkeypatch.setattr(httpx.AsyncClient, "send", refuse)
+
+
 def _stt_payload() -> dict[str, Any]:
     return {
         "text": "proof",
@@ -236,3 +247,48 @@ def test_agent_anthropic_probe_missing_key(
     agent = next(r for r in receipts if r.element == "screenscribe.agent.chat:agent_anthropic")
     assert agent.verdict == VERDICT_NOT_PROVEN
     assert "Anthropic API key absent" in agent.reason
+
+
+def test_xai_stt_probe_sends_nothing_when_stt_is_not_xai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With STT on LibraxisAI the xAI probe must not send the STT key to api.x.ai."""
+    config = ScreenScribeConfig()
+    config.stt_endpoint = "https://api.libraxis.cloud/v1/audio/transcriptions"
+    config.stt_api_key = "lbx-test-key"  # pragma: allowlist secret
+    monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
+    sent: list[str] = []
+
+    def record(self: httpx.Client, url: object, *args: object, **kwargs: object) -> Any:
+        sent.append(str(url))
+        return _MockSyncResponse(_stt_payload())
+
+    monkeypatch.setattr(httpx.Client, "post", record)
+
+    receipts = run_provider_probes()
+    xai = next(r for r in receipts if r.element == "screenscribe.providers.xai:stt_xai")
+    assert xai.verdict == VERDICT_NOT_PROVEN
+    assert xai.reason == "STT routing does not target xAI"
+    assert not [url for url in sent if "x.ai" in url]
+
+
+def test_xai_stt_probe_targets_the_configured_xai_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With STT on xAI the probe calls the configured endpoint."""
+    config = ScreenScribeConfig()
+    config.stt_endpoint = "https://api.x.ai/v1/stt"
+    config.stt_api_key = "xai-test-key"  # pragma: allowlist secret
+    monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
+    sent: list[str] = []
+
+    def record(self: httpx.Client, url: object, *args: object, **kwargs: object) -> Any:
+        sent.append(str(url))
+        return _MockSyncResponse({"text": "proof", "words": []})
+
+    monkeypatch.setattr(httpx.Client, "post", record)
+
+    receipts = run_provider_probes()
+    xai = next(r for r in receipts if r.element == "screenscribe.providers.xai:stt_xai")
+    assert xai.request_essence == "POST https://api.x.ai/v1/stt"
+    assert "https://api.x.ai/v1/stt" in sent
