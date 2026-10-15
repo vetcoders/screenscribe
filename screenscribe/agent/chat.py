@@ -27,6 +27,8 @@ Closing the HTTP stream cancels the provider request.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import contextlib
 import json
 import logging
@@ -37,7 +39,7 @@ from typing import Annotated, Any
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from ..api_utils import (
     extract_stream_error_event,
@@ -55,6 +57,16 @@ _MAX_TOOL_ROUNDS = 8
 _MAX_MESSAGE_CHARS = 16_000
 _MAX_HISTORY_ITEMS = 50
 _MAX_HISTORY_FIELD_CHARS = 16_000
+# Screenshots the reviewer pastes or drops into the chat. The browser downscales
+# them before upload; these caps bound the request even if it does not.
+_MAX_USER_IMAGES = 4
+_MAX_USER_IMAGE_BYTES = 6_000_000
+_USER_IMAGE_MAGIC = {
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/webp": (b"RIFF",),
+    "image/gif": (b"GIF87a", b"GIF89a"),
+}
 _INTERNAL_HOSTS = {"api.libraxis.cloud"}
 _TRUST_LEVELS = {"local", "internal", "processor", "external"}
 _KEPT_UNDER_DENY = {"local", "internal", "processor"}
@@ -72,6 +84,36 @@ class AgentChatError(Exception):
     """Agent turn failed after every provider (or before any could run)."""
 
 
+class AgentImage(BaseModel):
+    """One screenshot attached by the reviewer (base64, no data: prefix)."""
+
+    media_type: str = Field(..., max_length=32)
+    data: str = Field(..., min_length=8, max_length=(_MAX_USER_IMAGE_BYTES * 4) // 3 + 8)
+
+    @field_validator("data")
+    @classmethod
+    def _decodes(cls, value: str) -> str:
+        try:
+            base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError):
+            raise ValueError("image data is not valid base64") from None
+        return value
+
+    def checked(self) -> dict[str, str]:
+        """Return ``{"media_type", "data"}`` once the bytes match the declared type."""
+        magic = _USER_IMAGE_MAGIC.get(self.media_type)
+        if magic is None:
+            raise ValueError(f"unsupported image type {self.media_type!r}")
+        raw = base64.b64decode(self.data, validate=True)
+        if len(raw) > _MAX_USER_IMAGE_BYTES:
+            raise ValueError("image is too large")
+        if not raw.startswith(magic):
+            raise ValueError(f"image bytes are not {self.media_type}")
+        if self.media_type == "image/webp" and raw[8:12] != b"WEBP":
+            raise ValueError("image bytes are not image/webp")
+        return {"media_type": self.media_type, "data": self.data}
+
+
 class AgentChatRequest(BaseModel):
     """POST /api/agent/chat and /api/agent/chat/stream body."""
 
@@ -79,6 +121,7 @@ class AgentChatRequest(BaseModel):
     history: list[dict[str, BoundedHistoryField]] = Field(
         default_factory=list, max_length=_MAX_HISTORY_ITEMS
     )
+    images: list[AgentImage] = Field(default_factory=list, max_length=_MAX_USER_IMAGES)
     previous_response_id: str | None = Field(default=None, max_length=512)
     previous_response_provider: str | None = Field(default=None, max_length=32)
     previous_response_protocol: str | None = Field(default=None, max_length=32)
@@ -281,8 +324,13 @@ async def stream_agent_chat(
     previous_response_provider: str | None = None,
     previous_response_protocol: str | None = None,
     previous_response_host: str | None = None,
+    images: list[dict[str, str]] | None = None,
 ) -> AsyncIterator[str]:
-    """Yield SSE frames for one user turn."""
+    """Yield SSE frames for one user turn.
+
+    ``images`` are screenshots the reviewer attached to this message
+    (``{"media_type", "data"}``, already validated); they ride on the user turn.
+    """
     provenance = report.get("processing_provenance")
     providers, skipped = apply_egress(
         build_providers(
@@ -307,6 +355,7 @@ async def stream_agent_chat(
         history=history,
         previous_response_id=bound_previous_id,
         output_dir=tools.output_dir,
+        images=images,
     )
 
     last_error: str | None = None
@@ -358,6 +407,7 @@ async def collect_agent_chat(
     previous_response_provider: str | None = None,
     previous_response_protocol: str | None = None,
     previous_response_host: str | None = None,
+    images: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Non-streaming turn: concatenate token text and return the chain id."""
     text_parts: list[str] = []
@@ -373,6 +423,7 @@ async def collect_agent_chat(
         previous_response_provider=previous_response_provider,
         previous_response_protocol=previous_response_protocol,
         previous_response_host=previous_response_host,
+        images=images,
     ):
         event, payload = _parse_sse_frame(frame)
         if event == "token":
@@ -604,6 +655,14 @@ def _responses_image_message(images: list[dict[str, str]]) -> dict[str, Any]:
             }
         )
     return {"role": "user", "content": content}
+
+
+def _image_from_data_url(url: str) -> dict[str, str] | None:
+    """``data:<type>;base64,<data>`` -> ``{"media_type", "data"}`` (else None)."""
+    head, sep, data = url.partition(",")
+    if not sep or not head.startswith("data:") or not head.endswith(";base64") or not data:
+        return None
+    return {"media_type": head[5 : -len(";base64")] or "image/jpeg", "data": data}
 
 
 def _anthropic_image_block(image: dict[str, str]) -> dict[str, Any]:
@@ -992,8 +1051,13 @@ def _anthropic_messages_from_input(items: list[Any]) -> list[dict[str, Any]]:
                     text = str(block.get("text") or "")
                     if text:
                         blocks.append({"type": "text", "text": text})
+                elif isinstance(block, dict) and block.get("type") == "input_image":
+                    image = _image_from_data_url(str(block.get("image_url") or ""))
+                    if image is not None:
+                        blocks.append(_anthropic_image_block(image))
                 elif isinstance(block, dict) and block.get("type") in {
                     "text",
+                    "image",
                     "tool_result",
                     "tool_use",
                 }:

@@ -11,6 +11,7 @@ import base64
 import json
 import logging
 import math
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +94,7 @@ READ_TOOL_NAMES = (
     "list_findings",
     "get_finding",
     "view_frame",
+    "capture_video_frames",
     "get_transcript",
     "seek",
     "show_frame",
@@ -175,6 +177,24 @@ def responses_tool_schemas(*, include_repo: bool) -> list[dict[str, Any]]:
                     "description": "Screenshot file name, e.g. 03_bug_11-59.jpg.",
                 },
             },
+        ),
+        _function_tool(
+            "capture_video_frames",
+            "Grab fresh frames straight from the source video at any timestamps "
+            "and look at them. Use this when the report's stored screenshots do "
+            "not cover the moment you need (for example a recording without "
+            "narration, or to sample the whole video every N seconds): pass up to "
+            "4 timestamps per call and call again for more. The frames are "
+            "attached right after this tool result. They share the per-turn "
+            "frame budget with view_frame and are not saved to the report.",
+            {
+                "timestamps": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "description": "Video timestamps in seconds, e.g. [0, 60, 120, 180].",
+                },
+            },
+            required=["timestamps"],
         ),
         _function_tool(
             "get_transcript",
@@ -421,9 +441,13 @@ class ReportToolbelt:
         repo_root: Path | None = None,
         report_stem: str | None = None,
         glossary_dir: Path | None = None,
+        video_path: Path | None = None,
     ) -> None:
         self.report = report
         self.output_dir = output_dir
+        self.video_path = video_path
+        self._duration: float | None = None
+        self._duration_probed = False
         self.repo_root = repo_root.resolve() if repo_root is not None else None
         self.report_stem = report_stem or ""
         self.glossary_dir = glossary_dir
@@ -453,6 +477,8 @@ class ReportToolbelt:
                     timestamp=args.get("timestamp"),
                     frame=args.get("frame"),
                 )
+            elif name == "capture_video_frames":
+                result = self.capture_video_frames(args.get("timestamps"))
             elif name == "get_transcript":
                 result = self.get_transcript(args.get("start"), args.get("end"))
             elif name == "seek":
@@ -661,6 +687,89 @@ class ReportToolbelt:
             result["note"] = (
                 "The attached images follow this tool result in the same order as "
                 "frames[]. Base your answer on what is visible in them."
+            )
+        return result
+
+    def _video_duration(self) -> float | None:
+        if self._duration_probed:
+            return self._duration
+        self._duration_probed = True
+        try:
+            from ..audio import get_video_duration
+
+            probed = float(get_video_duration(Path(self.video_path or "")))
+            self._duration = probed if probed > 0 else None
+        except Exception:  # unknown duration only disables the range check
+            self._duration = None
+        return self._duration
+
+    def capture_video_frames(self, timestamps: object) -> dict[str, Any]:
+        if self.video_path is None or not Path(self.video_path).is_file():
+            return {
+                "error": "capture_video_frames is unavailable: the source video is not "
+                "available to this review server."
+            }
+        if not isinstance(timestamps, list) or not timestamps:
+            return {"error": "timestamps must be a non-empty list of seconds."}
+        duration = self._video_duration()
+        rows: list[dict[str, Any]] = []
+        attached = 0
+        requested = timestamps[:_MAX_FRAMES_PER_CALL]
+        from ..screenshots import extract_screenshot
+
+        with tempfile.TemporaryDirectory(prefix="screenscribe-agent-frame-") as tmp:
+            for index, value in enumerate(requested):
+                ts = _as_float(value)
+                row: dict[str, Any] = {"timestamp": value}
+                if ts is None or ts < 0 or (duration is not None and ts > duration):
+                    row["attached"] = False
+                    row["error"] = "timestamp is outside the video" + (
+                        f" (duration {duration:.0f}s)" if duration is not None else ""
+                    )
+                    rows.append(row)
+                    continue
+                if self._frames_attached >= _MAX_FRAMES_PER_TURN:
+                    row["attached"] = False
+                    row["error"] = (
+                        f"frame budget for this turn ({_MAX_FRAMES_PER_TURN}) is used up; "
+                        "answer with what you have or ask the user to continue"
+                    )
+                    rows.append(row)
+                    continue
+                target = Path(tmp) / f"frame_{index}.jpg"
+                try:
+                    extract_screenshot(Path(self.video_path), ts, target)
+                    raw = target.read_bytes()
+                except (OSError, RuntimeError) as exc:
+                    row["attached"] = False
+                    row["error"] = f"frame extraction failed: {str(exc)[:200]}"
+                    rows.append(row)
+                    continue
+                if not raw.startswith(_JPEG_MAGIC) or len(raw) > _MAX_FRAME_BYTES:
+                    row["attached"] = False
+                    row["error"] = "extracted frame is not a usable JPEG"
+                    rows.append(row)
+                    continue
+                label = f"video @ {_mmss(ts)}"
+                self._pending_images.append(
+                    {
+                        "media_type": "image/jpeg",
+                        "data": base64.b64encode(raw).decode("ascii"),
+                        "label": label,
+                    }
+                )
+                self._frames_attached += 1
+                attached += 1
+                row.update({"timestamp": ts, "label": label, "attached": True})
+                rows.append(row)
+        result: dict[str, Any] = {"attached": attached, "frames": rows}
+        if len(timestamps) > _MAX_FRAMES_PER_CALL:
+            result["omitted"] = len(timestamps) - _MAX_FRAMES_PER_CALL
+            result["hint"] = "Call capture_video_frames again with the remaining timestamps."
+        if attached:
+            result["note"] = (
+                "The attached images follow this tool result in the same order as "
+                "the attached frames[]. Base your answer on what is visible in them."
             )
         return result
 
@@ -1120,6 +1229,11 @@ class ReportToolbelt:
                 best = finding
                 best_delta = delta
         return best
+
+
+def _mmss(seconds: float) -> str:
+    whole = int(seconds)
+    return f"{whole // 60:02d}:{whole % 60:02d}"
 
 
 def _repo_path_is_sensitive(relative: Path) -> bool:

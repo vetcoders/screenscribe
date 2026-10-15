@@ -105,6 +105,34 @@ def _build_fixture(tmp_dir: Path) -> tuple[dict[str, Any], ReportToolbelt]:
     return report, toolbelt
 
 
+def _proof_video(tmp_dir: Path) -> Path:
+    """A 1-second synthetic clip (ffmpeg lavfi) for capture_video_frames."""
+    import shutil
+    import subprocess  # nosec B404 - fixed ffmpeg argv, no shell
+
+    video = tmp_dir / "proof_clip.mp4"
+    if not video.exists():
+        ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+        subprocess.run(  # nosec B603 - fixed argv
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=320x180:rate=10:duration=1",
+                "-pix_fmt",
+                "yuv420p",
+                "-y",
+                str(video),
+            ],
+            check=True,
+            capture_output=True,
+        )
+    return video
+
+
 def _probe_tool(toolbelt: ReportToolbelt, name: str) -> ProofReceipt:
     """Execute one tool with a sensible ping payload and build a receipt."""
     import time
@@ -120,6 +148,12 @@ def _probe_tool(toolbelt: ReportToolbelt, name: str) -> ProofReceipt:
             images = toolbelt.drain_images()
             if json.loads(result).get("attached") != 1 or len(images) != 1:
                 raise RuntimeError("view_frame did not hand one frame to the model")
+        elif name == "capture_video_frames":
+            toolbelt.video_path = _proof_video(Path(toolbelt.output_dir or "."))
+            result = toolbelt.execute(name, {"timestamps": [0.5]})
+            images = toolbelt.drain_images()
+            if json.loads(result).get("attached") != 1 or len(images) != 1:
+                raise RuntimeError("capture_video_frames did not hand one frame to the model")
         elif name == "get_transcript":
             result = toolbelt.execute(name, {"start": 0.0, "end": 10.0})
         elif name == "seek":

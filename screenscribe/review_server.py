@@ -1463,12 +1463,19 @@ def create_review_app(
 
     resolved_repo = repo_root.resolve() if repo_root is not None else None
 
+    def _checked_agent_images(payload: AgentChatRequest) -> list[dict[str, str]]:
+        try:
+            return [image.checked() for image in payload.images]
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Attached image rejected: {exc}") from None
+
     def _agent_toolbelt(report_data: dict[str, Any]) -> ReportToolbelt:
         return ReportToolbelt(
             report_data,
             output_dir=session.output_dir,
             repo_root=resolved_repo,
             report_stem=Path(session.report_filename).stem,
+            video_path=session.video_path,
         )
 
     @app.post("/api/agent/chat/stream")
@@ -1476,6 +1483,7 @@ def create_review_app(
         """SSE agent turn. Contract is binding for the w1-05 UI panel."""
         _json_path, report_data = load_report_json()
         toolbelt = _agent_toolbelt(report_data)
+        images = _checked_agent_images(payload)
 
         async def event_frames() -> Any:
             async for frame in stream_agent_chat(
@@ -1488,6 +1496,7 @@ def create_review_app(
                 previous_response_provider=payload.previous_response_provider,
                 previous_response_protocol=payload.previous_response_protocol,
                 previous_response_host=payload.previous_response_host,
+                images=images,
             ):
                 yield frame
 
@@ -1538,6 +1547,7 @@ def create_review_app(
         """Non-streaming agent turn: full text + response_id."""
         _json_path, report_data = load_report_json()
         toolbelt = _agent_toolbelt(report_data)
+        images = _checked_agent_images(payload)
         try:
             return await collect_agent_chat(
                 config=config,
@@ -1549,6 +1559,7 @@ def create_review_app(
                 previous_response_provider=payload.previous_response_provider,
                 previous_response_protocol=payload.previous_response_protocol,
                 previous_response_host=payload.previous_response_host,
+                images=images,
             )
         except AgentChatError as exc:
             raise HTTPException(
