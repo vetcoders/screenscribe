@@ -254,6 +254,7 @@ def test_openai_env_key_on_libraxis_selection_is_ignored_with_warning(
     assert any("OPENAI_API_KEY" in warning for warning in warnings)
     assert "sk-ambient-openai-key" not in "\n".join(warnings)  # pragma: allowlist secret
 
+
 def test_config_show_reports_provider_and_status(monkeypatch: pytest.MonkeyPatch) -> None:
     config = ScreenScribeConfig.provider_preset("libraxis", "configured-key")
     monkeypatch.setattr(cli.ScreenScribeConfig, "load", classmethod(lambda _cls: config))

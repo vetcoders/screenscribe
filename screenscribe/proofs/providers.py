@@ -287,8 +287,7 @@ def _run_agent_anthropic(ctx: _ProbeContext) -> ProofReceipt:
         or "https://api.anthropic.com/v1/messages"
     ).strip()
     model = (
-        __import__("os").environ.get("SCREENSCRIBE_AGENT_FALLBACK_MODEL")
-        or "claude-opus-4-6"
+        __import__("os").environ.get("SCREENSCRIBE_AGENT_FALLBACK_MODEL") or "claude-opus-4-6"
     ).strip()
 
     provider = AgentProvider(
@@ -441,9 +440,9 @@ def _run_frame_ocr(ctx: _ProbeContext) -> ProofReceipt:
         bytes.fromhex(
             "89504e470d0a1a0a0000000d49484452"
             "00000020000000200802000000fc18eda3"
-            "0000002a49444154789c633821274753c4"
+            "0000002a49444154789c633821274753c4"  # pragma: allowlist secret
             "306ac1a805a3168c5a306ac1a805a3168c"
-            "5a306ac1a805a3160c150b0025cb103dcd"
+            "5a306ac1a805a3160c150b0025cb103dcd"  # pragma: allowlist secret
             "4a1e0d0000000049454e44ae426082"
         )
     )

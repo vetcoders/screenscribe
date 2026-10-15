@@ -1249,8 +1249,7 @@ def test_two_turns_over_responses_http_preserve_role_content_contract(
         return httpx.Response(
             200,
             headers={"Content-Type": "text/event-stream"},
-            text="".join(f"data: {json.dumps(event)}\n\n" for event in events)
-            + "data: [DONE]\n\n",
+            text="".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n",
         )
 
     client_class = httpx.AsyncClient
@@ -1511,7 +1510,9 @@ def test_error_after_yield_emits_sse_error_without_fallback(
     assert "event: token" in body
     assert "partial" in body
     assert "event: error" in body
-    assert format_sse("error", {"message": "Review agent request failed. Check server logs."}) in body
+    assert (
+        format_sse("error", {"message": "Review agent request failed. Check server logs."}) in body
+    )
     assert "connection reset by peer" not in body
     assert "connection reset by peer" in caplog.text
     assert "fallback-ran" not in body

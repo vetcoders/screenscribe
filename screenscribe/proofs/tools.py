@@ -135,9 +135,7 @@ def _probe_tool(toolbelt: ReportToolbelt, name: str) -> ProofReceipt:
         elif name == "set_severity":
             result = toolbelt.execute(name, {"finding_id": 1, "severity": "high"})
         elif name == "edit_finding":
-            result = toolbelt.execute(
-                name, {"finding_id": 1, "summary": "Proof edit summary"}
-            )
+            result = toolbelt.execute(name, {"finding_id": 1, "summary": "Proof edit summary"})
         elif name == "add_finding":
             result = toolbelt.execute(
                 name,

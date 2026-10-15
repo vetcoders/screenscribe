@@ -352,7 +352,9 @@ def test_agent_chat_stream_midturn_error_frame(
     assert "partial" in body
     assert "event: tool_call\n" in body
     assert "event: error\n" in body
-    assert format_sse("error", {"message": "Review agent request failed. Check server logs."}) in body
+    assert (
+        format_sse("error", {"message": "Review agent request failed. Check server logs."}) in body
+    )
     assert "provider exploded" not in body
     assert "provider exploded" in caplog.text
     assert "event: done\n" not in body

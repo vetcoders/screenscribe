@@ -1931,9 +1931,7 @@ def config_auth(
     login: Annotated[
         bool, typer.Option("--login", help="Sign in via the OAuth device flow")
     ] = False,
-    key: Annotated[
-        bool, typer.Option("--key", help="Paste an API key (hidden prompt)")
-    ] = False,
+    key: Annotated[bool, typer.Option("--key", help="Paste an API key (hidden prompt)")] = False,
 ) -> None:
     """Select a provider and set up its credentials in one gesture.
 

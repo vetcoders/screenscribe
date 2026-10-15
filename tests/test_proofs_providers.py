@@ -115,9 +115,9 @@ def test_stt_openai_probe_proven_on_mocked_response(
 ) -> None:
     """OpenAI-compatible STT path stamps PROVEN when the mocked endpoint answers."""
     config = ScreenScribeConfig()
-    config.stt_api_key = "sk-test"
-    config.llm_api_key = "sk-test"
-    config.vision_api_key = "sk-test"
+    config.stt_api_key = "sk-test"  # pragma: allowlist secret
+    config.llm_api_key = "sk-test"  # pragma: allowlist secret
+    config.vision_api_key = "sk-test"  # pragma: allowlist secret
     monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("SCREENSCRIBE_AGENT_FALLBACK_API_KEY", raising=False)
@@ -141,9 +141,9 @@ def test_stt_openai_probe_not_proven_on_http_error(
 ) -> None:
     """OpenAI-compatible STT path stamps NOT-PROVEN with the verbatim HTTP error."""
     config = ScreenScribeConfig()
-    config.stt_api_key = "sk-test"
-    config.llm_api_key = "sk-test"
-    config.vision_api_key = "sk-test"
+    config.stt_api_key = "sk-test"  # pragma: allowlist secret
+    config.llm_api_key = "sk-test"  # pragma: allowlist secret
+    config.vision_api_key = "sk-test"  # pragma: allowlist secret
     monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("SCREENSCRIBE_AGENT_FALLBACK_API_KEY", raising=False)
@@ -164,8 +164,8 @@ def test_unified_analysis_probe_proven_on_mocked_response(
 ) -> None:
     """Unified analysis path stamps PROVEN when the mocked LLM returns valid JSON."""
     config = ScreenScribeConfig()
-    config.llm_api_key = "sk-test"
-    config.vision_api_key = "sk-test"
+    config.llm_api_key = "sk-test"  # pragma: allowlist secret
+    config.vision_api_key = "sk-test"  # pragma: allowlist secret
     monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("SCREENSCRIBE_AGENT_FALLBACK_API_KEY", raising=False)
@@ -187,7 +187,7 @@ def test_frame_ocr_probe_proven_on_mocked_response(
 ) -> None:
     """Frame OCR path stamps PROVEN when the mocked vision endpoint answers."""
     config = ScreenScribeConfig()
-    config.vision_api_key = "sk-test"
+    config.vision_api_key = "sk-test"  # pragma: allowlist secret
     monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("SCREENSCRIBE_AGENT_FALLBACK_API_KEY", raising=False)
@@ -207,7 +207,7 @@ def test_agent_responses_probe_proven_on_mocked_stream(
 ) -> None:
     """Agent Responses path stamps PROVEN when the mocked SSE stream answers."""
     config = ScreenScribeConfig()
-    config.llm_api_key = "sk-test"
+    config.llm_api_key = "sk-test"  # pragma: allowlist secret
     monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("SCREENSCRIBE_AGENT_FALLBACK_API_KEY", raising=False)
@@ -227,7 +227,7 @@ def test_agent_anthropic_probe_missing_key(
 ) -> None:
     """Agent Anthropic path stamps NOT-PROVEN when the fallback key is absent."""
     config = ScreenScribeConfig()
-    config.llm_api_key = "sk-test"
+    config.llm_api_key = "sk-test"  # pragma: allowlist secret
     monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("SCREENSCRIBE_AGENT_FALLBACK_API_KEY", raising=False)

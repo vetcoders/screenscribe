@@ -89,9 +89,7 @@ def test_answer_streams_before_the_turn_finishes(mic_page: Any) -> None:
     page.wait_for_function(
         f"() => ({_LAST_ANSWER})().trim().length > 0", timeout=180_000, polling=50
     )
-    still_streaming = page.evaluate(
-        "() => !document.getElementById('ss-agent-activity').hidden"
-    )
+    still_streaming = page.evaluate("() => !document.getElementById('ss-agent-activity').hidden")
     first_len = len(page.evaluate(_LAST_ANSWER))
     page.wait_for_selector("#ss-agent-activity[hidden]", state="attached", timeout=240_000)
     final_len = len(page.evaluate(_LAST_ANSWER))

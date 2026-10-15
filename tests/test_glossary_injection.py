@@ -82,13 +82,16 @@ def test_payload_injects_glossary_from_report_ledger(tmp_path: Path) -> None:
     )
 
     text = _prompt_text(payload)
-    assert 'Glossary of preferred transcriptions:' in text
+    assert "Glossary of preferred transcriptions:" in text
     assert '"cloud" -> "Claude"' in text
     assert '"chmura" -> "Claude"' in text
 
 
-def test_payload_is_unchanged_without_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_payload_is_unchanged_without_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """No ledger and no global glossary -> byte-identical prompt and payload shape."""
+
     # Ensure the global glossary lookup never returns entries during this test.
     def _empty_glossary(glossary_dir: Path | None = None) -> corrections.LedgerLoad:
         return corrections.LedgerLoad(entries=[], warning=None, report="global")
@@ -177,7 +180,9 @@ class _FakeClient:
         )
 
 
-def test_stt_request_injects_glossary_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stt_request_injects_glossary_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     output_dir = tmp_path / "out"
     output_dir.mkdir()
     _write_ledger(output_dir, [_correction("cloud", "Claude")])
@@ -195,13 +200,13 @@ def test_stt_request_injects_glossary_prompt(tmp_path: Path, monkeypatch: pytest
         language="en",
         stt_endpoint=ENDPOINT,
         stt_model="test-model",
-        api_key="test-key",
+        api_key="test-key",  # pragma: allowlist secret
         output_dir=output_dir,
     )
 
     data = recorded["kwargs"]["data"]
     assert "prompt" in data
-    assert 'Glossary of preferred transcriptions:' in data["prompt"]
+    assert "Glossary of preferred transcriptions:" in data["prompt"]
     assert '"cloud" -> "Claude"' in data["prompt"]
     assert data["response_format"] == "json"
     assert data["model"] == "test-model"
@@ -228,7 +233,7 @@ def test_stt_request_has_no_prompt_without_ledger(
         language="en",
         stt_endpoint=ENDPOINT,
         stt_model="test-model",
-        api_key="test-key",
+        api_key="test-key",  # pragma: allowlist secret
     )
 
     data = recorded["kwargs"]["data"]
@@ -304,9 +309,7 @@ def test_global_glossary_is_injected_when_no_output_dir(
         "report": "global",
         "entries": [_correction("cloud", "Claude", scope="global")],
     }
-    (glossary_dir / "corrections_glossary.json").write_text(
-        json.dumps(ledger), encoding="utf-8"
-    )
+    (glossary_dir / "corrections_glossary.json").write_text(json.dumps(ledger), encoding="utf-8")
     monkeypatch.setattr(corrections, "default_glossary_dir", lambda: glossary_dir)
 
     payload = _build_unified_payload(
@@ -347,7 +350,7 @@ def test_xai_stt_path_does_not_force_prompt_injection(
         "recording.webm",
         language="en",
         stt_endpoint="https://api.x.ai/v1/stt",
-        api_key="test-xai-key",
+        api_key="test-xai-key",  # pragma: allowlist secret
         output_dir=output_dir,
     )
 

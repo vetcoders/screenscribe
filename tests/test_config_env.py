@@ -1098,9 +1098,7 @@ class TestSelectionSovereignty:
     together. Provenance comes from the env var NAME, not the key shape.
     """
 
-    def test_libraxis_env_ignored_under_xai_selection(
-        self, clean_env: pytest.MonkeyPatch
-    ) -> None:
+    def test_libraxis_env_ignored_under_xai_selection(self, clean_env: pytest.MonkeyPatch) -> None:
         clean_env.setenv("LIBRAXIS_API_KEY", "lx-ambient")  # pragma: allowlist secret
         clean_env.setenv("SCREENSCRIBE_STT_ENDPOINT", "https://api.x.ai/v1/stt")
         clean_env.setenv("SCREENSCRIBE_LLM_ENDPOINT", "https://api.x.ai/v1/responses")

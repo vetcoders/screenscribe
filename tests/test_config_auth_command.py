@@ -36,9 +36,7 @@ def test_auth_rejects_unknown_provider(fake_home: Path) -> None:
 
 
 def test_auth_key_writes_coherent_xai_preset(fake_home: Path) -> None:
-    result = runner.invoke(
-        app, ["config", "auth", "xai", "--key"], input="sk-test-xai\ny\n"
-    )
+    result = runner.invoke(app, ["config", "auth", "xai", "--key"], input="sk-test-xai\ny\n")
     assert result.exit_code == 0, result.output
     config_env = fake_home / ".config" / "screenscribe" / "config.env"
     text = config_env.read_text(encoding="utf-8")
@@ -52,9 +50,7 @@ def test_auth_key_preserves_existing_config_on_refusal(fake_home: Path) -> None:
     config_env = fake_home / ".config" / "screenscribe" / "config.env"
     config_env.parent.mkdir(parents=True)
     config_env.write_text("SCREENSCRIBE_LANGUAGE=pl\n", encoding="utf-8")
-    result = runner.invoke(
-        app, ["config", "auth", "xai", "--key"], input="sk-test-xai\nn\n"
-    )
+    result = runner.invoke(app, ["config", "auth", "xai", "--key"], input="sk-test-xai\nn\n")
     assert result.exit_code == 0
     assert "api.x.ai" not in config_env.read_text(encoding="utf-8")
 
@@ -94,9 +90,7 @@ def test_auth_login_writes_selection_with_bearer_fallback(
 
     result = runner.invoke(app, ["config", "auth", "xai", "--login"], input="y\n")
     assert result.exit_code == 0, result.output
-    text = (fake_home / ".config" / "screenscribe" / "config.env").read_text(
-        encoding="utf-8"
-    )
+    text = (fake_home / ".config" / "screenscribe" / "config.env").read_text(encoding="utf-8")
     assert "https://api.x.ai/v1/responses" in text
 
 

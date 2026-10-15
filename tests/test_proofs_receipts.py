@@ -91,7 +91,9 @@ def test_render_matrix_groups_providers_then_tools(tmp_path: Path) -> None:
     ]
     matrix_path = render_matrix(receipts, tmp_path)
     text = matrix_path.read_text(encoding="utf-8")
-    lines = [line for line in text.splitlines() if line.startswith("|") and not line.startswith("|---")]
+    lines = [
+        line for line in text.splitlines() if line.startswith("|") and not line.startswith("|---")
+    ]
     # Header + 3 data rows.
     assert len(lines) == 4
     data_lines = lines[1:]
