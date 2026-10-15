@@ -2,6 +2,20 @@
 
 ## [0.1.20.dev0] - Unreleased
 
+- **Added: a conversation panel built for real use.** Agent answers now
+  stream: the server forwards provider text deltas as they arrive instead of
+  one buffered block per round, with SSE keepalives during silent reasoning
+  and cancellation of the provider request when the stream closes. The panel
+  shows "Agent is responding…" with **Stop** (also `Esc`); a stopped answer
+  keeps its text, marked as stopped. Timeouts and lost connections keep the
+  partial text and **Retry** replaces it without duplicating. The composer is
+  a growing multi-line field (`Enter` sends, `Shift+Enter` new line, IME-safe)
+  with a draft that survives reloads. Dictation records, transcribes through
+  the new chain-neutral `POST /api/agent/stt`, and fills the draft for editing
+  without sending; denied, missing or unsupported microphones are explained.
+  The panel resizes by drag, keyboard or size presets, remembers its size and
+  stays inside the viewport and off the player.
+
 - **Fixed: the review agent can see the frames.** Previously the agent received
   only a one-line summary per finding; `show_frame` only moved the browser, so
   questions about what is on screen were answered from that summary. The new

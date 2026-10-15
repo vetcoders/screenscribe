@@ -601,6 +601,34 @@ only after a successful save; a failed save remains visibly unconfirmed.
 
 `merge_findings` / `unmerge_finding` currently return `{"unsupported": true}` — merge is a client-only fold (`mergeFindings` in the report UI) with no patch-callable API.
 
+The agent sees the evidence, not only the one-line summaries: `get_finding`
+returns a finding's full visual analysis and every merged frame, and
+`view_frame` attaches the real screenshot pixels to the model conversation
+(Responses `input_image`, or Anthropic image blocks). Frames are read only
+from the report directory and are never streamed to the browser.
+
+#### Chat panel
+
+- **Streaming and Stop.** Answers render as they stream. "Agent is
+  responding…" shows with a **Stop** button (or `Esc` in the composer); a
+  stopped answer keeps the received text, marked as stopped. A timeout or lost
+  connection keeps the partial text and offers **Retry**, which replaces it
+  instead of appending a duplicate.
+- **Composer.** Multi-line field that grows with its content. `Enter` sends,
+  `Shift+Enter` adds a line, IME composition is respected. **Send** is
+  disabled for an empty draft; the draft stays editable while an answer
+  streams and survives closing the panel or reloading the page.
+- **Dictation.** The microphone button records a message, **Stop** (click the
+  microphone again) transcribes it into the draft for editing — it is never
+  sent automatically; **Cancel** discards the recording. Uses
+  `POST /api/agent/stt` (same 25 MB cap and STT provider as `/api/stt`, but it
+  never advances the manual-frame conversation chain). Without a microphone,
+  permission, browser support, or the local server, the panel says why.
+- **Size.** Drag the bottom-left grip, use arrow keys on it (`Shift` for
+  larger steps, `Home`/`End` for smallest/largest), or cycle compact /
+  standard / large with the header button. The size is remembered per report
+  and is always kept inside the viewport and off the video player.
+
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `SCREENSCRIBE_AGENT_EGRESS` | `deny` | `deny` skips providers whose trust is `external`. `allow` sends the loaded report (and therefore the recording's contents) to those hosts. Analysis hosts (`processor`) are always kept. |
@@ -608,10 +636,13 @@ only after a successful save; a failed save remains visibly unconfirmed.
 
 Optional Anthropic fallback (skipped when unset): `ANTHROPIC_API_KEY` or `SCREENSCRIBE_AGENT_FALLBACK_API_KEY`. Install the extra with `pip install 'screenscribe[anthropic]'`.
 
-SSE events: `token`, `tool_call`, `tool_result`, `done`, `error`. Text uses
-round-buffered delivery: the backend sends it after each provider round
-completes, then emits tool events. It does not deliver individual tokens as
-the provider generates them. Unexpected provider/tool failures return a
+SSE events: `token`, `tool_call`, `tool_result`, `done`, `error`. `token`
+frames carry provider text deltas as they are generated, so the first words of
+an answer appear before the turn ends; a turn has many `token` frames. While a
+provider round produces no output (reasoning, slow first token) the stream
+sends SSE comment frames (`: keepalive`, every ~10 s); clients treat 60 s
+without any byte as a dead connection. Closing the HTTP stream (the panel's
+Stop) cancels the provider request. Unexpected provider/tool failures return a
 generic error to the browser and model; exception details remain in server
 logs. Explicit configuration and tool-input validation messages remain
 available. Requests
