@@ -755,6 +755,7 @@ def create_review_app(
                 screenshot_path=screenshot_path,
                 config=config,
                 previous_response_id=previous_response_id,
+                output_dir=session.output_dir,
             )
 
             if not finding:

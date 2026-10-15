@@ -1668,6 +1668,7 @@ def preprocess(
         stt_endpoint=config.stt_endpoint,
         stt_model=config.stt_model,
         resume_hint=True,
+        output_dir=output_dir,
     )
 
     # Drop no-speech hallucinations before the transcript-first bundle is written

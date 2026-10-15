@@ -266,6 +266,7 @@ def _record_streaming(seen: list[str | None]):
         on_reasoning: Any = None,
         on_content: Any = None,
         force_text_only: bool = False,
+        output_dir: Any = None,
     ) -> UnifiedFinding:
         seen.append(previous_response_id)
         rid = f"vision_{counter['n']}"

@@ -89,6 +89,7 @@ def analyze_finding_unified_streaming(
     on_reasoning: Callable[[str], None] | None = None,
     on_content: Callable[[str], None] | None = None,
     force_text_only: bool = False,
+    output_dir: Path | None = None,
 ) -> UnifiedFinding | None:
     """
     Analyze a single finding using VLM with streaming SSE response.
@@ -149,6 +150,7 @@ def analyze_finding_unified_streaming(
             prompt=prompt,
             screenshot_path=None if use_text_only_backend else screenshot_path,
             previous_response_id=previous_response_id,
+            output_dir=output_dir,
             stream=True,
             same_provider=_may_chain_previous_response(
                 config, use_text_only_backend=use_text_only_backend
@@ -383,6 +385,7 @@ def analyze_finding_unified_streaming(
                     screenshot_path,
                     config,
                     previous_response_id=previous_response_id,
+                    output_dir=output_dir,
                     on_reasoning=on_reasoning,
                     on_content=on_content,
                     force_text_only=True,
@@ -396,6 +399,7 @@ def analyze_finding_unified_streaming(
                 screenshot_path,
                 config,
                 previous_response_id=previous_response_id,
+                output_dir=output_dir,
                 force_text_only=use_text_only_backend,
             )
 
@@ -416,6 +420,7 @@ def analyze_finding_unified_streaming(
                 screenshot_path,
                 config,
                 previous_response_id=previous_response_id,
+                output_dir=output_dir,
                 on_reasoning=on_reasoning,
                 on_content=on_content,
                 force_text_only=True,
@@ -428,6 +433,7 @@ def analyze_finding_unified_streaming(
             screenshot_path,
             config,
             previous_response_id=previous_response_id,
+            output_dir=output_dir,
             force_text_only=use_text_only_backend,
         )
 
@@ -438,6 +444,7 @@ def analyze_finding_unified(
     config: ScreenScribeConfig,
     previous_response_id: str | None = None,
     force_text_only: bool = False,
+    output_dir: Path | None = None,
 ) -> UnifiedFinding | None:
     """
     Analyze a single finding using VLM with both image and full context.
@@ -488,6 +495,7 @@ def analyze_finding_unified(
                     prompt=prompt,
                     screenshot_path=None if use_text_only_backend else screenshot_path,
                     previous_response_id=previous_response_id,
+                    output_dir=output_dir,
                     stream=False,
                     same_provider=_may_chain_previous_response(
                         config, use_text_only_backend=use_text_only_backend
@@ -548,6 +556,7 @@ def analyze_finding_unified(
                     screenshot_path,
                     config,
                     previous_response_id=previous_response_id,
+                    output_dir=output_dir,
                     force_text_only=True,
                 )
             console.print(
@@ -581,6 +590,7 @@ def analyze_finding_unified(
                 screenshot_path,
                 config,
                 previous_response_id=previous_response_id,
+                output_dir=output_dir,
                 force_text_only=True,
             )
         console.print(f"[yellow]Unified analysis failed: {escape(redact_error_message(e))}[/]")

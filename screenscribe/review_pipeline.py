@@ -636,6 +636,7 @@ def run_review(
                         api_key=config.get_stt_api_key(),
                         stt_endpoint=config.stt_endpoint,
                         stt_model=config.stt_model,
+                        output_dir=video_output,
                     )
                 except (
                     httpx.HTTPStatusError,
@@ -668,6 +669,7 @@ def run_review(
                                 api_key=config.get_stt_fallback_api_key(),
                                 stt_endpoint=config.stt_fallback_endpoint,
                                 stt_model=config.get_stt_fallback_model(),
+                                output_dir=video_output,
                             )
                         except (
                             httpx.HTTPStatusError,
@@ -1113,6 +1115,7 @@ def run_review(
                         residual_screenshots,
                         config,
                         previous_response_id=batch_context_response_id,
+                        output_dir=video_output,
                     )
                     # Merge restored successes with the newly-retried ones.
                     unified_findings = prior_unified_findings + new_unified_findings
