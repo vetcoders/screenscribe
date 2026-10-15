@@ -162,3 +162,30 @@ def test_run_proof_writes_all_artifacts(tmp_path: Path, monkeypatch: pytest.Monk
     assert summary["schema"] == "screenscribe.proof-summary.v1"
     assert summary["total"] == 2
     assert summary["proven"] == 2
+
+
+def test_matrix_and_summary_are_owner_only(tmp_path: Path) -> None:
+    """Doctor artifacts may quote provider errors, so nothing is world-readable."""
+    import os
+    import stat
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("POSIX permissions only")
+    os.umask(0o022)
+    receipt = ProofReceipt(
+        element="demo:element",
+        kind="provider",
+        request_essence="POST https://example.test/v1",
+        response_essence="request failed",
+        duration_ms=1,
+        verdict="NOT-PROVEN",
+        reason="HTTP 401: provider error body",
+    )
+    out_dir = tmp_path / "proofs"
+    receipt_path = write_receipt(out_dir, receipt)
+    matrix_path = render_matrix([receipt], out_dir)
+
+    assert stat.S_IMODE(out_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(receipt_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(matrix_path.stat().st_mode) == 0o600

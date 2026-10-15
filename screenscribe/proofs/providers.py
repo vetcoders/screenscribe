@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 import time
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -50,9 +52,81 @@ def _key_state(present: bool) -> str:
     return "present" if present else "absent"
 
 
+def _safe_url(url: str) -> str:
+    """Endpoint identity for receipts: scheme://host/path, no query/fragment.
+
+    A query string can carry credentials (signed URLs, gateway tokens), and
+    receipts land in on-disk diagnostics that people share.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "<unparseable url>"
+    if not parts.scheme or not parts.netloc:
+        return url
+    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+
+
+_URL_RE = re.compile(r"\b(?:https?|wss?)://\S+")
+
+
+def _secret_values(config: ScreenScribeConfig) -> tuple[str, ...]:
+    """Every configured credential value worth scrubbing from diagnostics."""
+    import os
+
+    values = {
+        config.api_key,
+        config.stt_api_key,
+        config.llm_api_key,
+        config.vision_api_key,
+        config.tts_api_key,
+        config.stt_fallback_api_key,
+        os.environ.get("ANTHROPIC_API_KEY", ""),
+        os.environ.get("SCREENSCRIBE_AGENT_FALLBACK_API_KEY", ""),
+    }
+    values.update(config._libraxis_key_values)
+    return tuple(v for v in values if v)
+
+
+def _scrub_receipt(receipt: ProofReceipt, secrets: tuple[str, ...]) -> ProofReceipt:
+    """Drop URL queries and mask configured secrets in one receipt.
+
+    Provider error bodies and endpoint URLs end up verbatim in receipt JSON
+    and MATRIX.md; neither may carry a credential out of the process.
+    """
+
+    def clean(text: str) -> str:
+        text = _URL_RE.sub(lambda m: _safe_url(m.group(0)), text)
+        for value in secrets:
+            if value in text:
+                text = text.replace(value, "***")
+        return text
+
+    return replace(
+        receipt,
+        request_essence=clean(receipt.request_essence),
+        response_essence=clean(receipt.response_essence),
+        reason=clean(receipt.reason),
+    )
+
+
 def _run_stt_openai(ctx: _ProbeContext) -> ProofReceipt:
     """Probe the OpenAI-compatible STT path via ``screenscribe.transcribe``."""
     element = "screenscribe.transcribe:stt_openai_compat"
+    if _is_xai_endpoint(ctx.config.stt_endpoint):
+        # transcribe_audio_bytes would silently switch to the xAI transport
+        # here, so a PROVEN stamp would claim the OpenAI-compatible path on
+        # the strength of an xAI roundtrip (the stt_xai probe's job).
+        return ProofReceipt(
+            element=element,
+            kind="provider",
+            request_essence="POST /v1/audio/transcriptions (tiny wav)",
+            response_essence="no request sent",
+            duration_ms=0,
+            verdict=VERDICT_NOT_PROVEN,
+            reason="STT routing targets xAI (proven by the stt_xai probe)",
+            key_state=_key_state(bool(ctx.config.get_stt_api_key())),
+        )
     key = ctx.config.get_stt_api_key()
     if not key:
         return ProofReceipt(
@@ -233,11 +307,28 @@ def _run_agent_responses(ctx: _ProbeContext) -> ProofReceipt:
                 reason=round_result.error,
                 key_state="present",
             )
+        essence = (
+            f"text_len={len(round_result.text)}, "
+            f"response_id_present={bool(round_result.response_id)}"
+        )
+        if not round_result.text.strip() and not round_result.response_id:
+            # A 200 with neither text nor a response id proves only that the
+            # socket opened; a PROVEN stamp needs evidence the model answered.
+            return ProofReceipt(
+                element=element,
+                kind="provider",
+                request_essence=f"POST {ctx.config.llm_endpoint} (responses ping)",
+                response_essence=essence,
+                duration_ms=duration_ms,
+                verdict=VERDICT_NOT_PROVEN,
+                reason="empty response: no text and no response id",
+                key_state="present",
+            )
         return ProofReceipt(
             element=element,
             kind="provider",
             request_essence=f"POST {ctx.config.llm_endpoint} (responses ping)",
-            response_essence=f"text_len={len(round_result.text)}, response_id_present={bool(round_result.response_id)}",
+            response_essence=essence,
             duration_ms=duration_ms,
             verdict=VERDICT_PROVEN,
             key_state="present",
@@ -330,11 +421,26 @@ def _run_agent_anthropic(ctx: _ProbeContext) -> ProofReceipt:
                 reason=round_result.error,
                 key_state="present",
             )
+        essence = (
+            f"text_len={len(round_result.text)}, "
+            f"response_id_present={bool(round_result.response_id)}"
+        )
+        if not round_result.text.strip() and not round_result.response_id:
+            return ProofReceipt(
+                element=element,
+                kind="provider",
+                request_essence=f"POST {url} (anthropic ping)",
+                response_essence=essence,
+                duration_ms=duration_ms,
+                verdict=VERDICT_NOT_PROVEN,
+                reason="empty response: no text and no response id",
+                key_state="present",
+            )
         return ProofReceipt(
             element=element,
             kind="provider",
             request_essence=f"POST {url} (anthropic ping)",
-            response_essence=f"text_len={len(round_result.text)}, response_id_present={bool(round_result.response_id)}",
+            response_essence=essence,
             duration_ms=duration_ms,
             verdict=VERDICT_PROVEN,
             key_state="present",
@@ -462,15 +568,22 @@ def _run_frame_ocr(ctx: _ProbeContext) -> ProofReceipt:
 
     start = time.perf_counter()
     try:
-        text, response_id = ocr_frame(frame_path, ctx.config)
+        # A fresh cache dir per run: a hit in the user's OCR cache would
+        # stamp PROVEN without any live roundtrip, which is the opposite
+        # of what this probe exists to prove.
+        text, response_id = ocr_frame(
+            frame_path, ctx.config, cache_dir=ctx.tmp_dir / "ocr-cache"
+        )
         duration_ms = int((time.perf_counter() - start) * 1000)
+        proven = bool(text.strip() or response_id)
         return ProofReceipt(
             element=element,
             kind="provider",
             request_essence=f"POST {ctx.config.vision_endpoint} (OCR ping)",
             response_essence=f"text_len={len(text)}, response_id_present={bool(response_id)}",
             duration_ms=duration_ms,
-            verdict=VERDICT_PROVEN,
+            verdict=VERDICT_PROVEN if proven else VERDICT_NOT_PROVEN,
+            reason="" if proven else "empty response: no text and no response id",
             key_state="present",
         )
     except Exception as exc:
@@ -499,13 +612,17 @@ def run_provider_probes() -> list[ProofReceipt]:
     tmp_dir = Path(tempfile.mkdtemp(prefix="screenscribe-proof-providers-"))
     try:
         ctx = _ProbeContext(config=config, tiny_wav=_make_tiny_wav(), tmp_dir=tmp_dir)
+        secrets = _secret_values(config)
         return [
-            _run_stt_openai(ctx),
-            _run_stt_xai(ctx),
-            _run_agent_responses(ctx),
-            _run_agent_anthropic(ctx),
-            _run_unified_analysis(ctx),
-            _run_frame_ocr(ctx),
+            _scrub_receipt(receipt, secrets)
+            for receipt in (
+                _run_stt_openai(ctx),
+                _run_stt_xai(ctx),
+                _run_agent_responses(ctx),
+                _run_agent_anthropic(ctx),
+                _run_unified_analysis(ctx),
+                _run_frame_ocr(ctx),
+            )
         ]
     finally:
         import shutil

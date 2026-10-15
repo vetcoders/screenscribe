@@ -1217,3 +1217,37 @@ def _no_account_bearer(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AccountAuthError("not_signed_in", "no account in tests")
 
     monkeypatch.setattr("screenscribe.account_auth.resolve_bearer", refuse)
+
+
+class TestLibraxisKeyStaysOnLibraxisHosts:
+    """A LIBRAXIS_API_KEY value serves only endpoints positively recognized as
+    LibraxisAI. Unknown and custom hosts are refused like known foreign ones:
+    the variable name is provenance, and an unrecognized host is no proof it
+    belongs to LibraxisAI. An intentional custom gateway takes the key through
+    an explicit SCREENSCRIBE_*_API_KEY instead.
+    """
+
+    def test_libraxis_key_never_reaches_an_unknown_custom_host(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        clean_env.setenv("LIBRAXIS_API_KEY", "lx-probe")  # pragma: allowlist secret
+        config = ScreenScribeConfig()
+        config._load_from_env()
+        config.stt_endpoint = "https://stt.internal.example/v1/audio/transcriptions"
+        assert config.get_stt_api_key() == ""
+
+    def test_libraxis_key_still_serves_the_default_libraxis_endpoints(
+        self, clean_env: pytest.MonkeyPatch
+    ) -> None:
+        clean_env.setenv("LIBRAXIS_API_KEY", "lx-probe")  # pragma: allowlist secret
+        config = ScreenScribeConfig()
+        config._load_from_env()
+        assert config.get_stt_api_key() == "lx-probe"  # pragma: allowlist secret
+        assert config.get_llm_api_key() == "lx-probe"  # pragma: allowlist secret
+
+    def test_explicit_generic_key_still_serves_a_custom_host(self) -> None:
+        config = ScreenScribeConfig(
+            api_key="user-chosen-key",  # pragma: allowlist secret
+            stt_endpoint="https://stt.internal.example/v1/audio/transcriptions",
+        )
+        assert config.get_stt_api_key() == "user-chosen-key"  # pragma: allowlist secret

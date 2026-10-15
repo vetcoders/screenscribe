@@ -303,3 +303,71 @@ class TestEnvValueParsing:
         config = ScreenScribeConfig()
         config._load_from_file(cfg_file)
         assert config.llm_model == "custom"
+
+
+class TestLibraxisProvenanceSurvivesSave:
+    """Saving must not relabel a LIBRAXIS_API_KEY value as a generic key.
+
+    A generic key reloads untracked, so the next process would send it to a
+    non-LibraxisAI host (e.g. an xAI STT endpoint in a mixed setup). The
+    template therefore re-emits such values under LIBRAXIS_API_KEY.
+    Falsification: revert save_default_config to emit ``self.api_key``
+    verbatim and the reload assertions below hand the key to api.x.ai.
+    """
+
+    _VARS = (
+        "SCREENSCRIBE_PROVIDER",
+        "SCREENSCRIBE_API_KEY",
+        "SCREENSCRIBE_STT_API_KEY",
+        "SCREENSCRIBE_LLM_API_KEY",
+        "SCREENSCRIBE_VISION_API_KEY",
+        "OPENAI_API_KEY",
+        "LIBRAXIS_API_KEY",
+        "SCREENSCRIBE_API_BASE",
+        "LIBRAXIS_API_BASE",
+        "SCREENSCRIBE_STT_ENDPOINT",
+        "SCREENSCRIBE_LLM_ENDPOINT",
+        "SCREENSCRIBE_VISION_ENDPOINT",
+    )
+
+    def test_load_save_reload_keeps_the_key_off_foreign_hosts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = _home(monkeypatch, tmp_path)
+        for var in self._VARS:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("LIBRAXIS_API_KEY", "lx-env-secret")  # pragma: allowlist secret
+        monkeypatch.setenv(
+            "SCREENSCRIBE_STT_ENDPOINT", "https://api.x.ai/v1/audio/transcriptions"
+        )
+
+        cfg = ScreenScribeConfig()
+        cfg._load_from_env()
+        assert cfg.get_stt_api_key() != "lx-env-secret"  # pragma: allowlist secret
+
+        text = cfg.save_default_config().read_text()
+        assert "LIBRAXIS_API_KEY=lx-env-secret" in text  # pragma: allowlist secret
+        assert "SCREENSCRIBE_API_KEY=lx-env-secret" not in text  # pragma: allowlist secret
+        assert "SCREENSCRIBE_STT_API_KEY=lx-env-secret" not in text  # pragma: allowlist secret
+
+        monkeypatch.delenv("LIBRAXIS_API_KEY")
+        monkeypatch.delenv("SCREENSCRIBE_STT_ENDPOINT")
+        reloaded = ScreenScribeConfig()
+        reloaded._load_from_file(config_path)
+        # The STT endpoint (xAI) round-trips, and the key still refuses it.
+        assert "api.x.ai" in reloaded.stt_endpoint
+        assert reloaded.get_stt_api_key() != "lx-env-secret"  # pragma: allowlist secret
+        # The LibraxisAI LLM endpoint keeps working with the same key.
+        assert reloaded.get_llm_api_key() == "lx-env-secret"  # pragma: allowlist secret
+
+    def test_plain_generic_key_still_round_trips_verbatim(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = _home(monkeypatch, tmp_path)
+        cfg = ScreenScribeConfig(api_key="plain-key")  # pragma: allowlist secret
+        text = cfg.save_default_config().read_text()
+        assert "SCREENSCRIBE_API_KEY=plain-key" in text  # pragma: allowlist secret
+        assert "\nLIBRAXIS_API_KEY=" not in text
+        reloaded = ScreenScribeConfig()
+        reloaded._load_from_file(config_path)
+        assert reloaded.api_key == "plain-key"  # pragma: allowlist secret

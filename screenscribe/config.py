@@ -294,13 +294,16 @@ class ScreenScribeConfig:
     def _routed_key(self, endpoint: str, *candidates: str) -> str:
         """First non-empty candidate allowed to reach ``endpoint``.
 
-        A value from LIBRAXIS_API_KEY is skipped when the endpoint is a known
-        non-LibraxisAI host, so the next candidate (or the account bearer)
-        serves instead of the LibraxisAI key leaking across providers.
+        A value from LIBRAXIS_API_KEY only serves an endpoint positively
+        recognized as a LibraxisAI host. Known foreign hosts, lookalikes and
+        unknown/custom hosts all skip it: the variable name is provenance,
+        and an unrecognized host is no proof it belongs to LibraxisAI. A
+        custom gateway that really should get this value takes it through an
+        explicit SCREENSCRIBE_*_API_KEY instead.
         """
-        foreign = self._endpoint_provider(endpoint) not in {None, "libraxis"}
+        libraxis_endpoint = self._endpoint_provider(endpoint) == "libraxis"
         for value in candidates:
-            if value and not (foreign and value in self._libraxis_key_values):
+            if value and (libraxis_endpoint or value not in self._libraxis_key_values):
                 return value
         return ""
 
@@ -1100,6 +1103,19 @@ class ScreenScribeConfig:
             pass
         config_path = config_dir / "config.env"
 
+        # Keys that arrived as LIBRAXIS_API_KEY keep that provenance on disk.
+        # Re-emitted as generic keys they would reload untracked, and the next
+        # process would happily send them to a non-LibraxisAI host.
+        tracked = self._libraxis_key_values
+        generic_api_key = "" if self.api_key in tracked else self.api_key
+        generic_stt_key = "" if self.stt_api_key in tracked else self.stt_api_key
+        libraxis_lines = [
+            f"LIBRAXIS_API_KEY={value}"
+            for value in dict.fromkeys(
+                v for v in (self.stt_api_key, self.api_key) if v and v in tracked
+            )
+        ] or ["# LIBRAXIS_API_KEY=YOUR_LIBRAXIS_KEY"]
+
         sep = "# " + "=" * 77
         lines = [
             "# screenscribe configuration",
@@ -1111,17 +1127,17 @@ class ScreenScribeConfig:
             "# API KEY (required - pick one)",
             sep,
             "# Use any of these - first non-empty wins:",
-            f"SCREENSCRIBE_API_KEY={self.api_key}",
+            f"SCREENSCRIBE_API_KEY={generic_api_key}",
             # Per-endpoint keys: only emitted actively when set (multi-provider
             # setups). Otherwise they stay commented so a plain single-key file
             # is not cluttered.
-            self._emit_optional("SCREENSCRIBE_STT_API_KEY", self.stt_api_key, "YOUR_STT_KEY"),
+            self._emit_optional("SCREENSCRIBE_STT_API_KEY", generic_stt_key, "YOUR_STT_KEY"),
             self._emit_optional("SCREENSCRIBE_LLM_API_KEY", self.llm_api_key, "YOUR_LLM_KEY"),
             self._emit_optional(
                 "SCREENSCRIBE_VISION_API_KEY", self.vision_api_key, "YOUR_VISION_KEY"
             ),
             "# OPENAI_API_KEY=YOUR_OPENAI_KEY",
-            "# LIBRAXIS_API_KEY=YOUR_LIBRAXIS_KEY",
+            *libraxis_lines,
             "",
             sep,
             "# ENDPOINTS (explicit full URLs - recommended for clarity)",

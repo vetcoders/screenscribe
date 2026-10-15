@@ -292,3 +292,86 @@ def test_xai_stt_probe_targets_the_configured_xai_endpoint(
     xai = next(r for r in receipts if r.element == "screenscribe.providers.xai:stt_xai")
     assert xai.request_essence == "POST https://api.x.ai/v1/stt"
     assert "https://api.x.ai/v1/stt" in sent
+
+
+def test_stt_openai_probe_sends_nothing_when_stt_targets_xai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With STT routed to xAI the OpenAI-compat probe must not claim that path.
+
+    transcribe_audio_bytes switches to the xAI transport for an xAI endpoint,
+    so a PROVEN ``stt_openai_compat`` would be proven by somebody else's
+    roundtrip. The xAI probe covers that endpoint; this one declines.
+    """
+    config = ScreenScribeConfig()
+    config.stt_endpoint = "https://api.x.ai/v1/stt"
+    config.stt_api_key = "xai-test-key"  # pragma: allowlist secret
+    monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("SCREENSCRIBE_AGENT_FALLBACK_API_KEY", raising=False)
+    sent: list[str] = []
+
+    def record(self: httpx.Client, url: object, *args: object, **kwargs: object) -> Any:
+        sent.append(str(url))
+        return _MockSyncResponse({"text": "proof", "words": []})
+
+    monkeypatch.setattr(httpx.Client, "post", record)
+
+    receipts = run_provider_probes()
+    compat = next(r for r in receipts if r.element == "screenscribe.transcribe:stt_openai_compat")
+    assert compat.verdict == VERDICT_NOT_PROVEN
+    assert "xAI" in compat.reason
+    # Only the dedicated xAI probe touched api.x.ai.
+    assert [url for url in sent if "x.ai" in url] == ["https://api.x.ai/v1/stt"]
+
+
+def test_agent_responses_probe_refuses_an_empty_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 200 stream with no text and no response id is not proof the model answered."""
+    config = ScreenScribeConfig()
+    config.llm_api_key = "sk-test"  # pragma: allowlist secret
+    monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("SCREENSCRIBE_AGENT_FALLBACK_API_KEY", raising=False)
+
+    stream = _MockAsyncStream(lines=["data: [DONE]"])
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: _MockAsyncClient(stream))
+
+    receipts = run_provider_probes()
+    agent = next(r for r in receipts if r.element == "screenscribe.agent.chat:agent_responses")
+    assert agent.verdict == VERDICT_NOT_PROVEN
+    assert "empty response" in agent.reason
+
+
+def test_receipts_never_carry_secrets_or_url_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provider error bodies and endpoint queries are scrubbed before receipts.
+
+    Receipts and MATRIX.md are on-disk diagnostics people share; a signed URL
+    or a provider error echoing the key must not survive into them.
+    """
+    config = ScreenScribeConfig()
+    config.stt_endpoint = (
+        "https://stt.libraxis.cloud/v1/audio/transcriptions?token=tok-in-url"
+    )
+    config.stt_api_key = "sk-proof-secret-123"  # pragma: allowlist secret
+    monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("SCREENSCRIBE_AGENT_FALLBACK_API_KEY", raising=False)
+
+    def fake_post(self: httpx.Client, *args: object, **kwargs: object) -> _MockSyncResponse:
+        return _MockSyncResponse(
+            {"error": {"message": "bad key sk-proof-secret-123"}}, status_code=401
+        )
+
+    monkeypatch.setattr(httpx.Client, "post", fake_post)
+
+    receipts = run_provider_probes()
+    stt = next(r for r in receipts if r.element == "screenscribe.transcribe:stt_openai_compat")
+    assert stt.verdict == VERDICT_NOT_PROVEN
+    joined = " ".join((stt.request_essence, stt.response_essence, stt.reason))
+    assert "sk-proof-secret-123" not in joined  # pragma: allowlist secret
+    assert "tok-in-url" not in joined
+    assert "https://stt.libraxis.cloud/v1/audio/transcriptions" in stt.request_essence
