@@ -1,6 +1,8 @@
 // Floating Screenscribe agent chat for the HTML review report.
 // Separate from review_app.js so W1-01/W1-05 can merge with one player hook.
-// SSE contract (w1-04): token / tool_call / tool_result / done / error.
+// SSE contract (w1-04): token / tool_call / tool_result / done / error. `token`
+// frames are provider deltas rendered as they arrive; `: keepalive` comment
+// frames only prove the turn is still alive.
 (function (root) {
     'use strict';
 
@@ -8,6 +10,21 @@
     var STREAM_URL = '/api/agent/chat/stream';
     var PANEL_WIDTH = 360;
     var PANEL_HEIGHT = 480;
+    var MIN_WIDTH = 300;
+    var MIN_HEIGHT = 320;
+    var MAX_WIDTH = 960;
+    var MAX_HEIGHT = 1200;
+    var RESIZE_STEP = 24;
+    var SIZE_PRESETS = [
+        { id: 'compact', width: 320, height: 420 },
+        { id: 'default', width: PANEL_WIDTH, height: PANEL_HEIGHT },
+        { id: 'large', width: 560, height: 720 },
+    ];
+    // No byte or keepalive for this long means the turn is dead, not slow: the
+    // server emits a keepalive every ~10 s while the model is still working.
+    var IDLE_TIMEOUT_MS = 60000;
+    var MIC_MAX_SECONDS = 300;
+    var COMPOSER_MAX_HEIGHT = 200;
     var FAB_SIZE = 56;
     var GAP = 16;
     var VIEW_MARGIN = 8;
@@ -29,6 +46,15 @@
         retryRow: null,
         threadReady: null,
         referenceBound: false,
+        width: PANEL_WIDTH,
+        height: PANEL_HEIGHT,
+        resize: null,
+        abort: null,
+        stopRequested: false,
+        idleTimer: null,
+        timedOut: false,
+        retryRows: [],
+        mic: { status: 'idle', transport: null, timer: null, startedAt: 0, message: '' },
     };
 
     function tx(key, args) {
@@ -79,6 +105,8 @@
                 collapsed: state.collapsed,
                 left: state.sheet ? null : state.left,
                 top: state.sheet ? null : state.top,
+                width: state.width,
+                height: state.height,
             }));
         } catch (_err) { /* private-mode storage: position is session-only */ }
     }
@@ -92,6 +120,8 @@
                 if (typeof saved.collapsed === 'boolean') state.collapsed = saved.collapsed;
                 if (Number.isFinite(saved.left)) state.left = saved.left;
                 if (Number.isFinite(saved.top)) state.top = saved.top;
+                if (Number.isFinite(saved.width)) state.width = saved.width;
+                if (Number.isFinite(saved.height)) state.height = saved.height;
             }
         } catch (_err) { /* ignore corrupt cache */ }
     }
@@ -103,6 +133,37 @@
             width: (root.innerWidth || (el && el.clientWidth) || 1280),
             height: (root.innerHeight || (el && el.clientHeight) || 720),
         };
+    }
+
+    function sizeBounds(view) {
+        var v = view || viewportSize();
+        var maxW = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, v.width - 2 * VIEW_MARGIN));
+        var maxH = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, v.height - 2 * VIEW_MARGIN));
+        return { minWidth: MIN_WIDTH, minHeight: MIN_HEIGHT, maxWidth: maxW, maxHeight: maxH };
+    }
+
+    function clampSize(width, height, view) {
+        var b = sizeBounds(view);
+        var w = Number.isFinite(width) ? width : PANEL_WIDTH;
+        var h = Number.isFinite(height) ? height : PANEL_HEIGHT;
+        return {
+            width: Math.round(Math.min(b.maxWidth, Math.max(b.minWidth, w))),
+            height: Math.round(Math.min(b.maxHeight, Math.max(b.minHeight, h))),
+        };
+    }
+
+    // The panel's effective size: the reviewer's choice, never beyond the viewport.
+    function panelSize(view) {
+        return clampSize(state.width, state.height, view);
+    }
+
+    function currentPresetId() {
+        for (var i = 0; i < SIZE_PRESETS.length; i += 1) {
+            if (SIZE_PRESETS[i].width === state.width && SIZE_PRESETS[i].height === state.height) {
+                return SIZE_PRESETS[i].id;
+            }
+        }
+        return 'custom';
     }
 
     function clampToViewport(left, top, width, height, vw, vh) {
@@ -559,7 +620,7 @@
             else htmlEl.classList.remove(SHEET_CLASS);
         }
         if (htmlEl && htmlEl.style) {
-            htmlEl.style.setProperty('--ss-agent-sheet-width', PANEL_WIDTH + 'px');
+            htmlEl.style.setProperty('--ss-agent-sheet-width', panelSize().width + 'px');
         }
     }
 
@@ -599,13 +660,14 @@
             if (panel) panel.hidden = true;
             return;
         }
+        var size = panelSize(view);
         var obstacle = protectedRect();
         var probe = obstacle;
         if (state.sheet) {
             probe = unionBoxes(obstacle, {
                 left: obstacle.right,
                 top: obstacle.top,
-                right: Math.min(view.width, obstacle.right + PANEL_WIDTH + GAP),
+                right: Math.min(view.width, obstacle.right + size.width + GAP),
                 bottom: obstacle.bottom,
                 width: 0,
                 height: 0,
@@ -613,14 +675,22 @@
         }
         var savedLeft = state.drag ? state.left : (state.sheet ? null : state.left);
         var savedTop = state.drag ? state.top : (state.sheet ? null : state.top);
-        if (state.drag && Number.isFinite(state.left) && Number.isFinite(state.top)) {
-            var dragged = positionClear(state.left, state.top, PANEL_WIDTH, PANEL_HEIGHT, obstacle, view);
+        if (state.resize) {
+            // Live resize: follow the pointer inside the viewport; placement
+            // against the player is settled once when the resize ends.
+            if (!state.sheet) {
+                var held = clampToViewport(state.left, state.top, size.width, size.height, view.width, view.height);
+                state.left = held.left;
+                state.top = held.top;
+            }
+        } else if (state.drag && Number.isFinite(state.left) && Number.isFinite(state.top)) {
+            var dragged = positionClear(state.left, state.top, size.width, size.height, obstacle, view);
             if (dragged) {
                 state.left = dragged.left;
                 state.top = dragged.top;
                 state.sheet = false;
             } else {
-                var placedDrag = placeBesidePlayer(obstacle, view, { width: PANEL_WIDTH, height: PANEL_HEIGHT });
+                var placedDrag = placeBesidePlayer(obstacle, view, size);
                 state.left = placedDrag.left;
                 state.top = placedDrag.top;
                 state.sheet = Boolean(placedDrag.sheet);
@@ -629,7 +699,7 @@
             var placed = resolveExpandedPlacement(
                 probe,
                 view,
-                { width: PANEL_WIDTH, height: PANEL_HEIGHT },
+                size,
                 savedLeft,
                 savedTop
             );
@@ -642,15 +712,16 @@
             rootEl.style.left = 'auto';
             rootEl.style.right = '0px';
             rootEl.style.top = '';
-            rootEl.style.width = PANEL_WIDTH + 'px';
+            rootEl.style.width = size.width + 'px';
             rootEl.style.height = '';
         } else {
             rootEl.style.right = 'auto';
             rootEl.style.left = state.left + 'px';
             rootEl.style.top = state.top + 'px';
-            rootEl.style.width = PANEL_WIDTH + 'px';
-            rootEl.style.height = PANEL_HEIGHT + 'px';
+            rootEl.style.width = size.width + 'px';
+            rootEl.style.height = size.height + 'px';
         }
+        syncSizeControls(size);
         if (panel) panel.hidden = false;
     }
 
@@ -729,22 +800,49 @@
         }
     }
 
-    async function consumeSse(response, onEvent) {
+    function abortError() {
+        var error = new Error('aborted');
+        error.name = 'AbortError';
+        return error;
+    }
+
+    // Reads the SSE body as it arrives: each frame is handled the moment its
+    // blank-line delimiter lands, so the first token renders before the turn
+    // ends. `options.onActivity` fires on every received chunk (keepalives
+    // included); `options.signal` aborts the read.
+    async function consumeSse(response, onEvent, options) {
+        var opts = options || {};
+        var signal = opts.signal || null;
         var body = response && response.body;
         if (body && typeof body.getReader === 'function') {
             var reader = body.getReader();
             var decoder = new TextDecoder();
             var buffer = '';
-            while (true) {
-                var chunk = await reader.read();
-                if (chunk.done) break;
-                buffer += decoder.decode(chunk.value, { stream: true });
-                var delimiter;
-                while ((delimiter = /\r?\n\r?\n/.exec(buffer)) !== null) {
-                    var idx = delimiter.index;
-                    var block = buffer.slice(0, idx);
-                    buffer = buffer.slice(idx + delimiter[0].length);
-                    if (block.trim()) await onEvent(parseSseBlock(block));
+            var onAbort = function () {
+                try { reader.cancel(); } catch (_err) { /* already closed */ }
+            };
+            if (signal && typeof signal.addEventListener === 'function') {
+                signal.addEventListener('abort', onAbort);
+            }
+            try {
+                while (true) {
+                    if (signal && signal.aborted) throw abortError();
+                    var chunk = await reader.read();
+                    if (signal && signal.aborted) throw abortError();
+                    if (chunk.done) break;
+                    if (typeof opts.onActivity === 'function') opts.onActivity();
+                    buffer += decoder.decode(chunk.value, { stream: true });
+                    var delimiter;
+                    while ((delimiter = /\r?\n\r?\n/.exec(buffer)) !== null) {
+                        var idx = delimiter.index;
+                        var block = buffer.slice(0, idx);
+                        buffer = buffer.slice(idx + delimiter[0].length);
+                        if (block.trim()) await onEvent(parseSseBlock(block));
+                    }
+                }
+            } finally {
+                if (signal && typeof signal.removeEventListener === 'function') {
+                    signal.removeEventListener('abort', onAbort);
                 }
             }
             if (buffer.trim()) await onEvent(parseSseBlock(buffer));
@@ -760,13 +858,70 @@
     var THREAD_DB = 'screenscribe-agent';
     var THREAD_STORE = 'threads';
 
-    function setComposerLive() {
+    // Composer state is derived, never stored: Send is enabled only for a
+    // non-empty draft while no turn is streaming; the draft itself always stays
+    // editable, and Stop is visible exactly while a turn streams.
+    function syncComposer() {
         var doc = root.document;
         if (!doc) return;
         var input = doc.getElementById('ss-agent-input');
-        var sendBtn = doc.querySelector('#ss-agent-form .ss-agent-send');
+        var sendBtn = doc.getElementById('ss-agent-send');
+        var stopBtn = doc.getElementById('ss-agent-stop');
+        var activity = doc.getElementById('ss-agent-activity');
+        var panel = doc.getElementById('ss-agent-panel');
         if (input) input.disabled = false;
-        if (sendBtn) sendBtn.disabled = false;
+        var hasText = Boolean(input && String(input.value || '').trim());
+        if (sendBtn) {
+            sendBtn.disabled = !hasText || state.streaming;
+            if (typeof sendBtn.setAttribute === 'function') {
+                sendBtn.setAttribute('aria-disabled', sendBtn.disabled ? 'true' : 'false');
+            }
+        }
+        if (stopBtn) stopBtn.hidden = !state.streaming;
+        if (activity) activity.hidden = !state.streaming;
+        if (panel && typeof panel.setAttribute === 'function') {
+            panel.setAttribute('aria-busy', state.streaming ? 'true' : 'false');
+        }
+    }
+
+    function setComposerLive() {
+        syncComposer();
+    }
+
+    function draftKey() {
+        return storageKey() + ':draft';
+    }
+
+    function saveDraft(value) {
+        try {
+            var text = String(value || '');
+            if (text) root.localStorage.setItem(draftKey(), text);
+            else root.localStorage.removeItem(draftKey());
+        } catch (_err) { /* private-mode storage: the draft lives only in the field */ }
+    }
+
+    function loadDraft() {
+        try {
+            return root.localStorage.getItem(draftKey()) || '';
+        } catch (_err) {
+            return '';
+        }
+    }
+
+    // Grow the textarea with its content up to ~40% of the panel, then scroll.
+    function autosizeInput(input) {
+        if (!input || !input.style) return;
+        var maxPx = Math.max(64, Math.min(COMPOSER_MAX_HEIGHT, Math.round(panelSize().height * 0.4)));
+        input.style.height = 'auto';
+        var scroll = Number(input.scrollHeight) || 0;
+        if (scroll > 0) input.style.height = Math.min(scroll, maxPx) + 'px';
+        input.style.overflowY = scroll > maxPx ? 'auto' : 'hidden';
+    }
+
+    function onDraftChanged(input) {
+        saveDraft(input.value);
+        autosizeInput(input);
+        syncComposer();
     }
 
     function openThreadDb() {
@@ -919,6 +1074,7 @@
         if (existing.trim()) input.value = existing.replace(/\s+$/, '') + '\n\n' + block;
         else input.value = block;
         input.disabled = false;
+        onDraftChanged(input);
         if (typeof input.focus === 'function') input.focus();
         return block;
     }
@@ -937,6 +1093,7 @@
         var row = state.retryRow;
         state.retryMessage = null;
         state.retryRow = null;
+        state.retryRows = [];
         if (!row || typeof row.querySelector !== 'function') return;
         var btn = row.querySelector('.ss-agent-retry');
         if (btn && btn.parentNode && typeof btn.parentNode.removeChild === 'function') {
@@ -947,18 +1104,101 @@
     function markRetryable(row, messageText, retryText) {
         var painted = paintAssistantError(row, messageText) || row;
         state.retryRow = painted;
+        state.retryRows = [painted];
         state.retryMessage = retryText;
         attachRetry(painted, function () { return retryTurn(retryText); });
     }
 
-    function retryTurn(message) {
-        var row = state.retryRow;
-        state.retryRow = null;
-        state.retryMessage = null;
-        if (row && row.parentNode && typeof row.parentNode.removeChild === 'function') {
-            row.parentNode.removeChild(row);
+    function markPartial(row) {
+        if (!row || !row.classList) return;
+        row.classList.add('ss-agent-msg-interrupted');
+        var badge = el('span', 'ss-agent-badge');
+        badge.textContent = t('review.agentInterrupted');
+        row.appendChild(badge);
+    }
+
+    // A failed turn keeps whatever text already streamed (marked partial) and
+    // reports the failure on its own row; Retry removes both before resending,
+    // so a recovered answer never duplicates the partial one.
+    function failTurn(row, assembled, messageText, retryText) {
+        if (!assembled) {
+            markRetryable(row, messageText, retryText);
+            return;
         }
+        if (row) {
+            row.textContent = assembled;
+            markPartial(row);
+        }
+        var errorRow = appendMessage('error', messageText);
+        state.retryRow = errorRow;
+        state.retryRows = [row, errorRow].filter(Boolean);
+        state.retryMessage = retryText;
+        attachRetry(errorRow, function () { return retryTurn(retryText); });
+    }
+
+    function retryTurn(message) {
+        var rows = state.retryRows && state.retryRows.length ? state.retryRows : [state.retryRow];
+        state.retryRow = null;
+        state.retryRows = [];
+        state.retryMessage = null;
+        rows.forEach(function (row) {
+            if (row && row.parentNode && typeof row.parentNode.removeChild === 'function') {
+                row.parentNode.removeChild(row);
+            }
+        });
         return send(message, { retry: true });
+    }
+
+    function clearIdleTimer() {
+        if (state.idleTimer) {
+            clearTimeout(state.idleTimer);
+            state.idleTimer = null;
+        }
+    }
+
+    function armIdleTimer() {
+        clearIdleTimer();
+        state.idleTimer = setTimeout(function () {
+            state.idleTimer = null;
+            if (!state.streaming) return;
+            state.timedOut = true;
+            if (state.abort) {
+                try { state.abort.abort(); } catch (_err) { /* already aborted */ }
+            }
+        }, idleTimeoutMs());
+    }
+
+    function idleTimeoutMs() {
+        var override = Number(root.__screenscribeAgentIdleTimeoutMs);
+        return override > 0 ? override : IDLE_TIMEOUT_MS;
+    }
+
+    // Stop the streaming turn. Text received so far stays, marked as stopped.
+    function stop() {
+        if (!state.streaming) return false;
+        state.stopRequested = true;
+        if (state.abort) {
+            try { state.abort.abort(); } catch (_err) { /* already aborted */ }
+        }
+        return true;
+    }
+
+    function finishInterrupted(row, assembled) {
+        if (!assembled) {
+            if (row && row.parentNode && typeof row.parentNode.removeChild === 'function') {
+                row.parentNode.removeChild(row);
+            }
+            appendSystemLine(tx('review.agentInterrupted'), 'ss-agent-msg-warn');
+            return;
+        }
+        if (row) {
+            row.textContent = assembled;
+            markPartial(row);
+        }
+        state.history.push({
+            role: 'assistant',
+            content: assembled + '\n\n' + tx('review.agentInterruptedHistory'),
+        });
     }
 
     async function readFailureMessage(response) {
@@ -992,6 +1232,16 @@
         return Boolean(String(text || '').trim()) && !state.streaming;
     }
 
+    function makeAbortController() {
+        var Ctor = root.AbortController || (typeof AbortController === 'function' ? AbortController : null);
+        if (typeof Ctor !== 'function') return null;
+        try {
+            return new Ctor();
+        } catch (_err) {
+            return null;
+        }
+    }
+
     async function send(text, options) {
         if (state.threadReady) {
             try {
@@ -1011,8 +1261,17 @@
             await persistThread();
             return true;
         }
+        var controller = makeAbortController();
+        state.abort = controller;
+        state.stopRequested = false;
+        state.timedOut = false;
         state.streaming = true;
         var assistantRow = appendMessage('assistant', '');
+        if (assistantRow && assistantRow.classList) {
+            assistantRow.classList.add('ss-agent-msg-streaming');
+        }
+        syncComposer();
+        armIdleTimer();
         var assembled = '';
         var errored = false;
         var seenToolResults = new Set();
@@ -1026,7 +1285,7 @@
         // primary Responses `done`. History remains authoritative across a cleared cursor.
         clearResponseCursor();
         try {
-            var response = await root.fetch(STREAM_URL, {
+            var request = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1040,19 +1299,19 @@
                     previous_response_protocol: requestIdentity && requestIdentity.protocol,
                     previous_response_host: requestIdentity && requestIdentity.host,
                 }),
-            });
+            };
+            if (controller) request.signal = controller.signal;
+            var response = await root.fetch(STREAM_URL, request);
+            if (state.stopRequested || state.timedOut) throw abortError();
             if (!response) {
                 errored = true;
                 showOfflineNotice();
                 paintAssistantError(assistantRow, tx('review.agentOffline'));
-                state.streaming = false;
                 return true;
             }
             if (!response.ok) {
                 errored = true;
                 markRetryable(assistantRow, await readFailureMessage(response), message);
-                state.streaming = false;
-
                 return true;
             }
             await consumeSse(response, async function (evt) {
@@ -1060,6 +1319,8 @@
                 if (evt.event === 'token') {
                     assembled += (evt.data && evt.data.text) || '';
                     if (assistantRow && !errored) assistantRow.textContent = assembled;
+                    var log = root.document.getElementById('ss-agent-log');
+                    if (log && typeof log.scrollTop === 'number') log.scrollTop = log.scrollHeight || 0;
                 } else if (evt.event === 'tool_call') {
                     applyToolCall(
                         evt.data && evt.data.name,
@@ -1076,39 +1337,64 @@
                     if (!errored) {
                         acceptDoneCursor(evt.data, requestIdentity);
                     }
-
                 } else if (evt.event === 'error') {
                     errored = true;
                     clearResponseCursor();
-                    markRetryable(
-
+                    failTurn(
                         assistantRow,
+                        assembled,
                         (evt.data && evt.data.message) || tx('review.agentPatchRetry'),
                         message
                     );
                 }
+            }, {
+                signal: controller ? controller.signal : null,
+                onActivity: armIdleTimer,
             });
+            if (state.stopRequested || state.timedOut) throw abortError();
             if (assembled && !errored) {
                 state.history.push({ role: 'assistant', content: assembled });
             } else if (!errored) {
                 removeEmptyAssistant(assistantRow);
             }
         } catch (err) {
-            errored = true;
             clearResponseCursor();
-            if (isOffline()) {
+            if (state.stopRequested) {
+                finishInterrupted(assistantRow, assembled);
+            } else if (state.timedOut) {
+                errored = true;
+                failTurn(
+                    assistantRow,
+                    assembled,
+                    tx('review.agentTimeout', { seconds: Math.round(idleTimeoutMs() / 1000) }),
+                    message
+                );
+            } else if (isOffline()) {
+                errored = true;
                 showOfflineNotice();
                 if (assistantRow && !assembled) {
                     paintAssistantError(assistantRow, tx('review.agentOffline'));
                 }
             } else {
-                var transportText = err && err.message ? String(err.message) : tx('review.agentPatchRetry');
-                markRetryable(assistantRow, transportText, message);
-
+                errored = true;
+                var reason = err && err.message ? String(err.message) : tx('review.agentPatchRetry');
+                failTurn(
+                    assistantRow,
+                    assembled,
+                    tx('review.agentDisconnected', { message: reason }),
+                    message
+                );
             }
         } finally {
+            clearIdleTimer();
+            state.abort = null;
             state.streaming = false;
-            setComposerLive();
+            state.stopRequested = false;
+            state.timedOut = false;
+            if (assistantRow && assistantRow.classList) {
+                assistantRow.classList.remove('ss-agent-msg-streaming');
+            }
+            syncComposer();
             await persistThread();
         }
         return true;
@@ -1116,6 +1402,8 @@
 
     function startDrag(event) {
         if (state.collapsed || state.sheet) return;
+        var target = event && event.target;
+        if (target && typeof target.closest === 'function' && target.closest('button')) return;
         var point = event.touches ? event.touches[0] : event;
         state.drag = {
             startX: point.clientX,
@@ -1130,11 +1418,12 @@
         if (!state.drag) return;
         var point = event.touches ? event.touches[0] : event;
         var view = viewportSize();
+        var size = panelSize(view);
         var next = clampToViewport(
             state.drag.origLeft + (point.clientX - state.drag.startX),
             state.drag.origTop + (point.clientY - state.drag.startY),
-            PANEL_WIDTH,
-            PANEL_HEIGHT,
+            size.width,
+            size.height,
             view.width,
             view.height
         );
@@ -1158,27 +1447,441 @@
         return event.key === 'Enter' || event.keyCode === 13;
     }
 
+    function submitComposer(form) {
+        if (typeof form.requestSubmit === 'function') {
+            form.requestSubmit();
+        } else if (typeof form.dispatchEvent === 'function') {
+            form.dispatchEvent({ type: 'submit', preventDefault: function () {} });
+        } else {
+            form.submit();
+        }
+    }
+
     function bindComposer(form, input) {
         form.addEventListener('submit', function (event) {
             if (event && event.preventDefault) event.preventDefault();
             var value = input.value;
             if (!canSend(value)) return;
             input.value = '';
+            onDraftChanged(input);
             send(value);
         });
+        input.addEventListener('input', function () { onDraftChanged(input); });
         input.addEventListener('keydown', function (event) {
+            if (event && event.key === 'Escape') {
+                if (state.mic.status === 'recording' || state.mic.status === 'requesting') {
+                    if (event.preventDefault) event.preventDefault();
+                    cancelMic();
+                } else if (state.streaming) {
+                    if (event.preventDefault) event.preventDefault();
+                    stop();
+                }
+                return;
+            }
             if (!isComposerEnter(event)) return;
             if (event.shiftKey) return;
             if (isComposerIme(event)) return;
             if (event.preventDefault) event.preventDefault();
-            if (typeof form.requestSubmit === 'function') {
-                form.requestSubmit();
-            } else if (typeof form.dispatchEvent === 'function') {
-                form.dispatchEvent({ type: 'submit', preventDefault: function () {} });
-            } else {
-                form.submit();
-            }
+            submitComposer(form);
         });
+    }
+
+    // ---- Panel size -------------------------------------------------------
+
+    function setPanelSize(width, height, options) {
+        var before = panelSize();
+        var next = clampSize(width, height);
+        // Grow toward the left so a panel docked at the right edge can widen.
+        if (!state.sheet && Number.isFinite(state.left)) {
+            state.left = state.left + (before.width - next.width);
+        }
+        state.width = next.width;
+        state.height = next.height;
+        applyDomState();
+        if (!options || options.persist !== false) persist();
+        return panelSize();
+    }
+
+    function cycleSizePreset() {
+        var id = currentPresetId();
+        var index = -1;
+        for (var i = 0; i < SIZE_PRESETS.length; i += 1) {
+            if (SIZE_PRESETS[i].id === id) index = i;
+        }
+        var next = SIZE_PRESETS[(index + 1) % SIZE_PRESETS.length];
+        return setPanelSize(next.width, next.height);
+    }
+
+    function presetLabel(id) {
+        var key = 'review.agentSize' + id.charAt(0).toUpperCase() + id.slice(1);
+        return tx(key);
+    }
+
+    function syncSizeControls(size) {
+        var doc = root.document;
+        if (!doc) return;
+        var current = size || panelSize();
+        var bounds = sizeBounds();
+        var handle = doc.getElementById('ss-agent-resize');
+        if (handle && typeof handle.setAttribute === 'function') {
+            handle.setAttribute('aria-valuenow', String(current.width));
+            handle.setAttribute('aria-valuemin', String(bounds.minWidth));
+            handle.setAttribute('aria-valuemax', String(bounds.maxWidth));
+            handle.setAttribute('aria-valuetext', tx('review.agentResizeValue', {
+                width: current.width,
+                height: current.height,
+            }));
+        }
+        var sizeBtn = doc.getElementById('ss-agent-size');
+        if (sizeBtn && typeof sizeBtn.setAttribute === 'function') {
+            var id = currentPresetId();
+            var label = tx('review.agentSize', { size: presetLabel(id) });
+            sizeBtn.setAttribute('aria-label', label);
+            sizeBtn.setAttribute('data-size', id);
+            sizeBtn.title = label;
+        }
+        autosizeInput(doc.getElementById('ss-agent-input'));
+    }
+
+    function startResize(event) {
+        if (state.collapsed) return;
+        var point = event && event.touches ? event.touches[0] : event;
+        if (!point) return;
+        var size = panelSize();
+        state.resize = {
+            startX: point.clientX,
+            startY: point.clientY,
+            width: size.width,
+            height: size.height,
+            left: state.left,
+        };
+        var rootEl = getRoot();
+        if (rootEl && rootEl.classList) rootEl.classList.add('ss-agent-resizing');
+        var target = event && event.target;
+        if (target && typeof target.setPointerCapture === 'function' && event.pointerId != null) {
+            try { target.setPointerCapture(event.pointerId); } catch (_err) { /* capture is optional */ }
+        }
+        if (event && event.preventDefault) event.preventDefault();
+    }
+
+    function moveResize(event) {
+        var r = state.resize;
+        if (!r) return;
+        var point = event && event.touches ? event.touches[0] : event;
+        if (!point) return;
+        // The grip sits on the bottom-left corner: dragging left widens,
+        // dragging down makes the panel taller. The right edge stays put.
+        var next = clampSize(
+            r.width + (r.startX - point.clientX),
+            state.sheet ? r.height : r.height + (point.clientY - r.startY)
+        );
+        state.width = next.width;
+        state.height = next.height;
+        if (!state.sheet && Number.isFinite(r.left)) state.left = r.left + (r.width - next.width);
+        applyDomState();
+    }
+
+    function endResize() {
+        if (!state.resize) return;
+        state.resize = null;
+        var rootEl = getRoot();
+        if (rootEl && rootEl.classList) rootEl.classList.remove('ss-agent-resizing');
+        // Settle placement now: the final size must not cover the player.
+        applyDomState();
+        persist();
+    }
+
+    function onResizeKey(event) {
+        var key = event && event.key;
+        var step = event && event.shiftKey ? RESIZE_STEP * 4 : RESIZE_STEP;
+        var size = panelSize();
+        var bounds = sizeBounds();
+        var width = size.width;
+        var height = size.height;
+        if (key === 'ArrowLeft') width += step;
+        else if (key === 'ArrowRight') width -= step;
+        else if (key === 'ArrowDown') height += step;
+        else if (key === 'ArrowUp') height -= step;
+        else if (key === 'Home') { width = bounds.minWidth; height = bounds.minHeight; }
+        else if (key === 'End') { width = bounds.maxWidth; height = bounds.maxHeight; }
+        else return false;
+        if (event.preventDefault) event.preventDefault();
+        setPanelSize(width, height);
+        return true;
+    }
+
+    // ---- Dictation ----------------------------------------------------------
+
+    function micSupport() {
+        if (isOffline()) return { ok: false, reason: tx('review.agentMicOffline') };
+        var nav = root.navigator;
+        var lib = root.ScreenScribeLib;
+        if (
+            !nav
+            || !nav.mediaDevices
+            || typeof nav.mediaDevices.getUserMedia !== 'function'
+            || typeof root.MediaRecorder !== 'function'
+            || !lib
+            || typeof lib.createSttTransport !== 'function'
+        ) {
+            return { ok: false, reason: tx('review.agentMicUnsupported') };
+        }
+        return { ok: true, reason: '' };
+    }
+
+    function pickRecorderFormat() {
+        var candidates = [
+            { mime: 'audio/webm;codecs=opus', blob: 'audio/webm', file: 'dictation.webm' },
+            { mime: 'audio/webm', blob: 'audio/webm', file: 'dictation.webm' },
+            { mime: 'audio/mp4', blob: 'audio/mp4', file: 'dictation.m4a' },
+            { mime: 'audio/ogg;codecs=opus', blob: 'audio/ogg', file: 'dictation.ogg' },
+        ];
+        var Recorder = root.MediaRecorder;
+        if (Recorder && typeof Recorder.isTypeSupported === 'function') {
+            for (var i = 0; i < candidates.length; i += 1) {
+                try {
+                    if (Recorder.isTypeSupported(candidates[i].mime)) return candidates[i];
+                } catch (_err) { /* keep probing */ }
+            }
+        }
+        return candidates[0];
+    }
+
+    function micErrorText(error) {
+        var name = error && error.name;
+        if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError') {
+            return tx('review.agentMicDenied');
+        }
+        if (name === 'NotFoundError' || name === 'OverconstrainedError' || name === 'DevicesNotFoundError') {
+            return tx('review.agentMicMissing');
+        }
+        if (name === 'NotReadableError' || name === 'TrackStartError') {
+            return tx('review.agentMicBusy');
+        }
+        if (name === 'NotSupportedError') return tx('review.agentMicUnsupported');
+        var detail = error && error.message ? String(error.message) : '';
+        return tx('review.agentMicFailed', { message: detail });
+    }
+
+    function stopMicTicker() {
+        if (state.mic.timer) {
+            clearInterval(state.mic.timer);
+            state.mic.timer = null;
+        }
+    }
+
+    function micElapsedSeconds() {
+        if (!state.mic.startedAt) return 0;
+        return Math.max(0, Math.floor((Date.now() - state.mic.startedAt) / 1000));
+    }
+
+    function startMicTicker() {
+        stopMicTicker();
+        state.mic.startedAt = Date.now();
+        if (typeof setInterval !== 'function') return;
+        state.mic.timer = setInterval(function () {
+            if (state.mic.status !== 'recording') {
+                stopMicTicker();
+                return;
+            }
+            if (micElapsedSeconds() >= MIC_MAX_SECONDS) {
+                finishMic();
+                return;
+            }
+            renderMic();
+        }, 1000);
+    }
+
+    function micStatusText() {
+        var mic = state.mic;
+        if (mic.status === 'recording') {
+            return tx('review.agentMicRecording', { seconds: micElapsedSeconds() });
+        }
+        return mic.message || '';
+    }
+
+    function renderMic() {
+        var doc = root.document;
+        if (!doc) return;
+        var status = state.mic.status;
+        var btn = doc.getElementById('ss-agent-mic');
+        var cancel = doc.getElementById('ss-agent-mic-cancel');
+        var line = doc.getElementById('ss-agent-mic-status');
+        var recording = status === 'recording';
+        if (btn) {
+            btn.classList.toggle('is-recording', recording);
+            btn.classList.toggle('is-busy', status === 'requesting' || status === 'transcribing');
+            btn.setAttribute('aria-pressed', recording ? 'true' : 'false');
+            btn.setAttribute('aria-label', recording ? tx('review.agentMicStopLabel') : tx('review.agentMicLabel'));
+            btn.title = recording ? tx('review.agentMicStopLabel') : tx('review.agentMicLabel');
+            var unavailable = status === 'unavailable';
+            btn.setAttribute('aria-disabled', unavailable || status === 'transcribing' ? 'true' : 'false');
+            btn.setAttribute('data-state', status);
+        }
+        if (cancel) cancel.hidden = !(recording || status === 'requesting');
+        if (line) {
+            var text = micStatusText();
+            line.textContent = text;
+            line.hidden = !text;
+            line.setAttribute('data-tone', status === 'error' || status === 'unavailable' ? 'error' : status);
+        }
+    }
+
+    function setMicState(status, message) {
+        state.mic.status = status;
+        state.mic.message = message || '';
+        if (status !== 'recording') stopMicTicker();
+        renderMic();
+    }
+
+    function insertDictation(text) {
+        var input = root.document.getElementById('ss-agent-input');
+        var spoken = String(text || '').trim();
+        if (!input || !spoken) return false;
+        var value = String(input.value || '');
+        var start = Number.isInteger(input.selectionStart) ? input.selectionStart : value.length;
+        var end = Number.isInteger(input.selectionEnd) ? input.selectionEnd : start;
+        var before = value.slice(0, start);
+        var after = value.slice(end);
+        var lead = before && !/\s$/.test(before) ? ' ' : '';
+        var trail = after && !/^\s/.test(after) ? ' ' : '';
+        input.value = before + lead + spoken + trail + after;
+        var caret = (before + lead + spoken).length;
+        if (typeof input.setSelectionRange === 'function') {
+            try { input.setSelectionRange(caret, caret); } catch (_err) { /* not focusable yet */ }
+        }
+        onDraftChanged(input);
+        if (typeof input.focus === 'function') input.focus();
+        return true;
+    }
+
+    function ensureMicTransport() {
+        if (state.mic.transport) return state.mic.transport;
+        var format = pickRecorderFormat();
+        state.mic.transport = root.ScreenScribeLib.createSttTransport({
+            endpoint: '/api/agent/stt',
+            mimeType: format.mime,
+            blobType: format.blob,
+            filename: format.file,
+            shouldTranscribe: function (size) { return size > 0; },
+            onRecordingStart: function () {
+                startMicTicker();
+                setMicState('recording', '');
+            },
+            onMicError: function (error) {
+                setMicState('error', micErrorText(error));
+            },
+            onTranscribingChange: function (busy) {
+                if (busy) setMicState('transcribing', tx('review.agentMicTranscribing'));
+            },
+            onTranscript: function (text) {
+                if (insertDictation(text)) setMicState('idle', tx('review.agentMicInserted'));
+                else setMicState('idle', tx('review.agentMicNoSpeech'));
+            },
+            onError: function (error) {
+                var detail = error && error.message ? String(error.message) : '';
+                setMicState('error', tx('review.agentMicFailed', { message: detail }));
+            },
+            onDiscard: function (size) {
+                var cancelled = state.mic.cancelling || !size;
+                state.mic.cancelling = false;
+                setMicState('idle', cancelled ? tx('review.agentMicCancelled') : tx('review.agentMicNoSpeech'));
+            },
+            fallbackMessage: tx('review.agentMicFailed', { message: '' }),
+        });
+        return state.mic.transport;
+    }
+
+    async function startMic() {
+        var support = micSupport();
+        if (!support.ok) {
+            setMicState('unavailable', support.reason);
+            return false;
+        }
+        var status = state.mic.status;
+        if (status === 'requesting' || status === 'transcribing' || status === 'recording') return false;
+        var transport = ensureMicTransport();
+        state.mic.cancelling = false;
+        state.mic.cancelPending = false;
+        setMicState('requesting', tx('review.agentMicRequesting'));
+        var started = false;
+        try {
+            started = await transport.start();
+        } catch (error) {
+            setMicState('error', micErrorText(error));
+            return false;
+        }
+        if (!started) {
+            if (state.mic.status === 'requesting') setMicState('error', tx('review.agentMicDenied'));
+            return false;
+        }
+        if (state.mic.cancelPending) {
+            state.mic.cancelPending = false;
+            cancelMic();
+            return false;
+        }
+        return true;
+    }
+
+    function finishMic() {
+        if (state.mic.status !== 'recording' || !state.mic.transport) return false;
+        stopMicTicker();
+        setMicState('transcribing', tx('review.agentMicTranscribing'));
+        state.mic.transport.stop();
+        return true;
+    }
+
+    function cancelMic() {
+        var status = state.mic.status;
+        if (status === 'requesting') {
+            state.mic.cancelPending = true;
+            return true;
+        }
+        if (status !== 'recording' || !state.mic.transport) return false;
+        state.mic.cancelling = true;
+        stopMicTicker();
+        state.mic.transport.cancel();
+        if (state.mic.status === 'recording') setMicState('idle', tx('review.agentMicCancelled'));
+        return true;
+    }
+
+    function toggleMic() {
+        if (state.mic.status === 'recording') return Promise.resolve(finishMic());
+        return startMic();
+    }
+
+    // Small inline icons; built with DOM APIs so no markup string is parsed.
+    function icon(name) {
+        var doc = root.document;
+        var paths = {
+            mic: 'M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z',
+            stop: 'M7 7h10v10H7z',
+            close: 'M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6z',
+            resize: 'M4 20h2v-2H4zm0-4h2v-2H4zm4 4h2v-2H8zm-4-8h2v-2H4zm4 4h2v-2H8zm4 4h2v-2h-2z',
+            size: 'M4 4h7v2H7.4l4.3 4.3-1.4 1.4L6 7.4V11H4zm16 16h-7v-2h3.6l-4.3-4.3 1.4-1.4 4.3 4.3V13h2z',
+        };
+        if (!doc || typeof doc.createElementNS !== 'function' || !paths[name]) {
+            return null;
+        }
+        var ns = 'http://www.w3.org/2000/svg';
+        var svg = doc.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.setAttribute('focusable', 'false');
+        svg.setAttribute('class', 'ss-agent-icon');
+        var path = doc.createElementNS(ns, 'path');
+        path.setAttribute('d', paths[name]);
+        path.setAttribute('fill', 'currentColor');
+        svg.appendChild(path);
+        return svg;
+    }
+
+    function iconButton(id, className, iconName, label) {
+        var btn = el('button', className, { id: id, type: 'button', 'aria-label': label });
+        btn.title = label;
+        var svg = icon(iconName);
+        if (svg) btn.appendChild(svg);
+        return btn;
     }
 
     function buildDom() {
@@ -1207,6 +1910,11 @@
         var title = el('h2', 'ss-agent-title', { 'data-i18n': 'agentTitle' });
         title.textContent = t('review.agentTitle');
         header.appendChild(title);
+        var sizeBtn = iconButton('ss-agent-size', 'ss-agent-icon-btn ss-agent-size', 'size', tx('review.agentSize', {
+            size: presetLabel(currentPresetId()),
+        }));
+        sizeBtn.addEventListener('click', function () { cycleSizePreset(); });
+        header.appendChild(sizeBtn);
         header.addEventListener('mousedown', startDrag);
         header.addEventListener('touchstart', startDrag);
 
@@ -1227,34 +1935,130 @@
         });
         offline.textContent = t('review.agentOffline');
 
+        // "Agent is responding…" bar with the Stop control, shown only while a
+        // turn streams. role=status announces the start without stealing focus.
+        var activity = el('div', 'ss-agent-activity', {
+            id: 'ss-agent-activity',
+            role: 'status',
+            hidden: 'hidden',
+        });
+        var pulse = el('span', 'ss-agent-pulse', { 'aria-hidden': 'true' });
+        var activityText = el('span', 'ss-agent-activity-text', { 'data-i18n': 'agentResponding' });
+        activityText.textContent = t('review.agentResponding');
+        var stopBtn = el('button', 'ss-agent-stop', {
+            id: 'ss-agent-stop',
+            type: 'button',
+            hidden: 'hidden',
+            'aria-label': tx('review.agentStopLabel'),
+            'data-i18n-attr': 'aria-label:agentStopLabel',
+        });
+        var stopIcon = icon('stop');
+        if (stopIcon) stopBtn.appendChild(stopIcon);
+        var stopText = el('span', '', { 'data-i18n': 'agentStop' });
+        stopText.textContent = t('review.agentStop');
+        stopBtn.appendChild(stopText);
+        stopBtn.addEventListener('click', function () { stop(); });
+        activity.appendChild(pulse);
+        activity.appendChild(activityText);
+        activity.appendChild(stopBtn);
+
         var form = el('form', 'ss-agent-form', { id: 'ss-agent-form' });
+        var composer = el('div', 'ss-agent-composer');
+        var hintId = 'ss-agent-composer-hint';
         var input = el('textarea', 'ss-agent-input', {
             id: 'ss-agent-input',
-            rows: '2',
+            rows: '1',
             'data-i18n': 'agentPlaceholder',
             'aria-label': tx('review.agentPlaceholder'),
             'data-i18n-attr': 'aria-label:agentPlaceholder',
+            'aria-describedby': hintId,
+            enterkeyhint: 'send',
         });
         input.placeholder = tx('review.agentPlaceholder');
-        var sendBtn = el('button', 'ss-agent-send', { type: 'submit', 'data-i18n': 'agentSend' });
+        var actions = el('div', 'ss-agent-actions');
+        var micBtn = iconButton('ss-agent-mic', 'ss-agent-icon-btn ss-agent-mic', 'mic', tx('review.agentMicLabel'));
+        micBtn.setAttribute('aria-pressed', 'false');
+        micBtn.addEventListener('click', function () { toggleMic(); });
+        var micCancel = iconButton(
+            'ss-agent-mic-cancel',
+            'ss-agent-icon-btn ss-agent-mic-cancel',
+            'close',
+            tx('review.agentMicCancelLabel')
+        );
+        micCancel.hidden = true;
+        micCancel.addEventListener('click', function () { cancelMic(); });
+        var sendBtn = el('button', 'ss-agent-send', {
+            id: 'ss-agent-send',
+            type: 'submit',
+            'data-i18n': 'agentSend',
+            'aria-label': tx('review.agentSendLabel'),
+        });
         sendBtn.textContent = t('review.agentSend');
-        form.appendChild(input);
-        form.appendChild(sendBtn);
+        actions.appendChild(micCancel);
+        actions.appendChild(micBtn);
+        actions.appendChild(sendBtn);
+        composer.appendChild(input);
+        composer.appendChild(actions);
+
+        var foot = el('div', 'ss-agent-composer-foot');
+        var micStatus = el('p', 'ss-agent-mic-status', {
+            id: 'ss-agent-mic-status',
+            role: 'status',
+            'aria-live': 'polite',
+            hidden: 'hidden',
+        });
+        var hint = el('span', 'ss-agent-hint', { id: hintId, 'data-i18n': 'agentComposerHint' });
+        hint.textContent = t('review.agentComposerHint');
+        foot.appendChild(micStatus);
+        foot.appendChild(hint);
+        form.appendChild(composer);
+        form.appendChild(foot);
         bindComposer(form, input);
+
+        var resizeHandle = el('div', 'ss-agent-resize', {
+            id: 'ss-agent-resize',
+            role: 'separator',
+            tabindex: '0',
+            'aria-orientation': 'vertical',
+            'aria-label': tx('review.agentResize'),
+            'aria-describedby': 'ss-agent-resize-hint',
+        });
+        resizeHandle.title = tx('review.agentResizeHint');
+        var grip = icon('resize');
+        if (grip) resizeHandle.appendChild(grip);
+        var resizeHint = el('span', 'ss-agent-visually-hidden', { id: 'ss-agent-resize-hint' });
+        resizeHint.textContent = t('review.agentResizeHint');
+        resizeHandle.addEventListener('pointerdown', startResize);
+        resizeHandle.addEventListener('keydown', onResizeKey);
+        resizeHandle.addEventListener('dblclick', function () {
+            setPanelSize(PANEL_WIDTH, PANEL_HEIGHT);
+        });
 
         panel.appendChild(header);
         panel.appendChild(offline);
         panel.appendChild(log);
+        panel.appendChild(activity);
         panel.appendChild(form);
+        panel.appendChild(resizeHandle);
+        panel.appendChild(resizeHint);
         rootEl.appendChild(fab);
         rootEl.appendChild(panel);
         (doc.body || doc.documentElement).appendChild(rootEl);
+
+        var draft = loadDraft();
+        if (draft) input.value = draft;
 
         doc.addEventListener('mousemove', moveDrag);
         doc.addEventListener('mouseup', endDrag);
         doc.addEventListener('touchmove', moveDrag);
         doc.addEventListener('touchend', endDrag);
+        doc.addEventListener('pointermove', moveResize);
+        doc.addEventListener('pointerup', endResize);
+        doc.addEventListener('pointercancel', endResize);
         bindLayoutListeners();
+        var support = micSupport();
+        if (!support.ok) setMicState('unavailable', '');
+        syncComposer();
     }
 
     function observePlayer(node) {
@@ -1327,6 +2131,25 @@
         insertReference: insertReference,
         restoreThread: restoreThread,
         whenThreadReady: function () { return state.threadReady || Promise.resolve(false); },
+        stop: stop,
+        setPanelSize: setPanelSize,
+        panelSize: panelSize,
+        sizeBounds: sizeBounds,
+        cycleSizePreset: cycleSizePreset,
+        onResizeKey: onResizeKey,
+        startResize: startResize,
+        moveResize: moveResize,
+        endResize: endResize,
+        startMic: startMic,
+        finishMic: finishMic,
+        cancelMic: cancelMic,
+        toggleMic: toggleMic,
+        micSupport: micSupport,
+        insertDictation: insertDictation,
+        syncComposer: syncComposer,
+        IDLE_TIMEOUT_MS: IDLE_TIMEOUT_MS,
+        MIN_WIDTH: MIN_WIDTH,
+        MIN_HEIGHT: MIN_HEIGHT,
     };
     root.screenscribeAgentPanel = api;
 
