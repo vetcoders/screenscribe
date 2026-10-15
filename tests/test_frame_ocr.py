@@ -6,6 +6,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -300,7 +301,12 @@ def test_transcribe_video_ocr_cleans_owned_work_dir(
     seen: dict[str, Path] = {}
 
     def fake_extract(
-        video_path: Path, interval: float, output_dir: Path, *, duration: float | None = None
+        video_path: Path,
+        interval: float,
+        output_dir: Path,
+        *,
+        duration: float | None = None,
+        on_frame: Any = None,
     ) -> list[tuple[float, Path]]:
         seen["work_dir"] = output_dir
         assert output_dir.exists()
@@ -328,3 +334,55 @@ def test_transcribe_video_ocr_cleans_owned_work_dir(
         assert result.text == "text"
 
     assert not seen["work_dir"].exists()
+
+
+def test_transcribe_video_ocr_survives_one_failed_frame_and_keeps_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A transient failure on one frame is a gap, not a lost 20-minute OCR run.
+
+    Falsification: let the per-frame exception propagate again and this test
+    fails with the RuntimeError instead of returning the other segments.
+    """
+    monkeypatch.setattr(frame_ocr, "get_video_duration", lambda _p: 15.0)
+    monkeypatch.setattr(
+        frame_ocr,
+        "extract_screenshot",
+        lambda _video, timestamp, out: out.write_bytes(f"jpeg-{timestamp}".encode()),
+    )
+    monkeypatch.setattr(frame_ocr, "_frame_probe_hash", lambda p: p.name)
+
+    def fake_ocr(frame_path: Path, config: ScreenScribeConfig, *, cache_dir: Path | None = None):
+        timestamp = float(frame_path.stem.split("_")[-1].removesuffix("s"))
+        if timestamp == 5.0:
+            raise RuntimeError("upstream 502")
+        return f"text at {timestamp:g}", f"resp-{timestamp:g}"
+
+    monkeypatch.setattr(frame_ocr, "ocr_frame", fake_ocr)
+    result = frame_ocr.transcribe_video_ocr(
+        tmp_path / "clip.mov", ScreenScribeConfig(), work_dir=tmp_path / "frames"
+    )
+    assert [segment.start for segment in result.segments] == [0.0, 10.0]
+    assert [segment.text for segment in result.segments] == ["text at 0", "text at 10"]
+    assert [segment.id for segment in result.segments] == [0, 1]
+
+
+def test_transcribe_video_ocr_raises_when_every_frame_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(frame_ocr, "get_video_duration", lambda _p: 10.0)
+    monkeypatch.setattr(
+        frame_ocr,
+        "extract_screenshot",
+        lambda _video, timestamp, out: out.write_bytes(f"jpeg-{timestamp}".encode()),
+    )
+    monkeypatch.setattr(frame_ocr, "_frame_probe_hash", lambda p: p.name)
+
+    def always_fail(*_args: Any, **_kwargs: Any) -> tuple[str, str]:
+        raise RuntimeError("upstream down")
+
+    monkeypatch.setattr(frame_ocr, "ocr_frame", always_fail)
+    with pytest.raises(RuntimeError, match="failed for all 2 frame"):
+        frame_ocr.transcribe_video_ocr(
+            tmp_path / "clip.mov", ScreenScribeConfig(), work_dir=tmp_path / "frames"
+        )
