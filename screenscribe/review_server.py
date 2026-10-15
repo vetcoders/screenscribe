@@ -50,6 +50,7 @@ from .server_common import (
     validate_browser_stt_result,
     validate_browser_stt_upload,
 )
+from .shell.renderer import refresh_live_assets
 from .work_item import WorkItem, from_manual_frame, normalize_verdict
 
 if TYPE_CHECKING:
@@ -899,7 +900,7 @@ def create_review_app(
         report_path = session.output_dir / report_filename
         if not report_path.exists():
             raise HTTPException(status_code=404, detail="Report not found.")
-        html_text = report_path.read_text(encoding="utf-8")
+        html_text = refresh_live_assets(report_path.read_text(encoding="utf-8"))
         signed_src = f"/video?st={video_access_token(app.state.session_token)}"
 
         def _sign(match: re.Match[str]) -> str:
