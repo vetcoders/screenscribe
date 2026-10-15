@@ -173,7 +173,8 @@ def test_serve_rejects_missing_or_invalid_dir_without_traceback(
     assert isinstance(result.exception, SystemExit)
     assert result.exception.code == 1
     assert "Traceback" not in result.output
-    assert needle in result.output
+    # Rich wraps at 80 columns, so the break point moves with the tmp path length.
+    assert needle in " ".join(result.output.split())
 
 
 def test_auto_review_does_not_treat_serve_as_a_video(monkeypatch: pytest.MonkeyPatch) -> None:
