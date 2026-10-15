@@ -29,6 +29,13 @@
     var GAP = 16;
     var VIEW_MARGIN = 8;
     var SHEET_CLASS = 'ss-agent-sheet';
+    // Screenshots attached to one message (paste, drop or the image button).
+    // Large captures are downscaled so a Retina screenshot stays readable but
+    // the request stays a few hundred KB.
+    var MAX_ATTACHMENTS = 4;
+    var ATTACH_MAX_SIDE = 2048;
+    var ATTACH_KEEP_BYTES = 1500000;
+    var ATTACH_JPEG_QUALITY = 0.9;
 
     var state = {
         collapsed: true,
@@ -55,6 +62,9 @@
         timedOut: false,
         retryRows: [],
         mic: { status: 'idle', transport: null, timer: null, startedAt: 0, message: '' },
+        attachments: [],
+        retryImages: [],
+        autosend: false,
     };
 
     function tx(key, args) {
@@ -744,11 +754,256 @@
         setCollapsed(!state.collapsed);
     }
 
-    function appendMessage(role, text) {
+    // ---- Markdown ----------------------------------------------------------
+    // Agent answers are Markdown. They are parsed into a small block/inline tree
+    // and built with createElement + textContent only: model text never reaches
+    // innerHTML, so a reply cannot inject markup into the report page.
+
+    function mdIsBlockStart(line) {
+        return /^\s*```/.test(line) || /^#{1,6}\s+/.test(line) || /^\s*>/.test(line)
+            || /^\s*[-*+]\s+/.test(line) || /^\s*\d+[.)]\s+/.test(line)
+            || /^\s*([-*_])(\s*\1){2,}\s*$/.test(line);
+    }
+
+    function mdTableCells(line) {
+        var trimmed = String(line).trim().replace(/^\|/, '').replace(/\|$/, '');
+        return trimmed.split('|').map(function (cell) { return cell.trim(); });
+    }
+
+    function mdBlocks(text) {
+        var lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+        var blocks = [];
+        var i = 0;
+        while (i < lines.length) {
+            var line = lines[i];
+            var fence = line.match(/^\s*```\s*([\w+#.-]*)\s*$/);
+            if (fence) {
+                var code = [];
+                i += 1;
+                while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
+                    code.push(lines[i]);
+                    i += 1;
+                }
+                i += 1;
+                blocks.push({ type: 'code', lang: fence[1] || '', text: code.join('\n') });
+                continue;
+            }
+            if (/^\s*$/.test(line)) { i += 1; continue; }
+            var heading = line.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/);
+            if (heading) {
+                blocks.push({ type: 'heading', level: heading[1].length, text: heading[2] });
+                i += 1;
+                continue;
+            }
+            if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+                blocks.push({ type: 'hr' });
+                i += 1;
+                continue;
+            }
+            if (line.indexOf('|') >= 0 && i + 1 < lines.length
+                && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
+                var header = mdTableCells(line);
+                var rows = [];
+                i += 2;
+                while (i < lines.length && lines[i].indexOf('|') >= 0 && !/^\s*$/.test(lines[i])) {
+                    rows.push(mdTableCells(lines[i]));
+                    i += 1;
+                }
+                blocks.push({ type: 'table', header: header, rows: rows });
+                continue;
+            }
+            if (/^\s*>/.test(line)) {
+                var quote = [];
+                while (i < lines.length && /^\s*>/.test(lines[i])) {
+                    quote.push(lines[i].replace(/^\s*>\s?/, ''));
+                    i += 1;
+                }
+                blocks.push({ type: 'quote', text: quote.join('\n') });
+                continue;
+            }
+            var bullet = /^\s*[-*+]\s+(.*)$/;
+            var ordered = /^\s*(\d+)[.)]\s+(.*)$/;
+            if (bullet.test(line) || ordered.test(line)) {
+                var isOrdered = !bullet.test(line);
+                var pattern = isOrdered ? ordered : bullet;
+                var first = line.match(pattern);
+                var list = { type: isOrdered ? 'ol' : 'ul', start: isOrdered ? Number(first[1]) : 1, items: [] };
+                while (i < lines.length) {
+                    var item = lines[i].match(pattern);
+                    if (item) {
+                        list.items.push(isOrdered ? item[2] : item[1]);
+                        i += 1;
+                    } else if (list.items.length && /^\s{2,}\S/.test(lines[i])) {
+                        list.items[list.items.length - 1] += '\n' + lines[i].trim();
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                blocks.push(list);
+                continue;
+            }
+            var para = [line];
+            i += 1;
+            while (i < lines.length && !/^\s*$/.test(lines[i]) && !mdIsBlockStart(lines[i])) {
+                para.push(lines[i]);
+                i += 1;
+            }
+            blocks.push({ type: 'p', text: para.join('\n') });
+        }
+        return blocks;
+    }
+
+    var MD_INLINE = /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\*\*(?=\S)([\s\S]*?\S)\*\*|\*(?=[^\s*])([^*\n]*?[^\s*])\*|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"])|(\n)/g;
+
+    function mdInline(text) {
+        var src = String(text || '');
+        var out = [];
+        var last = 0;
+        var re = new RegExp(MD_INLINE.source, 'g');
+        var match;
+        while ((match = re.exec(src)) !== null) {
+            if (match.index > last) out.push({ t: 'text', v: src.slice(last, match.index) });
+            if (match[1]) out.push({ t: 'code', v: match[2] });
+            else if (match[3] != null) out.push({ t: 'strong', c: mdInline(match[3]) });
+            else if (match[4] != null) out.push({ t: 'em', c: mdInline(match[4]) });
+            else if (match[5] != null) out.push({ t: 'link', href: match[6], c: mdInline(match[5]) });
+            else if (match[7] != null) out.push({ t: 'link', href: match[7], c: [{ t: 'text', v: match[7] }] });
+            else if (match[8] != null) out.push({ t: 'br' });
+            last = re.lastIndex;
+            if (match[0] === '') re.lastIndex += 1;
+        }
+        if (last < src.length) out.push({ t: 'text', v: src.slice(last) });
+        return out;
+    }
+
+    function mdInlineNodes(doc, parent, tokens) {
+        tokens.forEach(function (token) {
+            var node;
+            if (token.t === 'text') {
+                parent.appendChild(doc.createTextNode(token.v));
+                return;
+            }
+            if (token.t === 'br') {
+                parent.appendChild(doc.createElement('br'));
+                return;
+            }
+            if (token.t === 'code') {
+                node = doc.createElement('code');
+                node.textContent = token.v;
+            } else if (token.t === 'link') {
+                node = doc.createElement('a');
+                node.setAttribute('href', token.href);
+                node.setAttribute('target', '_blank');
+                node.setAttribute('rel', 'noopener noreferrer');
+                mdInlineNodes(doc, node, token.c);
+            } else {
+                node = doc.createElement(token.t === 'strong' ? 'strong' : 'em');
+                mdInlineNodes(doc, node, token.c);
+            }
+            parent.appendChild(node);
+        });
+    }
+
+    function mdNodes(doc, text) {
+        return mdBlocks(text).map(function (block) {
+            var node;
+            if (block.type === 'code') {
+                node = doc.createElement('pre');
+                var code = doc.createElement('code');
+                if (block.lang) code.setAttribute('data-lang', block.lang);
+                code.textContent = block.text;
+                node.appendChild(code);
+            } else if (block.type === 'heading') {
+                node = doc.createElement('h' + Math.min(6, block.level + 2));
+                mdInlineNodes(doc, node, mdInline(block.text));
+            } else if (block.type === 'hr') {
+                node = doc.createElement('hr');
+            } else if (block.type === 'quote') {
+                node = doc.createElement('blockquote');
+                mdNodes(doc, block.text).forEach(function (child) { node.appendChild(child); });
+            } else if (block.type === 'ul' || block.type === 'ol') {
+                node = doc.createElement(block.type);
+                if (block.type === 'ol' && block.start !== 1) node.setAttribute('start', String(block.start));
+                block.items.forEach(function (item) {
+                    var li = doc.createElement('li');
+                    mdInlineNodes(doc, li, mdInline(item));
+                    node.appendChild(li);
+                });
+            } else if (block.type === 'table') {
+                node = doc.createElement('div');
+                node.className = 'ss-agent-table-wrap';
+                var table = doc.createElement('table');
+                var thead = doc.createElement('thead');
+                var headRow = doc.createElement('tr');
+                block.header.forEach(function (cell) {
+                    var th = doc.createElement('th');
+                    mdInlineNodes(doc, th, mdInline(cell));
+                    headRow.appendChild(th);
+                });
+                thead.appendChild(headRow);
+                table.appendChild(thead);
+                var tbody = doc.createElement('tbody');
+                block.rows.forEach(function (cells) {
+                    var tr = doc.createElement('tr');
+                    cells.forEach(function (cell) {
+                        var td = doc.createElement('td');
+                        mdInlineNodes(doc, td, mdInline(cell));
+                        tr.appendChild(td);
+                    });
+                    tbody.appendChild(tr);
+                });
+                table.appendChild(tbody);
+                node.appendChild(table);
+            } else {
+                node = doc.createElement('p');
+                mdInlineNodes(doc, node, mdInline(block.text));
+            }
+            return node;
+        });
+    }
+
+    // Real DOM: rebuild the row from Markdown. Minimal DOMs without
+    // replaceChildren (the node-vm harness) keep the plain text.
+    function renderRich(row, text) {
+        if (!row) return;
+        var doc = root.document;
+        var value = String(text || '');
+        if (typeof row.replaceChildren !== 'function' || !doc || typeof doc.createTextNode !== 'function') {
+            row.textContent = value;
+            return;
+        }
+        row.replaceChildren.apply(row, mdNodes(doc, value));
+        if (row.classList) row.classList.add('ss-agent-md');
+    }
+
+    function roleLabel(role) {
+        if (role === 'user') return t('review.agentRoleUser');
+        if (role === 'assistant') return t('review.agentRoleAgent');
+        return '';
+    }
+
+    function appendImageStrip(row, images) {
+        if (!row || !images || !images.length) return;
+        var strip = el('div', 'ss-agent-msg-images');
+        images.forEach(function (image) {
+            var src = image.url || ('data:' + image.media_type + ';base64,' + image.data);
+            var img = el('img', 'ss-agent-msg-image', { alt: image.name || t('review.agentAttachmentAlt') });
+            img.src = src;
+            strip.appendChild(img);
+        });
+        row.appendChild(strip);
+    }
+
+    function appendMessage(role, text, images) {
         var log = root.document.getElementById('ss-agent-log');
         if (!log) return null;
         var row = el('div', 'ss-agent-msg ss-agent-msg-' + role);
-        row.textContent = text;
+        var label = roleLabel(role);
+        if (label && typeof row.setAttribute === 'function') row.setAttribute('data-role-label', label);
+        if (role === 'assistant') renderRich(row, text);
+        else row.textContent = text;
+        appendImageStrip(row, images);
         log.appendChild(row);
         if (typeof log.scrollTop === 'number') {
             log.scrollTop = log.scrollHeight || 0;
@@ -870,7 +1125,7 @@
         var activity = doc.getElementById('ss-agent-activity');
         var panel = doc.getElementById('ss-agent-panel');
         if (input) input.disabled = false;
-        var hasText = Boolean(input && String(input.value || '').trim());
+        var hasText = Boolean(input && String(input.value || '').trim()) || state.attachments.length > 0;
         if (sendBtn) {
             sendBtn.disabled = !hasText || state.streaming;
             if (typeof sendBtn.setAttribute === 'function') {
@@ -1126,7 +1381,7 @@
             return;
         }
         if (row) {
-            row.textContent = assembled;
+            renderRich(row, assembled);
             markPartial(row);
         }
         var errorRow = appendMessage('error', messageText);
@@ -1146,7 +1401,7 @@
                 row.parentNode.removeChild(row);
             }
         });
-        return send(message, { retry: true });
+        return send(message, { retry: true, images: state.retryImages });
     }
 
     function clearIdleTimer() {
@@ -1192,7 +1447,7 @@
             return;
         }
         if (row) {
-            row.textContent = assembled;
+            renderRich(row, assembled);
             markPartial(row);
         }
         state.history.push({
@@ -1229,7 +1484,7 @@
     }
 
     function canSend(text) {
-        return Boolean(String(text || '').trim()) && !state.streaming;
+        return (Boolean(String(text || '').trim()) || state.attachments.length > 0) && !state.streaming;
     }
 
     function makeAbortController() {
@@ -1249,12 +1504,20 @@
             } catch (_err) { /* restore is best-effort; never block the turn */ }
         }
         var retrying = Boolean(options && options.retry);
+        var images = options && Array.isArray(options.images) ? options.images : [];
         var message = String(text || '').trim();
+        if (!message && images.length) message = t('review.agentImageOnly');
         if (!message || state.streaming) return false;
         if (!retrying) {
             disarmRetry();
-            appendMessage('user', message);
-            state.history.push({ role: 'user', content: message });
+            state.retryImages = images;
+            appendMessage('user', message, images);
+            state.history.push({
+                role: 'user',
+                content: images.length
+                    ? message + '\n' + tx('review.agentAttachedHistory', { count: images.length })
+                    : message,
+            });
         }
         if (isOffline()) {
             showOfflineNotice();
@@ -1293,6 +1556,9 @@
                 },
                 body: JSON.stringify({
                     message: message,
+                    images: images.map(function (image) {
+                        return { media_type: image.media_type, data: image.data };
+                    }),
                     history: state.history.slice(0, -1),
                     previous_response_id: requestCursor,
                     previous_response_provider: requestIdentity && requestIdentity.provider,
@@ -1318,7 +1584,7 @@
                 if (!evt) return;
                 if (evt.event === 'token') {
                     assembled += (evt.data && evt.data.text) || '';
-                    if (assistantRow && !errored) assistantRow.textContent = assembled;
+                    if (assistantRow && !errored) renderRich(assistantRow, assembled);
                     var log = root.document.getElementById('ss-agent-log');
                     if (log && typeof log.scrollTop === 'number') log.scrollTop = log.scrollHeight || 0;
                 } else if (evt.event === 'tool_call') {
@@ -1462,11 +1728,18 @@
             if (event && event.preventDefault) event.preventDefault();
             var value = input.value;
             if (!canSend(value)) return;
+            var images = takeAttachments();
             input.value = '';
             onDraftChanged(input);
-            send(value);
+            send(value, { images: images });
         });
         input.addEventListener('input', function () { onDraftChanged(input); });
+        input.addEventListener('paste', function (event) {
+            var files = clipboardImages(event);
+            if (!files.length) return;
+            if (event.preventDefault) event.preventDefault();
+            addImageFiles(files);
+        });
         input.addEventListener('keydown', function (event) {
             if (event && event.key === 'Escape') {
                 if (state.mic.status === 'recording' || state.mic.status === 'requesting') {
@@ -1484,6 +1757,177 @@
             if (event.preventDefault) event.preventDefault();
             submitComposer(form);
         });
+    }
+
+    // ---- Screenshot attachments --------------------------------------------
+
+    function clipboardImages(event) {
+        var data = event && (event.clipboardData || event.dataTransfer);
+        var files = [];
+        if (!data) return files;
+        var items = data.items || [];
+        for (var i = 0; i < items.length; i += 1) {
+            var item = items[i];
+            if (item && item.kind === 'file' && /^image\//.test(String(item.type || ''))) {
+                var file = typeof item.getAsFile === 'function' ? item.getAsFile() : null;
+                if (file) files.push(file);
+            }
+        }
+        if (!files.length && data.files) {
+            for (var j = 0; j < data.files.length; j += 1) {
+                if (/^image\//.test(String(data.files[j].type || ''))) files.push(data.files[j]);
+            }
+        }
+        return files;
+    }
+
+    function readAsDataUrl(blob) {
+        return new Promise(function (resolve, reject) {
+            var reader = new root.FileReader();
+            reader.onload = function () { resolve(String(reader.result || '')); };
+            reader.onerror = function () { reject(reader.error || new Error('read failed')); };
+            reader.readAsDataURL(blob);
+        });
+    }
+
+    function loadImage(url) {
+        return new Promise(function (resolve, reject) {
+            var img = new root.Image();
+            img.onload = function () { resolve(img); };
+            img.onerror = function () { reject(new Error('not an image')); };
+            img.src = url;
+        });
+    }
+
+    function splitDataUrl(url) {
+        var match = String(url).match(/^data:([^;,]+);base64,(.*)$/);
+        return match ? { media_type: match[1], data: match[2] } : null;
+    }
+
+    // Keep small PNG/JPEG screenshots byte-exact (sharp text); re-encode large
+    // or exotic ones as JPEG with the long side capped.
+    async function prepareImage(file) {
+        var original = await readAsDataUrl(file);
+        var img = await loadImage(original);
+        var width = img.naturalWidth || img.width;
+        var height = img.naturalHeight || img.height;
+        var keep = (file.type === 'image/png' || file.type === 'image/jpeg')
+            && file.size <= ATTACH_KEEP_BYTES
+            && Math.max(width, height) <= ATTACH_MAX_SIDE;
+        if (keep) {
+            var parts = splitDataUrl(original);
+            if (parts) return { media_type: parts.media_type, data: parts.data, url: original, name: file.name || '' };
+        }
+        var scale = Math.min(1, ATTACH_MAX_SIDE / Math.max(width, height || 1));
+        var canvas = root.document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(width * scale));
+        canvas.height = Math.max(1, Math.round(height * scale));
+        var ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        var jpeg = canvas.toDataURL('image/jpeg', ATTACH_JPEG_QUALITY);
+        var encoded = splitDataUrl(jpeg);
+        if (!encoded) throw new Error('encode failed');
+        return { media_type: encoded.media_type, data: encoded.data, url: jpeg, name: file.name || '' };
+    }
+
+    function setAttachStatus(message) {
+        var status = root.document.getElementById('ss-agent-mic-status');
+        if (!status) return;
+        status.textContent = message || '';
+        status.hidden = !message;
+    }
+
+    async function addImageFiles(files) {
+        var list = Array.prototype.slice.call(files || []);
+        var room = MAX_ATTACHMENTS - state.attachments.length;
+        if (room <= 0) {
+            setAttachStatus(tx('review.agentAttachLimit', { count: MAX_ATTACHMENTS }));
+            return 0;
+        }
+        if (list.length > room) {
+            setAttachStatus(tx('review.agentAttachLimit', { count: MAX_ATTACHMENTS }));
+            list = list.slice(0, room);
+        }
+        var added = 0;
+        for (var i = 0; i < list.length; i += 1) {
+            try {
+                state.attachments.push(await prepareImage(list[i]));
+                added += 1;
+            } catch (_err) {
+                setAttachStatus(tx('review.agentAttachFailed'));
+            }
+        }
+        renderAttachments();
+        syncComposer();
+        return added;
+    }
+
+    function removeAttachment(index) {
+        state.attachments.splice(index, 1);
+        renderAttachments();
+        syncComposer();
+    }
+
+    function takeAttachments() {
+        var taken = state.attachments;
+        state.attachments = [];
+        renderAttachments();
+        return taken;
+    }
+
+    function renderAttachments() {
+        var strip = root.document.getElementById('ss-agent-attachments');
+        if (!strip) return;
+        if (typeof strip.replaceChildren === 'function') strip.replaceChildren();
+        else if (strip.children) strip.children.length = 0;
+        strip.hidden = state.attachments.length === 0;
+        state.attachments.forEach(function (image, index) {
+            var chip = el('div', 'ss-agent-attachment');
+            var img = el('img', 'ss-agent-attachment-img', { alt: image.name || t('review.agentAttachmentAlt') });
+            img.src = image.url;
+            var remove = iconButton(
+                'ss-agent-attachment-remove-' + index,
+                'ss-agent-icon-btn ss-agent-attachment-remove',
+                'close',
+                tx('review.agentAttachRemove')
+            );
+            remove.addEventListener('click', function () { removeAttachment(index); });
+            chip.appendChild(img);
+            chip.appendChild(remove);
+            strip.appendChild(chip);
+        });
+    }
+
+    function autosendKey() {
+        return storageKey() + ':autosend';
+    }
+
+    function loadAutosend() {
+        try {
+            return root.localStorage.getItem(autosendKey()) === '1';
+        } catch (_err) {
+            return false;
+        }
+    }
+
+    function setAutosend(enabled) {
+        state.autosend = Boolean(enabled);
+        try {
+            if (state.autosend) root.localStorage.setItem(autosendKey(), '1');
+            else root.localStorage.removeItem(autosendKey());
+        } catch (_err) { /* private mode: the toggle lasts for this page */ }
+        var box = root.document.getElementById('ss-agent-autosend');
+        if (box) box.checked = state.autosend;
+    }
+
+    function autosendDictation() {
+        if (!state.autosend || state.streaming) return false;
+        var form = root.document.getElementById('ss-agent-form');
+        if (!form) return false;
+        submitComposer(form);
+        return true;
     }
 
     // ---- Panel size -------------------------------------------------------
@@ -1775,8 +2219,12 @@
                 if (busy) setMicState('transcribing', tx('review.agentMicTranscribing'));
             },
             onTranscript: function (text) {
-                if (insertDictation(text)) setMicState('idle', tx('review.agentMicInserted'));
-                else setMicState('idle', tx('review.agentMicNoSpeech'));
+                if (insertDictation(text)) {
+                    setMicState('idle', tx(state.autosend ? 'review.agentMicSent' : 'review.agentMicInserted'));
+                    autosendDictation();
+                } else {
+                    setMicState('idle', tx('review.agentMicNoSpeech'));
+                }
             },
             onError: function (error) {
                 var detail = error && error.message ? String(error.message) : '';
@@ -1859,6 +2307,7 @@
             close: 'M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6z',
             resize: 'M4 20h2v-2H4zm0-4h2v-2H4zm4 4h2v-2H8zm-4-8h2v-2H4zm4 4h2v-2H8zm4 4h2v-2h-2z',
             size: 'M4 4h7v2H7.4l4.3 4.3-1.4 1.4L6 7.4V11H4zm16 16h-7v-2h3.6l-4.3-4.3 1.4-1.4 4.3 4.3V13h2z',
+            image: 'M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v9.6l3.5-3.5 2.5 2.5 4.5-4.5L19 13.6V6H5zm3.5 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z',
         };
         if (!doc || typeof doc.createElementNS !== 'function' || !paths[name]) {
             return null;
@@ -1887,6 +2336,7 @@
     function buildDom() {
         var doc = root.document;
         if (getRoot()) return;
+        state.autosend = loadAutosend();
         var rootEl = el('div', 'ss-agent-root ss-agent-collapsed', { id: 'ss-agent-root' });
         var fab = el('button', 'ss-agent-fab', {
             id: 'ss-agent-fab',
@@ -1916,6 +2366,22 @@
         sizeBtn.addEventListener('click', function () { cycleSizePreset(); });
         header.appendChild(sizeBtn);
         header.addEventListener('mousedown', startDrag);
+        panel.addEventListener('dragover', function (event) {
+            if (!clipboardImages(event).length && !(event && event.dataTransfer
+                && Array.prototype.indexOf.call(event.dataTransfer.types || [], 'Files') >= 0)) return;
+            if (event.preventDefault) event.preventDefault();
+            if (panel.classList) panel.classList.add('ss-agent-dropping');
+        });
+        panel.addEventListener('dragleave', function () {
+            if (panel.classList) panel.classList.remove('ss-agent-dropping');
+        });
+        panel.addEventListener('drop', function (event) {
+            if (panel.classList) panel.classList.remove('ss-agent-dropping');
+            var files = clipboardImages(event);
+            if (!files.length) return;
+            if (event.preventDefault) event.preventDefault();
+            addImageFiles(files);
+        });
         header.addEventListener('touchstart', startDrag);
 
         var log = el('div', 'ss-agent-log', {
@@ -1987,6 +2453,27 @@
         );
         micCancel.hidden = true;
         micCancel.addEventListener('click', function () { cancelMic(); });
+        var attachBtn = iconButton(
+            'ss-agent-attach',
+            'ss-agent-icon-btn ss-agent-attach',
+            'image',
+            tx('review.agentAttachLabel')
+        );
+        var fileInput = el('input', 'ss-agent-visually-hidden', {
+            id: 'ss-agent-file',
+            type: 'file',
+            accept: 'image/png,image/jpeg,image/webp,image/gif',
+            multiple: 'multiple',
+            tabindex: '-1',
+            'aria-hidden': 'true',
+        });
+        attachBtn.addEventListener('click', function () {
+            if (typeof fileInput.click === 'function') fileInput.click();
+        });
+        fileInput.addEventListener('change', function () {
+            var files = fileInput.files;
+            addImageFiles(files).then(function () { fileInput.value = ''; });
+        });
         var sendBtn = el('button', 'ss-agent-send', {
             id: 'ss-agent-send',
             type: 'submit',
@@ -1995,10 +2482,16 @@
         });
         sendBtn.textContent = t('review.agentSend');
         actions.appendChild(micCancel);
+        actions.appendChild(attachBtn);
         actions.appendChild(micBtn);
         actions.appendChild(sendBtn);
         composer.appendChild(input);
         composer.appendChild(actions);
+        var attachments = el('div', 'ss-agent-attachments', {
+            id: 'ss-agent-attachments',
+            hidden: 'hidden',
+            'aria-label': tx('review.agentAttachmentsLabel'),
+        });
 
         var foot = el('div', 'ss-agent-composer-foot');
         var micStatus = el('p', 'ss-agent-mic-status', {
@@ -2009,10 +2502,21 @@
         });
         var hint = el('span', 'ss-agent-hint', { id: hintId, 'data-i18n': 'agentComposerHint' });
         hint.textContent = t('review.agentComposerHint');
+        var autosendLabel = el('label', 'ss-agent-autosend');
+        var autosendBox = el('input', '', { id: 'ss-agent-autosend', type: 'checkbox' });
+        autosendBox.checked = state.autosend;
+        autosendBox.addEventListener('change', function () { setAutosend(autosendBox.checked); });
+        var autosendText = el('span', '', { 'data-i18n': 'agentAutosend' });
+        autosendText.textContent = t('review.agentAutosend');
+        autosendLabel.appendChild(autosendBox);
+        autosendLabel.appendChild(autosendText);
         foot.appendChild(micStatus);
+        foot.appendChild(autosendLabel);
         foot.appendChild(hint);
+        form.appendChild(attachments);
         form.appendChild(composer);
         form.appendChild(foot);
+        form.appendChild(fileInput);
         bindComposer(form, input);
 
         var resizeHandle = el('div', 'ss-agent-resize', {
@@ -2146,6 +2650,14 @@
         toggleMic: toggleMic,
         micSupport: micSupport,
         insertDictation: insertDictation,
+        mdBlocks: mdBlocks,
+        mdInline: mdInline,
+        renderRich: renderRich,
+        addImageFiles: addImageFiles,
+        takeAttachments: takeAttachments,
+        setAutosend: setAutosend,
+        autosendDictation: autosendDictation,
+        MAX_ATTACHMENTS: MAX_ATTACHMENTS,
         syncComposer: syncComposer,
         IDLE_TIMEOUT_MS: IDLE_TIMEOUT_MS,
         MIN_WIDTH: MIN_WIDTH,

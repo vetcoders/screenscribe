@@ -1401,3 +1401,120 @@ def test_reference_event_inserts_quote_and_opens_panel() -> None:
         )
     )
     assert "reference:ok" in output
+
+
+def test_markdown_parser_builds_blocks_and_inline_tokens() -> None:
+    """Agent answers are Markdown; the parser must keep structure, not raw markers.
+
+    Falsification: render the assistant row with textContent again and the
+    real-DOM e2e shows literal ``**`` and ``-`` markers; here mdBlocks would be
+    missing from the API.
+    """
+    output = _run_agent_panel(
+        textwrap.dedent(
+            r"""
+            const api = screenscribeAgentPanel;
+            const text = '### Co widać\n\nTo **pulpit** z `Activity Monitor`.\n\n'
+                + '- pierwszy\n- drugi *ważny*\n\n1. raz\n2. dwa\n\n'
+                + '```bash\nls -la\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n'
+                + '> cytat\n\nLink [docs](https://example.com/x) i https://a.io/b.';
+            const blocks = api.mdBlocks(text);
+            const types = blocks.map((b) => b.type).join(',');
+            if (types !== 'heading,p,ul,ol,code,table,quote,p') throw new Error('types ' + types);
+            if (blocks[2].items.join('|') !== 'pierwszy|drugi *ważny*') throw new Error('ul');
+            if (blocks[4].lang !== 'bash' || blocks[4].text !== 'ls -la') throw new Error('code');
+            if (blocks[5].rows[0].join('|') !== '1|2') throw new Error('table');
+            const inline = api.mdInline('To **pulpit** z `x` i *y*');
+            const kinds = inline.map((t) => t.t).join(',');
+            if (kinds !== 'text,strong,text,code,text,em') throw new Error('inline ' + kinds);
+            const links = api.mdInline('[docs](https://example.com/x) https://a.io/b.');
+            if (links[0].t !== 'link' || links[0].href !== 'https://example.com/x') throw new Error('link');
+            if (links[2].t !== 'link' || links[2].href !== 'https://a.io/b') throw new Error('autolink');
+            const unsafe = api.mdInline('[x](javascript:alert(1))');
+            if (unsafe.some((t) => t.t === 'link')) throw new Error('javascript: must not link');
+            process.stdout.write('md:ok');
+            """
+        )
+    )
+    assert "md:ok" in output
+
+
+def test_attached_screenshots_ride_on_the_request_and_role_labels_are_set() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const fetches = [];
+            fetch = async (url, opts) => {
+                fetches.push(JSON.parse(opts.body));
+                return {
+                    ok: true,
+                    text: async () => 'event: token\\ndata: {"text":"Widzę."}\\n\\nevent: done\\ndata: {}\\n\\n',
+                };
+            };
+            window.fetch = fetch;
+            api.init();
+            const state = api.getState();
+            state.attachments.push({ media_type: 'image/png', data: 'iVBORw0KGgo=', url: 'data:image/png;base64,iVBORw0KGgo=' });
+            api.syncComposer();
+            const sendBtn = document.getElementById('ss-agent-send');
+            if (sendBtn.disabled) throw new Error('a screenshot alone must enable Send');
+            const input = document.getElementById('ss-agent-input');
+            input.value = '';
+            document.getElementById('ss-agent-form').submit();
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            if (fetches.length !== 1) throw new Error('expected one request');
+            const body = fetches[0];
+            if (!body.images || body.images.length !== 1) throw new Error('images missing');
+            if (body.images[0].media_type !== 'image/png' || body.images[0].data !== 'iVBORw0KGgo=') {
+                throw new Error('image shape');
+            }
+            if (!body.message) throw new Error('image-only message needs default text');
+            if (state.attachments.length !== 0) throw new Error('attachments must clear after send');
+            const user = document.querySelectorAll('.ss-agent-msg-user')[0];
+            const agent = document.querySelectorAll('.ss-agent-msg-assistant')[0];
+            if (!user.getAttribute('data-role-label')) throw new Error('user role label');
+            if (!agent.getAttribute('data-role-label')) throw new Error('agent role label');
+            if (user.getAttribute('data-role-label') === agent.getAttribute('data-role-label')) {
+                throw new Error('roles must differ');
+            }
+            process.stdout.write('attach:ok');
+            """
+        )
+    )
+    assert "attach:ok" in output
+
+
+def test_autosend_submits_dictation_only_when_enabled() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const fetches = [];
+            fetch = async (url, opts) => {
+                fetches.push(JSON.parse(opts.body));
+                return { ok: true, text: async () => 'event: done\\ndata: {}\\n\\n' };
+            };
+            window.fetch = fetch;
+            api.init();
+            const box = document.getElementById('ss-agent-autosend');
+            if (!box || box.checked) throw new Error('autosend starts off');
+            api.insertDictation('pierwsze');
+            if (api.autosendDictation()) throw new Error('off: dictation must stay a draft');
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            if (fetches.length !== 0) throw new Error('off: nothing may be sent');
+            api.setAutosend(true);
+            if (!box.checked) throw new Error('checkbox follows the setting');
+            if (![...localStorage._store.keys()].some((k) => k.endsWith(':autosend'))) {
+                throw new Error('autosend must persist');
+            }
+            if (!api.autosendDictation()) throw new Error('on: dictation must be sent');
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            if (fetches.length !== 1 || fetches[0].message !== 'pierwsze') {
+                throw new Error('on: expected the dictated draft, got ' + JSON.stringify(fetches));
+            }
+            process.stdout.write('autosend:ok');
+            """
+        )
+    )
+    assert "autosend:ok" in output
