@@ -99,18 +99,19 @@ class AgentImage(BaseModel):
             raise ValueError("image data is not valid base64") from None
         return value
 
-    def checked(self) -> dict[str, str]:
-        """Return ``{"media_type", "data"}`` once the bytes match the declared type."""
+    def problem(self) -> str | None:
+        """Why these bytes are refused (``None`` when they match the declared type)."""
         magic = _USER_IMAGE_MAGIC.get(self.media_type)
         if magic is None:
-            raise ValueError(f"unsupported image type {self.media_type!r}")
+            return "unsupported image type"
         raw = base64.b64decode(self.data, validate=True)
         if len(raw) > _MAX_USER_IMAGE_BYTES:
-            raise ValueError("image is too large")
-        if not raw.startswith(magic):
-            raise ValueError(f"image bytes are not {self.media_type}")
-        if self.media_type == "image/webp" and raw[8:12] != b"WEBP":
-            raise ValueError("image bytes are not image/webp")
+            return "image is too large"
+        if not raw.startswith(magic) or (self.media_type == "image/webp" and raw[8:12] != b"WEBP"):
+            return f"image bytes are not {self.media_type}"
+        return None
+
+    def as_dict(self) -> dict[str, str]:
         return {"media_type": self.media_type, "data": self.data}
 
 

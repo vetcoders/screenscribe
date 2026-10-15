@@ -741,8 +741,11 @@ class ReportToolbelt:
                     extract_screenshot(Path(self.video_path), ts, target)
                     raw = target.read_bytes()
                 except (OSError, RuntimeError) as exc:
+                    # ffmpeg stderr stays in the server log; the model (and the
+                    # browser, via tool_result) only learns that it failed.
+                    logger.warning("capture_video_frames failed at %ss: %s", ts, exc)
                     row["attached"] = False
-                    row["error"] = f"frame extraction failed: {str(exc)[:200]}"
+                    row["error"] = "frame extraction failed (see server log)"
                     rows.append(row)
                     continue
                 if not raw.startswith(_JPEG_MAGIC) or len(raw) > _MAX_FRAME_BYTES:

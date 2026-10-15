@@ -756,8 +756,8 @@
 
     // ---- Markdown ----------------------------------------------------------
     // Agent answers are Markdown. They are parsed into a small block/inline tree
-    // and built with createElement + textContent only: model text never reaches
-    // innerHTML, so a reply cannot inject markup into the report page.
+    // and built with createElement + text nodes only: model text never reaches
+    // innerHTML or a URL attribute, so a reply cannot inject markup or navigation.
 
     function mdIsBlockStart(line) {
         return /^\s*```/.test(line) || /^#{1,6}\s+/.test(line) || /^\s*>/.test(line)
@@ -892,11 +892,14 @@
                 node = doc.createElement('code');
                 node.textContent = token.v;
             } else if (token.t === 'link') {
-                node = doc.createElement('a');
-                node.setAttribute('href', token.href);
-                node.setAttribute('target', '_blank');
-                node.setAttribute('rel', 'noopener noreferrer');
+                // Links stay text: a model-written URL never becomes an href
+                // (no javascript:/data: navigation from an answer). The address
+                // is shown so it can be copied.
+                node = doc.createElement('span');
+                node.className = 'ss-agent-md-link';
                 mdInlineNodes(doc, node, token.c);
+                var label = token.c.map(function (part) { return part.v || ''; }).join('');
+                if (label !== token.href) node.appendChild(doc.createTextNode(' (' + token.href + ')'));
             } else {
                 node = doc.createElement(token.t === 'strong' ? 'strong' : 'em');
                 mdInlineNodes(doc, node, token.c);

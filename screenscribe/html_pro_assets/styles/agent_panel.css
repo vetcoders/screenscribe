@@ -261,9 +261,10 @@ html.ss-agent-sheet .app-container {
     color: var(--text-secondary);
 }
 
-.ss-agent-md a {
-    color: inherit;
+.ss-agent-md-link {
     text-decoration: underline;
+    text-decoration-style: dotted;
+    overflow-wrap: anywhere;
 }
 
 .ss-agent-md hr {

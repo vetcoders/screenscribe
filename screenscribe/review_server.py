@@ -1465,10 +1465,11 @@ def create_review_app(
     resolved_repo = repo_root.resolve() if repo_root is not None else None
 
     def _checked_agent_images(payload: AgentChatRequest) -> list[dict[str, str]]:
-        try:
-            return [image.checked() for image in payload.images]
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=f"Attached image rejected: {exc}") from None
+        for image in payload.images:
+            problem = image.problem()
+            if problem is not None:
+                raise HTTPException(status_code=422, detail=f"Attached image rejected: {problem}")
+        return [image.as_dict() for image in payload.images]
 
     def _agent_toolbelt(report_data: dict[str, Any]) -> ReportToolbelt:
         return ReportToolbelt(

@@ -18,8 +18,8 @@
   recording without narration can still be read frame by frame.
 
 - **Changed: the agent panel reads like a conversation.** Answers render
-  Markdown (lists, bold, code, tables, links) without ever passing model text
-  through `innerHTML`. Your messages sit on the right on the accent colour, the
+  Markdown (lists, bold, code, tables) without ever passing model text
+  through `innerHTML`; links are shown as text, never as clickable URLs. Your messages sit on the right on the accent colour, the
   agent's on the left, each with a "You" / "Agent" caption. An optional
   **Send after dictation** checkbox sends a dictated message straight away.
 

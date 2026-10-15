@@ -623,7 +623,7 @@ keep, or a recording without narration minute by minute.
   disabled for an empty draft; the draft stays editable while an answer
   streams and survives closing the panel or reloading the page.
 - **Answers and bubbles.** Answers render Markdown (lists, bold, code,
-  tables, links) built without `innerHTML`. Your messages are on the right,
+  tables) built without `innerHTML`; links stay text, never clickable URLs. Your messages are on the right,
   the agent's on the left, each captioned "You" / "Agent".
 - **Screenshots.** Paste an image into the composer, drop it on the panel, or
   use the image button: up to 4 per message, larger captures downscaled to a
