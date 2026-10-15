@@ -606,6 +606,10 @@ returns a finding's full visual analysis and every merged frame, and
 `view_frame` attaches the real screenshot pixels to the model conversation
 (Responses `input_image`, or Anthropic image blocks). Frames are read only
 from the report directory and are never streamed to the browser.
+`capture_video_frames` grabs fresh frames from the source video at any
+timestamps (4 per call, 8 frames per turn together with `view_frame`, nothing
+written to the report), so the agent can read moments the pipeline did not
+keep, or a recording without narration minute by minute.
 
 #### Chat panel
 
@@ -618,9 +622,17 @@ from the report directory and are never streamed to the browser.
   `Shift+Enter` adds a line, IME composition is respected. **Send** is
   disabled for an empty draft; the draft stays editable while an answer
   streams and survives closing the panel or reloading the page.
+- **Answers and bubbles.** Answers render Markdown (lists, bold, code,
+  tables, links) built without `innerHTML`. Your messages are on the right,
+  the agent's on the left, each captioned "You" / "Agent".
+- **Screenshots.** Paste an image into the composer, drop it on the panel, or
+  use the image button: up to 4 per message, larger captures downscaled to a
+  2048 px long side. They go to the agent with the message (`images` in the
+  chat request; PNG, JPEG, WebP or GIF, checked by magic bytes, 6 MB each).
 - **Dictation.** The microphone button records a message, **Stop** (click the
-  microphone again) transcribes it into the draft for editing — it is never
-  sent automatically; **Cancel** discards the recording. Uses
+  microphone again) transcribes it into the draft for editing; **Cancel**
+  discards the recording. With **Send after dictation** checked (remembered per
+  report) the dictated message is sent right away. Uses
   `POST /api/agent/stt` (same 25 MB cap and STT provider as `/api/stt`, but it
   never advances the manual-frame conversation chain). Without a microphone,
   permission, browser support, or the local server, the panel says why.

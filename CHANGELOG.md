@@ -9,6 +9,35 @@
   to a known non-LibraxisAI host through the shared key fallback, so STT on
   xAI with LLM/Vision on LibraxisAI uses the xAI key or account sign-in.
 
+- **Added: screenshots in the agent chat, and frames on demand.** Paste a
+  screenshot into the composer, drop it on the panel or pick it with the image
+  button (up to 4 per message; large captures are downscaled to a 2048 px long
+  side). The agent receives them with the message. The new
+  `capture_video_frames` tool lets the agent grab fresh frames from the source
+  video at any timestamps (4 per call, 8 per turn, nothing saved), so a
+  recording without narration can still be read frame by frame.
+
+- **Changed: the agent panel reads like a conversation.** Answers render
+  Markdown (lists, bold, code, tables, links) without ever passing model text
+  through `innerHTML`. Your messages sit on the right on the accent colour, the
+  agent's on the left, each with a "You" / "Agent" caption. An optional
+  **Send after dictation** checkbox sends a dictated message straight away.
+
+- **Fixed: `screenscribe serve` after renaming the recording.** A review whose
+  recording was renamed (for example spaces turned into underscores) or moved
+  now serves: the recording is found beside the review folder, and `--video`
+  with the new name uses the only report in the folder. Reports made by an
+  older version get the current agent panel when served; the file on disk is
+  unchanged.
+
+- **Fixed: `review --no-audio` (OCR) shows progress.** Frame extraction and
+  OCR each show a progress bar, up to 4 frames are read at once, and one failed
+  frame becomes a reported gap instead of ending the run.
+
+- **Changed: the existing-review prompt names what each answer does.** It
+  shows the folder **N** (new copy, default) and **O** (overwrite) write to and
+  accepts the letter or the word, instead of an ambiguous `[o/n]`.
+
 - **Fixed: report corrections shape the next run.** Corrections saved for one
   report now reach the production STT calls (primary and fallback), the batch
   and single-finding visual analysis, manual-frame analysis in the review app
