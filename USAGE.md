@@ -162,8 +162,8 @@ describing who the viewer is and what counts as a finding:
 - `medical` — clinical consultations and medical systems; findings use
   `finding/observation/risk/followup/other` with a Polish+English clinical
   dictionary.
-- `veterinary` — veterinary consultations, procedures, and clinic systems
-  (e.g. Vista); same clinical categories with a veterinary dictionary.
+- `veterinary` — veterinary consultations, procedures, and clinic systems;
+  same clinical categories with a veterinary dictionary.
 - `custom` — your own profile, backed by `--keywords-file`; the file's
   top-level keys become the finding categories. Without `--keywords-file`,
   `review` stops with instructions.

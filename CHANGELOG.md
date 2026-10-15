@@ -2,6 +2,18 @@
 
 ## [0.1.20] - 2026-10-15
 
+- **Security: API keys stay with their provider.** `screenscribe doctor` no
+  longer sends the configured STT key to xAI when STT routes elsewhere; the
+  xAI probe runs only for an xAI STT endpoint and calls that endpoint. A
+  LibraxisAI key (from `LIBRAXIS_API_KEY` or the config file) is never handed
+  to a known non-LibraxisAI host through the shared key fallback, so STT on
+  xAI with LLM/Vision on LibraxisAI uses the xAI key or account sign-in.
+
+- **Fixed: report corrections shape the next run.** Corrections saved for one
+  report now reach the production STT calls (primary and fallback), the batch
+  and single-finding visual analysis, manual-frame analysis in the review app
+  and `screenscribe preprocess`, instead of only the global glossary.
+
 - **Added: a conversation panel built for real use.** Agent answers now
   stream: the server forwards provider text deltas as they arrive instead of
   one buffered block per round, with SSE keepalives during silent reasoning
@@ -149,7 +161,7 @@
   fragment (who the viewer is, what counts as a finding). Shipped presets:
   `programming` (the default — bit-for-bit the historical behavior), `casual`
   (informal product feedback), `medical`, and `veterinary` (clinical
-  consultations, procedures, and clinic systems such as Vista, with
+  consultations, procedures, and clinic systems, with
   `finding/observation/risk/followup/other` categories and Polish+English
   dictionaries). `--preset custom` builds the profile from your own
   `--keywords-file` (its top-level keys become the categories) and fails with
