@@ -35,6 +35,9 @@ SCOPES: tuple[str, ...] = ("report", "global")
 SOURCES: tuple[str, ...] = ("user", "agent")
 
 _ENTRY_ID = re.compile(r"^cor-[0-9a-fA-F-]{8,64}$")
+# A correction is a phrase, not a paragraph: long entries bloat every prompt
+# and can push other entries out of the byte-capped glossary block.
+_MAX_PHRASE_CHARS = 200
 _IO_LOCK = threading.Lock()
 
 
@@ -123,8 +126,12 @@ def validate_correction_fields(
     phrase = match.strip()
     if not phrase:
         raise CorrectionRejected("match must be a non-empty literal phrase")
+    if len(phrase) > _MAX_PHRASE_CHARS:
+        raise CorrectionRejected(f"match is longer than {_MAX_PHRASE_CHARS} characters")
     if not isinstance(replacement, str):
         raise CorrectionRejected("replacement must be a string")
+    if len(replacement) > _MAX_PHRASE_CHARS:
+        raise CorrectionRejected(f"replacement is longer than {_MAX_PHRASE_CHARS} characters")
     if not isinstance(scope, str) or scope.strip() not in SCOPES:
         allowed = " or ".join(repr(item) for item in SCOPES)
         raise CorrectionRejected(f"scope must be {allowed}")
@@ -219,10 +226,25 @@ def append_correction(
         if warning:
             logger.warning("Corrections ledger degraded before append: %s", warning)
         stored_report = report or report_stem
+        for existing in loaded_entries:
+            if (
+                existing["match"] == phrase
+                and existing["replacement"] == repl
+                and existing["scope"] == scope_text
+                and existing["source"] == source_text
+                and existing["note"] == note_text
+            ):
+                # Idempotent retry: a previous attempt already stored this
+                # correction (e.g. the ledger write landed but the glossary
+                # roll-up failed, or an agent turn was retried). Re-running
+                # the roll-up heals a missing global entry without
+                # duplicating the ledger row.
+                _roll_up_globals_degraded(loaded_entries, glossary_dir)
+                return existing
         loaded_entries.append(entry)
         path = ledger_path(output_dir)
         _write_json_atomic(path, _ledger_payload(loaded_entries, stored_report))
-        _roll_up_globals(loaded_entries, glossary_dir)
+        _roll_up_globals_degraded(loaded_entries, glossary_dir)
     return entry
 
 
@@ -423,6 +445,26 @@ def _parse_stored_entry(item: object) -> CorrectionEntry | None:
         created_at=created_at.strip(),
         entry_id=entry_id,
     )
+
+
+def _roll_up_globals_degraded(
+    entries: list[CorrectionEntry], glossary_dir: Path | None
+) -> None:
+    """Roll up globals; a failed glossary write degrades instead of raising.
+
+    By this point the report ledger already holds the entry, so raising would
+    report the whole append as failed and invite a retry that used to append
+    a duplicate row. The glossary self-heals: every save rolls up ALL global
+    entries of the ledger, so the next successful write catches up.
+    """
+    try:
+        _roll_up_globals(entries, glossary_dir)
+    except OSError as exc:
+        logger.warning(
+            "Correction saved to the report ledger, but the global glossary "
+            "write failed (will catch up on the next save): %s",
+            exc,
+        )
 
 
 def _roll_up_globals(entries: list[CorrectionEntry], glossary_dir: Path | None) -> None:

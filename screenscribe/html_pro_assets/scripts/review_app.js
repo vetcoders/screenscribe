@@ -838,7 +838,7 @@ function applyTranscriptCorrectionOverlay() {
     transcriptCorrectionRuntime.applying = true;
     try {
         const entries = transcriptCorrectionRuntime.entries;
-        document.querySelectorAll('.subtitle-item .text, .finding-transcript').forEach((el) => {
+        document.querySelectorAll('.subtitle-item .text, .finding-transcript, .merged-frame-transcript').forEach((el) => {
             applyCorrectionElement(el, entries);
         });
         const current = document.getElementById('currentSubtitle');

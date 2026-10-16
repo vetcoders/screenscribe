@@ -1571,3 +1571,32 @@ def test_config_file_loads_agent_egress(tmp_path: Path) -> None:
     config._load_from_file(path)
     assert config.agent_egress == "allow"
     assert config.agent_primary_trust == "internal"
+
+
+def test_corrections_survive_seed_truncation_of_a_long_report(tmp_path: Path) -> None:
+    """R2-04: a long transcript must not push the ledger out of the seed.
+
+    The seed is cut at its character budget from the end; corrections used to
+    be the last key of the JSON blob, so 80 long segments silently removed
+    them from the agent's context.
+    """
+    report = {
+        "executive_summary": "Layout is broken.",
+        "findings": [],
+        "transcript_segments": [
+            {"id": i, "start": float(i), "end": float(i + 1), "text": "słowo " * 40}
+            for i in range(80)
+        ],
+        "analysis_passes": {},
+    }
+    append_correction(
+        tmp_path,
+        match="login",
+        replacement="sign-in",
+        scope="report",
+        report_stem="test",
+    )
+    turn = prepare_turn(report=report, message="podsumuj", output_dir=tmp_path)
+    assert "…(truncated)" in turn.instructions
+    assert '"corrections"' in turn.instructions
+    assert "sign-in" in turn.instructions

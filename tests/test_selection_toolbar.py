@@ -611,3 +611,136 @@ def test_selection_toolbar_assets_avoid_cdn_onclick_and_raw_colors() -> None:
     assert "var(--" in css
     assert "pointer-events: none" in css
     assert "pointer-events: auto" in css
+
+
+def test_selection_spanning_two_findings_is_refused() -> None:
+    """R4-01: a cross-finding selection must not be attributed to the first card.
+
+    envelopeForSelection used to take the finding id and timestamp from the
+    selection START only, so marking text across two cards sent both cards'
+    words to the agent under the first finding's id.
+    """
+    output = _run_toolbar(
+        textwrap.dedent(
+            """
+            const api = screenscribeSelectionToolbar;
+            const bar = document.getElementById('ss-selection-toolbar');
+            const captured = [];
+            document.addEventListener('screenscribe:agent-insert-reference', (event) => {
+                captured.push(event.detail);
+            });
+
+            function text(value, parent) {
+                const node = document.createTextNode(value);
+                parent.appendChild(node);
+                return node;
+            }
+            function card(id, ts, quote) {
+                const el = document.createElement('article');
+                el.className = 'finding';
+                el.setAttribute('data-finding-id', id);
+                const meta = document.createElement('span');
+                meta.className = 'finding-meta';
+                meta.setAttribute('data-timestamp', ts);
+                el.appendChild(meta);
+                const transcript = document.createElement('div');
+                transcript.className = 'finding-transcript';
+                const node = text(quote, transcript);
+                el.appendChild(transcript);
+                document.body.appendChild(el);
+                return node;
+            }
+            const first = card('first', '12', 'Problem with the Login button.');
+            const second = card('second', '55', 'Secret in another finding.');
+
+            function armSpan(startNode, endNode, quote) {
+                const selection = {
+                    anchorNode: startNode,
+                    focusNode: endNode,
+                    isCollapsed: false,
+                    rangeCount: 1,
+                    toString() { return quote; },
+                    getRangeAt() {
+                        return {
+                            startContainer: startNode,
+                            endContainer: endNode,
+                            getBoundingClientRect() {
+                                return { left: 40, top: 120, right: 240, bottom: 140, width: 200, height: 20 };
+                            },
+                        };
+                    },
+                };
+                document.getSelection = () => selection;
+                window.getSelection = () => selection;
+                document.dispatchEvent({ type: 'selectionchange' });
+            }
+
+            // Selection crossing both cards: the toolbar must stay away.
+            armSpan(first, second, 'Problem with the Login button. Secret in another finding.');
+            flushTimers();
+            if (bar.classList.contains('is-open')) {
+                throw new Error('cross-finding selection must not open the toolbar');
+            }
+
+            // A selection inside ONE card still works, with its own id.
+            armSpan(second, second, 'Secret in another finding.');
+            flushTimers();
+            if (!bar.classList.contains('is-open')) {
+                throw new Error('single-card selection must still open the toolbar');
+            }
+            const button = [...bar.children].find((node) => node.getAttribute('data-action') === 'insert-reference');
+            button.dispatchEvent({ type: 'click', target: button });
+            const reference = captured[captured.length - 1];
+            if (reference.moment_id !== 'second' || reference.timestamp !== '55') {
+                throw new Error('single-card envelope ' + JSON.stringify(reference));
+            }
+            process.stdout.write('cross-finding:ok\\n');
+            """
+        )
+    )
+    assert "cross-finding:ok" in output
+
+
+def test_merged_frame_transcript_offers_the_transcript_error_action() -> None:
+    """R2-03: merged-frame narration is transcript too — same correction path."""
+    output = _run_toolbar(
+        textwrap.dedent(
+            """
+            const bar = document.getElementById('ss-selection-toolbar');
+            const err = [...bar.children].find((node) => node.getAttribute('data-action') === 'transcript-error');
+
+            const card = document.createElement('article');
+            card.className = 'finding';
+            card.setAttribute('data-finding-id', 'f-7');
+            const merged = document.createElement('span');
+            merged.className = 'merged-frame-transcript';
+            const node = document.createTextNode('zeto zeten in a merged frame');
+            merged.appendChild(node);
+            card.appendChild(merged);
+            document.body.appendChild(card);
+
+            const selection = {
+                anchorNode: node,
+                isCollapsed: false,
+                rangeCount: 1,
+                toString() { return 'zeto zeten in a merged frame'; },
+                getRangeAt() {
+                    return {
+                        startContainer: node,
+                        getBoundingClientRect() {
+                            return { left: 40, top: 120, right: 240, bottom: 140, width: 200, height: 20 };
+                        },
+                    };
+                },
+            };
+            document.getSelection = () => selection;
+            window.getSelection = () => selection;
+            document.dispatchEvent({ type: 'selectionchange' });
+            flushTimers();
+            if (!bar.classList.contains('is-open')) throw new Error('toolbar closed for merged-frame text');
+            if (err.hidden !== false) throw new Error('transcript-error action hidden for merged-frame text');
+            process.stdout.write('merged-frame:ok\\n');
+            """
+        )
+    )
+    assert "merged-frame:ok" in output

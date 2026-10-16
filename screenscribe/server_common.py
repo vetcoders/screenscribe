@@ -283,8 +283,14 @@ def transcribe_browser_audio(
     filename: str,
     content_type: str,
     config: ScreenScribeConfig,
+    output_dir: Path | None = None,
 ) -> Any:
-    """Transcribe browser uploads directly, then fall back to MP3 normalization."""
+    """Transcribe browser uploads directly, then fall back to MP3 normalization.
+
+    ``output_dir`` is the review output directory; passing it lets saved
+    report-scoped corrections steer the STT glossary for dictation and voice
+    notes, the same way they already steer the pipeline's own STT calls.
+    """
     from .audio import normalize_audio_for_stt
     from .transcribe import transcribe_audio, transcribe_audio_bytes
 
@@ -297,6 +303,7 @@ def transcribe_browser_audio(
             api_key=config.get_stt_api_key(),
             stt_endpoint=config.stt_endpoint,
             stt_model=config.stt_model,
+            output_dir=output_dir,
         )
     except Exception as direct_error:
         # BH18: only FORMAT failures benefit from the ffmpeg-normalization
@@ -323,6 +330,7 @@ def transcribe_browser_audio(
                 api_key=config.get_stt_api_key(),
                 stt_endpoint=config.stt_endpoint,
                 stt_model=config.stt_model,
+                output_dir=output_dir,
             )
         finally:
             if source_path is not None:

@@ -666,3 +666,17 @@ def test_finding_prose_is_selectable_and_resize_suppression_wins() -> None:
     assert 'type="radio" name="verdict-{finding_id_attr}" value="rejected"' in renderer
     assert 'class="severity-select"' in renderer
     assert "<textarea " in renderer
+
+
+def test_correction_overlay_covers_merged_frame_transcripts() -> None:
+    """R2-03: the overlay selector must include merged-frame narration.
+
+    A phrase corrected in the main card used to stay wrong inside the merged
+    frames of the same finding, because the overlay only queried
+    ``.subtitle-item .text`` and ``.finding-transcript``.
+    """
+    assets_dir = Path(assets.__file__).resolve().parent.parent / "html_pro_assets"
+    js = (assets_dir / "scripts" / "review_app.js").read_text(encoding="utf-8")
+    selector_lines = [line for line in js.splitlines() if "querySelectorAll" in line and "finding-transcript" in line]
+    assert selector_lines, "overlay selector not found"
+    assert all(".merged-frame-transcript" in line for line in selector_lines)

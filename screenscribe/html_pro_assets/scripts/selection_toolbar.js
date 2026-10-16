@@ -191,6 +191,21 @@
         return null;
     }
 
+    function focusNode(selection) {
+        if (!selection) return null;
+        if (selection.focusNode) return selection.focusNode;
+        if (selection.rangeCount && typeof selection.getRangeAt === 'function') {
+            var range = selection.getRangeAt(0);
+            if (range) return range.endContainer || null;
+        }
+        return null;
+    }
+
+    function referenceIdFor(el) {
+        var id = closestFindingId(el);
+        return id != null ? id : headingFallback(el);
+    }
+
     function envelopeForSelection(selection, documentRef) {
         if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
         var raw = '';
@@ -206,11 +221,25 @@
         if (!field) return null;
         var momentId = null;
         if (field !== 'executive_summary' && field !== 'subtitle') {
-            momentId = closestFindingId(el);
-            if (momentId == null) momentId = headingFallback(el);
+            momentId = referenceIdFor(el);
+        }
+        var endEl = asElement(focusNode(selection));
+        if (endEl && endEl !== el) {
+            // A selection spanning two findings (or two fields) has no single
+            // honest reference: attributing both cards' text to the first
+            // finding feeds the agent wrong evidence. Offer nothing instead.
+            if (fieldFor(endEl) !== field) return null;
+            if (
+                field !== 'executive_summary'
+                && field !== 'subtitle'
+                && String(referenceIdFor(endEl)) !== String(momentId)
+            ) {
+                return null;
+            }
         }
         var transcriptError = Boolean(
             closestClass(el, 'finding-transcript')
+            || closestClass(el, 'merged-frame-transcript')
             || closestClass(el, 'subtitle-list')
             || closestClass(el, 'subtitle-item')
             || closestClass(el, 'transcript-list')

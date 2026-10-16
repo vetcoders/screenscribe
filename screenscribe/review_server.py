@@ -951,6 +951,7 @@ def create_review_app(
                 filename=filename,
                 content_type=content_type,
                 config=config,
+                output_dir=session.output_dir,
             )
             quality_warning = validate_browser_stt_result(result)
             # BH46/BH49 mirror (analyze-side): only advance the shared
@@ -1532,6 +1533,7 @@ def create_review_app(
                 filename=filename,
                 content_type=content_type,
                 config=config,
+                output_dir=session.output_dir,
             )
             quality_warning = validate_browser_stt_result(result)
         except HTTPException:

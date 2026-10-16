@@ -58,7 +58,9 @@ def _build_glossary_block(output_dir: str | Path | None = None) -> str:
         line = f"- {json.dumps(match)} -> {json.dumps(replacement)}"
         line_bytes = len(line.encode("utf-8")) + 1
         if size + line_bytes > _GLOSSARY_MAX_BYTES:
-            break
+            # Skip just this oversized entry; older, shorter entries still fit.
+            # A break here used to let one long correction empty the whole block.
+            continue
         lines.append(line)
         size += line_bytes
     if len(lines) == 1:

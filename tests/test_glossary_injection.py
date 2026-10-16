@@ -356,3 +356,33 @@ def test_xai_stt_path_does_not_force_prompt_injection(
 
     assert len(calls) == 1
     assert "prompt" not in calls[0]
+
+
+def test_one_oversized_entry_does_not_empty_the_glossary(tmp_path: Path) -> None:
+    """R2-05: an oversized newest entry is skipped, not a hard stop.
+
+    The byte-cap loop walks newest-first and used to ``break`` on the first
+    entry that did not fit, dropping every older (and shorter) entry with it.
+    """
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    short = _correction("zeto", "ZETO")
+    short["created_at"] = "2026-09-28T21:00:00Z"
+    huge = _correction("short", "x" * 3000)
+    huge["created_at"] = "2026-09-28T22:00:00Z"  # newest first in the block
+    _write_ledger(output_dir, [short, huge])
+
+    payload = _build_unified_payload(
+        endpoint="https://example.test/v1/responses",
+        model="m",
+        prompt="Analyze.",
+        screenshot_path=None,
+        previous_response_id=None,
+        stream=False,
+        output_dir=output_dir,
+    )
+
+    text = _prompt_text(payload)
+    assert "Glossary of preferred transcriptions:" in text
+    assert '"zeto" -> "ZETO"' in text
+    assert "x" * 100 not in text

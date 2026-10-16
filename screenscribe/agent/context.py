@@ -146,14 +146,17 @@ def seed_report_context(
         "severity_breakdown": report.get("severity_breakdown") or {},
         "summary": report.get("summary") or {},
         "analysis_passes": report.get("analysis_passes") or {},
-        "findings": findings_out,
-        "transcript_segments": segments_out,
     }
+    # Corrections ride ahead of the two big arrays: the seed is cut at
+    # _SEED_BUDGET_CHARS from the end, so a long transcript used to push the
+    # ledger entirely out of the agent's context.
     if output_dir is not None:
         try:
             blob["corrections"] = corrections_summary(output_dir, limit=20)
         except Exception as exc:
             logger.warning("Could not load corrections summary for context: %s", exc)
+    blob["findings"] = findings_out
+    blob["transcript_segments"] = segments_out
     import json
 
     text = json.dumps(blob, ensure_ascii=False, indent=2)

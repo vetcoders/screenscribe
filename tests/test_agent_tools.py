@@ -360,3 +360,105 @@ def test_ledger_replace_failure_keeps_previous_bytes(
         )
     assert path.read_bytes() == first
     assert list(output_dir.glob(".corrections-*.json.tmp")) == []
+
+
+def test_append_correction_retry_is_idempotent(tmp_path: Path) -> None:
+    """R2-06: a retried save must not duplicate the ledger row.
+
+    The report ledger is written before the glossary roll-up; when the second
+    write fails the API reports an error and the client retries. The retry
+    now returns the stored entry instead of appending a twin.
+    """
+    from screenscribe.agent.corrections import append_correction, load_ledger
+
+    glossary = tmp_path / "glossary"
+    first = append_correction(
+        tmp_path,
+        match="zeto",
+        replacement="ZETO",
+        scope="global",
+        report_stem="r",
+        glossary_dir=glossary,
+    )
+    second = append_correction(
+        tmp_path,
+        match="zeto",
+        replacement="ZETO",
+        scope="global",
+        report_stem="r",
+        glossary_dir=glossary,
+    )
+    assert second["id"] == first["id"]
+    ledger = load_ledger(tmp_path)
+    assert [e["match"] for e in ledger.entries] == ["zeto"]
+
+
+def test_failed_glossary_roll_up_degrades_and_heals_on_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R2-06: a failed glossary write is a partial save, not a total failure.
+
+    First attempt: the ledger write lands, the glossary write raises. The call
+    still returns the entry (the correction IS saved for this report). The
+    retry finds the existing row and re-runs the roll-up, healing the glossary.
+    """
+    from screenscribe.agent import corrections as corrections_module
+    from screenscribe.agent.corrections import append_correction, load_glossary, load_ledger
+
+    glossary = tmp_path / "glossary"
+    real_write = corrections_module._write_json_atomic
+    fail_once = {"armed": True}
+
+    def flaky_write(path: Path, payload: dict[str, Any]) -> None:
+        if fail_once["armed"] and path.name == "corrections_glossary.json":
+            fail_once["armed"] = False
+            raise OSError("disk full")
+        real_write(path, payload)
+
+    monkeypatch.setattr(corrections_module, "_write_json_atomic", flaky_write)
+    entry = append_correction(
+        tmp_path,
+        match="zeto",
+        replacement="ZETO",
+        scope="global",
+        report_stem="r",
+        glossary_dir=glossary,
+    )
+    assert entry["match"] == "zeto"
+    assert load_ledger(tmp_path).entries  # report ledger has the row
+    assert not (glossary / "corrections_glossary.json").exists()
+
+    retry = append_correction(
+        tmp_path,
+        match="zeto",
+        replacement="ZETO",
+        scope="global",
+        report_stem="r",
+        glossary_dir=glossary,
+    )
+    assert retry["id"] == entry["id"]
+    assert [e["match"] for e in load_ledger(tmp_path).entries] == ["zeto"]
+    glossary_load = load_glossary(glossary)
+    assert [e["match"] for e in glossary_load.entries] == ["zeto"]
+
+
+def test_correction_phrases_have_an_input_size_cap(tmp_path: Path) -> None:
+    """R2-05 input side: a 3000-char 'phrase' is not a transcript correction."""
+    from screenscribe.agent.corrections import CorrectionRejected, append_correction
+
+    with pytest.raises(CorrectionRejected, match="longer than"):
+        append_correction(
+            tmp_path,
+            match="x" * 3000,
+            replacement="y",
+            scope="report",
+            report_stem="r",
+        )
+    with pytest.raises(CorrectionRejected, match="longer than"):
+        append_correction(
+            tmp_path,
+            match="x",
+            replacement="y" * 3000,
+            scope="report",
+            report_stem="r",
+        )
