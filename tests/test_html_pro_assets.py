@@ -677,6 +677,10 @@ def test_correction_overlay_covers_merged_frame_transcripts() -> None:
     """
     assets_dir = Path(assets.__file__).resolve().parent.parent / "html_pro_assets"
     js = (assets_dir / "scripts" / "review_app.js").read_text(encoding="utf-8")
-    selector_lines = [line for line in js.splitlines() if "querySelectorAll" in line and "finding-transcript" in line]
+    selector_lines = [
+        line
+        for line in js.splitlines()
+        if "querySelectorAll" in line and "finding-transcript" in line
+    ]
     assert selector_lines, "overlay selector not found"
     assert all(".merged-frame-transcript" in line for line in selector_lines)

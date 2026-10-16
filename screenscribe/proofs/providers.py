@@ -571,9 +571,7 @@ def _run_frame_ocr(ctx: _ProbeContext) -> ProofReceipt:
         # A fresh cache dir per run: a hit in the user's OCR cache would
         # stamp PROVEN without any live roundtrip, which is the opposite
         # of what this probe exists to prove.
-        text, response_id = ocr_frame(
-            frame_path, ctx.config, cache_dir=ctx.tmp_dir / "ocr-cache"
-        )
+        text, response_id = ocr_frame(frame_path, ctx.config, cache_dir=ctx.tmp_dir / "ocr-cache")
         duration_ms = int((time.perf_counter() - start) * 1000)
         proven = bool(text.strip() or response_id)
         return ProofReceipt(

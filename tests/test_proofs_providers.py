@@ -353,9 +353,7 @@ def test_receipts_never_carry_secrets_or_url_queries(
     or a provider error echoing the key must not survive into them.
     """
     config = ScreenScribeConfig()
-    config.stt_endpoint = (
-        "https://stt.libraxis.cloud/v1/audio/transcriptions?token=tok-in-url"
-    )
+    config.stt_endpoint = "https://stt.libraxis.cloud/v1/audio/transcriptions?token=tok-in-url"
     config.stt_api_key = "sk-proof-secret-123"  # pragma: allowlist secret
     monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)

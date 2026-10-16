@@ -44,7 +44,6 @@ class ProofReceipt:
         }
 
 
-
 def _private_dir(out_dir: Path) -> None:
     """Create ``out_dir`` owner-only; diagnostics may quote provider errors."""
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -429,9 +429,7 @@ def test_missing_vision_key_still_fails_the_whole_run(
     monkeypatch.setattr(frame_ocr, "_frame_probe_hash", lambda p: p.name)
 
     def missing_key(*_args: Any, **_kwargs: Any) -> tuple[str, str]:
-        raise frame_ocr.FrameOCRConfigError(
-            "Vision API key required for OCR transcript source."
-        )
+        raise frame_ocr.FrameOCRConfigError("Vision API key required for OCR transcript source.")
 
     monkeypatch.setattr(frame_ocr, "ocr_frame", missing_key)
     with pytest.raises(frame_ocr.FrameOCRConfigError, match="Vision API key required"):

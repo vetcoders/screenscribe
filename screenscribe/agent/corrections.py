@@ -447,9 +447,7 @@ def _parse_stored_entry(item: object) -> CorrectionEntry | None:
     )
 
 
-def _roll_up_globals_degraded(
-    entries: list[CorrectionEntry], glossary_dir: Path | None
-) -> None:
+def _roll_up_globals_degraded(entries: list[CorrectionEntry], glossary_dir: Path | None) -> None:
     """Roll up globals; a failed glossary write degrades instead of raising.
 
     By this point the report ledger already holds the entry, so raising would

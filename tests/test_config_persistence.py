@@ -337,9 +337,7 @@ class TestLibraxisProvenanceSurvivesSave:
         for var in self._VARS:
             monkeypatch.delenv(var, raising=False)
         monkeypatch.setenv("LIBRAXIS_API_KEY", "lx-env-secret")  # pragma: allowlist secret
-        monkeypatch.setenv(
-            "SCREENSCRIBE_STT_ENDPOINT", "https://api.x.ai/v1/audio/transcriptions"
-        )
+        monkeypatch.setenv("SCREENSCRIBE_STT_ENDPOINT", "https://api.x.ai/v1/audio/transcriptions")
 
         cfg = ScreenScribeConfig()
         cfg._load_from_env()
