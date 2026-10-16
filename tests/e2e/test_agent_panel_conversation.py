@@ -32,18 +32,28 @@ _LAST_ANSWER = (
 
 @pytest.fixture(scope="module")
 def speech_wav(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    say = shutil.which("say")
-    if say is None:
-        pytest.skip("macOS `say` is needed to synthesize the fake-microphone speech")
+    """Synthesized speech for the fake microphone.
+
+    macOS uses ``say``; Linux falls back to ``espeak-ng``/``espeak`` (the CI
+    e2e job installs espeak-ng), so a green ubuntu run actually executes these
+    conversation tests instead of skipping them (review R4-06). Only a runner
+    with neither synthesizer skips.
+    """
+    text = "Show me what is on the first frame of this recording."
     wav = tmp_path_factory.mktemp("ss_e2e_mic") / "dictation.wav"
+    say = shutil.which("say")
+    if say is not None:
+        subprocess.run(
+            [say, "-o", str(wav), "--data-format=LEI16@48000", text],
+            check=True,
+            capture_output=True,
+        )
+        return wav
+    espeak = shutil.which("espeak-ng") or shutil.which("espeak")
+    if espeak is None:
+        pytest.skip("no speech synthesizer (`say` or `espeak-ng`) for the fake microphone")
     subprocess.run(
-        [
-            say,
-            "-o",
-            str(wav),
-            "--data-format=LEI16@48000",
-            "Show me what is on the first frame of this recording.",
-        ],
+        [espeak, "-w", str(wav), "-s", "150", text],
         check=True,
         capture_output=True,
     )

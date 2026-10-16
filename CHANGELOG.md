@@ -8,6 +8,54 @@
   LibraxisAI key (from `LIBRAXIS_API_KEY` or the config file) is never handed
   to a known non-LibraxisAI host through the shared key fallback, so STT on
   xAI with LLM/Vision on LibraxisAI uses the xAI key or account sign-in.
+  After an independent review pass, the boundary is tighter still: a
+  LibraxisAI-provenance key serves only hosts positively recognized as
+  LibraxisAI (unknown and custom hosts are refused; an explicit
+  `SCREENSCRIBE_*_API_KEY` keeps serving custom gateways), and a saved config
+  re-emits such keys as `LIBRAXIS_API_KEY` lines so the protection survives
+  save → reload.
+
+- **Security: `doctor` artifacts are private and redacted.** Receipts,
+  `MATRIX.md` and `summary.json` are written owner-only (0600, dir 0700),
+  endpoint URLs are stored without query strings, and configured secrets are
+  masked in provider error text. Probes got honest too: the OpenAI-compatible
+  STT probe declines when STT routes to xAI instead of claiming the other
+  transport's roundtrip, an empty model response (no text, no response id) is
+  `NOT-PROVEN`, and the frame-OCR probe bypasses the user OCR cache so a
+  `PROVEN` stamp always reflects a live roundtrip.
+
+- **Fixed: the agent conversation survives real-world turbulence.** A provider
+  stream that ends mid-answer (no terminal event) is reported as interrupted
+  with Retry instead of posing as a complete answer — on the server and in the
+  panel. Long conversations no longer die at turn 27: the request history is
+  capped to the API contract while the full log stays local. Conversations are
+  keyed to the report (not just the URL), so two reports served on one port do
+  not leak history into each other, a reload keeps the server-side response
+  chain, and a Retry no longer duplicates `add_finding` or
+  `correct_transcript` effects.
+
+- **Fixed: corrections reach every surface.** Browser dictation and voice
+  notes pass the review directory, so report-scoped corrections steer their
+  STT glossary; the agent context seed puts corrections ahead of the transcript
+  (long reports used to truncate them away); one oversized entry no longer
+  empties the whole glossary block; merged-frame narration gets the same
+  correction overlay and selection toolbar action as the main card; and a
+  retried save is idempotent instead of appending a duplicate ledger row.
+
+- **Fixed: mobile and keyboard chat UX.** On narrow viewports the opened chat
+  scrolls into view (it used to open below the fold) and the resize controls
+  that mobile CSS overrides are hidden; `Escape` stops the agent from anywhere
+  inside the panel; the selection toolbar shows a visible keyboard focus ring;
+  state-dependent labels survive a PL/EN switch. A selection spanning two
+  findings is refused instead of being attributed to the first one.
+
+- **Fixed: release checks prove what they claim.** The release verifier runs
+  the real `screenscribe --version` from the installed wheel (commit
+  provenance `+g<sha>` included) and sdist; the public demo page is
+  regenerated with the current agent panel and a test pins it to the installed
+  assets; one malformed provider payload in frame OCR is a transcript gap, not
+  a lost run; the agent-conversation e2e synthesizes speech with `espeak-ng`
+  on Linux, so CI actually runs it off-macOS.
 
 - **Added: screenshots in the agent chat, and frames on demand.** Paste a
   screenshot into the composer, drop it on the panel or pick it with the image

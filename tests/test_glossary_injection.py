@@ -93,10 +93,12 @@ def test_payload_is_unchanged_without_ledger(
     """No ledger and no global glossary -> byte-identical prompt and payload shape."""
 
     # Ensure the global glossary lookup never returns entries during this test.
+    # wire.py binds load_glossary at import time, so the patch must land on
+    # the wire module's name, not on the corrections module (CodeRabbit QC).
     def _empty_glossary(glossary_dir: Path | None = None) -> corrections.LedgerLoad:
         return corrections.LedgerLoad(entries=[], warning=None, report="global")
 
-    monkeypatch.setattr(corrections, "load_glossary", _empty_glossary)
+    monkeypatch.setattr("screenscribe.unified.wire.load_glossary", _empty_glossary)
 
     prompt = "Analyze this finding."
     payload = _build_unified_payload(
