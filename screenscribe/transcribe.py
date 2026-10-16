@@ -13,6 +13,7 @@ from .api_utils import (
     canonical_host,
     endpoint_host,
     is_loopback_host,
+    provider_client_options,
     retry_request,
     validate_provider_endpoint,
 )
@@ -325,7 +326,7 @@ def _request_transcription_payload(
         }
         if stt_glossary:
             data["prompt"] = stt_glossary
-        with httpx.Client(timeout=600.0) as client:
+        with httpx.Client(timeout=600.0, **provider_client_options(url)) as client:
             validate_provider_endpoint(url)
             response = client.post(url, files=files, data=data, headers=headers)
             response.raise_for_status()

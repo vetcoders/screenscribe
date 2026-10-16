@@ -195,9 +195,11 @@ class StreamingSttClient:
         self._loop = asyncio.get_running_loop()
         self._outbox = asyncio.Queue()
         try:
-            validate_provider_endpoint(self.url, websocket=True)
+            url = self.url
+            validate_provider_endpoint(url, websocket=True)
             async with DirectProviderConnect(
-                self.url,
+                url,
+                proxy=None if urlsplit(url).scheme.lower() == "ws" else True,
                 additional_headers=self._headers,
                 open_timeout=self._connect_timeout,
                 max_size=None,

@@ -17,6 +17,7 @@ from rich.markup import escape
 from ..api_utils import (
     extract_response_payload_error,
     extract_stream_error_event,
+    provider_client_options,
     redact_error_message,
     retry_request,
     stream_chunk_has_model_output,
@@ -218,7 +219,7 @@ def analyze_finding_unified_streaming(
                     emitted = True
                     on_reasoning(text)
 
-            with httpx.Client(timeout=120.0) as client:
+            with httpx.Client(timeout=120.0, **provider_client_options(endpoint)) as client:
                 validate_provider_endpoint(endpoint)
                 with client.stream(
                     "POST",
@@ -490,7 +491,7 @@ def analyze_finding_unified(
     try:
 
         def do_unified_request() -> httpx.Response:
-            with httpx.Client(timeout=120.0) as client:
+            with httpx.Client(timeout=120.0, **provider_client_options(endpoint)) as client:
                 payload = _build_unified_payload(
                     endpoint=endpoint,
                     model=model,

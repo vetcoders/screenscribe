@@ -194,6 +194,10 @@ addresses still require TLS. Provider identity is restricted to the exact API
 hosts `api.libraxis.cloud`, `api.openai.com`, and `api.x.ai`; other gateways are
 custom providers and need explicitly configured credentials. Provider redirects
 are not followed; configure the final endpoint directly.
+Plaintext loopback HTTP/WS connects directly: environment proxy settings cannot
+route these requests elsewhere, even with an empty `NO_PROXY`. HTTPS/WSS keeps
+configured proxy support. OAuth device/code exchange and token refresh require
+HTTPS even on loopback; issuer overrides must point to a trusted HTTPS service.
 
 The legacy `config --set-key` option remains for advanced compatibility, but it
 changes only the generic key and exposes its argument to shell history. It is

@@ -90,6 +90,21 @@ def validate_provider_endpoint(endpoint: str, *, websocket: bool = False) -> Non
         )
 
 
+def provider_client_options(endpoint: str) -> dict[str, Any]:
+    """Bind HTTP client routing to a checked destination.
+
+    Plain HTTP is loopback-only and must be direct even with proxy environment
+    variables. Explicitly mask HTTP proxy mounts too: some SDK client wrappers
+    construct these independently of HTTPX's trust_env setting. HTTPS retains
+    configured proxy/CA support. Redirects cannot change the checked destination.
+    """
+    validate_provider_endpoint(endpoint)
+    options: dict[str, Any] = {"follow_redirects": False}
+    if httpx.URL(endpoint).scheme == "http":
+        options.update(trust_env=False, mounts={"http://": None})
+    return options
+
+
 class APIError(Exception):
     """API request error with details."""
 
@@ -522,6 +537,11 @@ def make_api_request(
     """
     Make an HTTP request with automatic retry on transient failures.
 
+    Caller-owned clients are supported only for HTTPS: this helper cannot
+    guarantee that their proxy routing is direct for plaintext loopback URLs.
+    Built-in provider transports construct their own clients with
+    :func:`provider_client_options` and retain local HTTP support.
+
     Args:
         client: httpx.Client instance
         method: HTTP method (GET, POST, etc.)
@@ -540,6 +560,11 @@ def make_api_request(
 
     def do_request() -> httpx.Response:
         validate_provider_endpoint(url)
+        if httpx.URL(url).scheme == "http":
+            raise UnsafeEndpointError(
+                "A supplied HTTP client cannot guarantee direct loopback routing; "
+                "use a provider transport that creates its own direct client."
+            )
         response = client.request(method, url, **{**kwargs, "follow_redirects": False})
         response.raise_for_status()
         return response

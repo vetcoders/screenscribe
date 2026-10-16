@@ -13,7 +13,12 @@ from screenscribe.api_utils import (
 )
 from screenscribe.config import ScreenScribeConfig
 
-from .api_utils import endpoint_host, is_loopback_host, validate_provider_endpoint
+from .api_utils import (
+    endpoint_host,
+    is_loopback_host,
+    provider_client_options,
+    validate_provider_endpoint,
+)
 
 console = Console()
 
@@ -65,7 +70,9 @@ def _check_llm_model(config: ScreenScribeConfig, model: str, model_type: str) ->
         headers["Authorization"] = f"Bearer {api_key}"
 
     try:
-        with httpx.Client(timeout=VALIDATION_TIMEOUT) as client:
+        with httpx.Client(
+            timeout=VALIDATION_TIMEOUT, **provider_client_options(endpoint)
+        ) as client:
             content_blocks: list[dict[str, Any]] = [{"type": "input_text", "text": "ping"}]
             if is_vision:
                 content_blocks.append(
@@ -215,13 +222,16 @@ def _check_stt_model(config: ScreenScribeConfig) -> bool:
         raise APIKeyError("No API key configured for STT endpoint")
 
     try:
-        with httpx.Client(timeout=VALIDATION_TIMEOUT) as client:
+        request_endpoint = config.stt_endpoint
+        with httpx.Client(
+            timeout=VALIDATION_TIMEOUT, **provider_client_options(request_endpoint)
+        ) as client:
             headers = {} if is_local else {"Authorization": f"Bearer {config.get_stt_api_key()}"}
 
             # POST with empty file to check endpoint responds (400 expected)
-            validate_provider_endpoint(config.stt_endpoint)
+            validate_provider_endpoint(request_endpoint)
             response = client.post(
-                config.stt_endpoint,
+                request_endpoint,
                 headers=headers,
                 data={"model": config.stt_model},
                 files={"file": ("test.mp3", b"", "audio/mpeg")},

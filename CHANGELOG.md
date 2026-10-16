@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- **Security: direct loopback and OAuth transport.** Plaintext local HTTP/WS
+  cannot be routed through environment proxies, including Anthropic SDK proxy
+  mounts. OAuth issuer overrides, device/code exchanges, and token refreshes
+  now require HTTPS and reject redirects, including with injected clients.
+  Real loopback target/proxy regressions cover sync, async, SDK, and WebSocket
+  routing; HTTPS proxy compatibility is retained.
+
 - **Security: atomic key and backup updates.** `config --set-key` now uses
   same-directory atomic replacement for both the exact-byte backup and config,
   preserving line endings and owner-only permissions without truncating the

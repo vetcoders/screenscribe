@@ -45,6 +45,11 @@ boundaries, including fallback and live-STT paths, independently of an agent
 trust override. Provider redirects are disabled. Automatic provider identity
 uses an exact API-host allowlist; arbitrary sibling subdomains do not inherit
 internal trust or ambient provider credentials.
+The plaintext loopback exception also requires direct routing: HTTP clients
+disable environment proxies and mask SDK HTTP proxy mounts, and WS connections
+disable automatic proxies. HTTPS/WSS proxy support is unchanged. OAuth has no
+plaintext exception: issuers and every device/code/refresh POST require HTTPS,
+and redirects are rejected independently of an injected client's defaults.
 
 Config updates and backups use owner-only temporary files and atomic
 replacement. A backup is completed before the existing config is replaced;

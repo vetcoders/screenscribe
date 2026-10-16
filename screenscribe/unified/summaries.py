@@ -11,6 +11,7 @@ from rich.markup import escape
 
 from ..api_utils import (
     extract_response_payload_error,
+    provider_client_options,
     redact_error_message,
     retry_request,
     validate_provider_endpoint,
@@ -91,13 +92,14 @@ def generate_unified_summary(findings: list[UnifiedFinding], config: ScreenScrib
     try:
 
         def do_summary_request() -> httpx.Response:
-            with httpx.Client(timeout=60.0) as client:
+            request_endpoint = config.llm_endpoint
+            with httpx.Client(timeout=60.0, **provider_client_options(request_endpoint)) as client:
                 # Build request body based on API format
                 from ..api_utils import build_llm_request_body
 
-                validate_provider_endpoint(config.llm_endpoint)
+                validate_provider_endpoint(request_endpoint)
                 response = client.post(
-                    config.llm_endpoint,
+                    request_endpoint,
                     headers={
                         "Authorization": f"Bearer {config.get_llm_api_key()}",
                         "Content-Type": "application/json",
@@ -105,7 +107,7 @@ def generate_unified_summary(findings: list[UnifiedFinding], config: ScreenScrib
                     json=build_llm_request_body(
                         config.llm_model,
                         prompt,
-                        config.llm_endpoint,
+                        request_endpoint,
                         reasoning_effort=config.get_llm_reasoning_effort(),
                     ),
                 )

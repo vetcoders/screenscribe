@@ -47,6 +47,7 @@ from ..api_utils import (
     extract_stream_error_event,
     is_chat_completions_endpoint,
     is_loopback_host,
+    provider_client_options,
     redact_error_message,
     responses_reasoning_options,
     validate_provider_endpoint,
@@ -801,9 +802,10 @@ async def _responses_round(
     # crash). Without a terminal event the collected text is a fragment, not an
     # answer, and must not be presented as one.
     completed = False
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        validate_provider_endpoint(provider.url)
-        async with client.stream("POST", provider.url, headers=headers, json=payload) as resp:
+    endpoint = provider.url
+    async with httpx.AsyncClient(timeout=90.0, **provider_client_options(endpoint)) as client:
+        validate_provider_endpoint(endpoint)
+        async with client.stream("POST", endpoint, headers=headers, json=payload) as resp:
             if resp.status_code >= 400:
                 body = (await resp.aread()).decode("utf-8", errors="replace")
                 raise AgentChatError(
@@ -1001,7 +1003,7 @@ async def _anthropic_round(
     client = AsyncAnthropic(
         api_key=provider.key,
         base_url=base_url,
-        http_client=DefaultAsyncHttpxClient(follow_redirects=False),
+        http_client=DefaultAsyncHttpxClient(**provider_client_options(base_url)),
     )
     messages = _anthropic_messages_from_input(payload.get("input") or [])
     system = str(payload.get("instructions") or "")

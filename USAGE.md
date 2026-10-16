@@ -499,6 +499,19 @@ prefixes, DNS aliases, private LAN IPs, and alternate integer/octal IPv4 spellin
 are not loopback exceptions. Use TLS for those deployments. Redirects are not
 followed; set the final destination URL directly.
 
+Local plaintext HTTP/WS always connects directly. Provider clients ignore proxy
+environment settings for HTTP, including SDK-specific proxy mounts; WebSocket
+clients explicitly disable proxy discovery for WS. This does not depend on
+`NO_PROXY`. HTTPS/WSS retains configured environment proxy support.
+
+OAuth has a stricter rule: device authorization, authorization-code exchange,
+and refresh-token requests require HTTPS, including on loopback. The
+`SCREENSCRIBE_OPENAI_OAUTH_ISSUER` and `SCREENSCRIBE_XAI_OAUTH_ISSUER` overrides
+remain available for trusted HTTPS issuers; HTTPS is transport protection, not
+proof that an arbitrary issuer is trustworthy. Both resolved issuers and final
+token destinations are validated, and OAuth redirects are refused even for an
+injected client configured to follow redirects.
+
 Automatic provider identity uses only `api.libraxis.cloud`, `api.openai.com`,
 and `api.x.ai`, after IDNA/case/trailing-dot normalization. Parent domains and
 unlisted subdomains are custom endpoints, not proof of provider ownership.

@@ -22,6 +22,7 @@ from .api_utils import (
     build_llm_request_body,
     endpoint_host,
     extract_stream_error_event,
+    provider_client_options,
     redact_url,
     redact_urls_in_text,
     responses_reasoning_options,
@@ -387,11 +388,14 @@ def semantic_prefilter(
                     stream="...",
                 )
 
-                with httpx.Client(timeout=120.0) as client:
-                    validate_provider_endpoint(config.llm_endpoint)
+                request_endpoint = config.llm_endpoint
+                with httpx.Client(
+                    timeout=120.0, **provider_client_options(request_endpoint)
+                ) as client:
+                    validate_provider_endpoint(request_endpoint)
                     with client.stream(
                         "POST",
-                        config.llm_endpoint,
+                        request_endpoint,
                         headers={
                             "Authorization": f"Bearer {config.get_llm_api_key()}",
                             "Content-Type": "application/json",

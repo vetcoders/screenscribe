@@ -8,6 +8,7 @@ from .api_utils import (
     build_llm_request_body,
     extract_llm_response_text,
     extract_response_payload_error,
+    provider_client_options,
     redact_error_message,
     retry_request,
     validate_provider_endpoint,
@@ -43,10 +44,11 @@ def generate_detection_executive_summary(
     try:
 
         def do_summary_request() -> httpx.Response:
-            with httpx.Client(timeout=60.0) as client:
-                validate_provider_endpoint(config.llm_endpoint)
+            request_endpoint = config.llm_endpoint
+            with httpx.Client(timeout=60.0, **provider_client_options(request_endpoint)) as client:
+                validate_provider_endpoint(request_endpoint)
                 response = client.post(
-                    config.llm_endpoint,
+                    request_endpoint,
                     headers={
                         "Authorization": f"Bearer {config.get_llm_api_key()}",
                         "Content-Type": "application/json",
@@ -54,7 +56,7 @@ def generate_detection_executive_summary(
                     json=build_llm_request_body(
                         config.llm_model,
                         prompt,
-                        config.llm_endpoint,
+                        request_endpoint,
                         reasoning_effort=config.get_llm_reasoning_effort(),
                     ),
                 )

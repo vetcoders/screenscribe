@@ -23,7 +23,7 @@ from typing import Any
 
 import httpx
 
-from ..api_utils import validate_provider_endpoint
+from ..api_utils import provider_client_options, validate_provider_endpoint
 from ..transcribe_types import Segment, TranscriptionResult
 
 XAI_API_BASE = "https://api.x.ai"
@@ -106,8 +106,8 @@ def group_words_into_segments(
     return segments
 
 
-def _client(transport: httpx.BaseTransport | None, timeout: float) -> httpx.Client:
-    return httpx.Client(timeout=timeout, transport=transport)
+def _client(transport: httpx.BaseTransport | None, timeout: float, endpoint: str) -> httpx.Client:
+    return httpx.Client(timeout=timeout, transport=transport, **provider_client_options(endpoint))
 
 
 def transcribe_file_xai(
@@ -146,7 +146,7 @@ def transcribe_file_xai(
     files = {"file": (filename, audio_bytes, content_type)}
     headers = {"Authorization": f"Bearer {api_key}"}
 
-    with _client(transport, STT_TIMEOUT_SECONDS) as client:
+    with _client(transport, STT_TIMEOUT_SECONDS, endpoint) as client:
         validate_provider_endpoint(endpoint)
         response = client.post(endpoint, data=data, files=files, headers=headers)
         response.raise_for_status()
@@ -213,7 +213,7 @@ def synthesize_speech_xai(
         "speed": speed,
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    with _client(transport, TTS_TIMEOUT_SECONDS) as client:
+    with _client(transport, TTS_TIMEOUT_SECONDS, endpoint) as client:
         validate_provider_endpoint(endpoint)
         response = client.post(endpoint, json=body, headers=headers)
         response.raise_for_status()
@@ -231,7 +231,7 @@ def list_voices_xai(
     if not api_key:
         raise ValueError("API key required for xAI TTS (set SCREENSCRIBE_TTS_API_KEY)")
     headers = {"Authorization": f"Bearer {api_key}"}
-    with _client(transport, TTS_TIMEOUT_SECONDS) as client:
+    with _client(transport, TTS_TIMEOUT_SECONDS, endpoint) as client:
         validate_provider_endpoint(endpoint)
         response = client.get(endpoint, headers=headers)
         response.raise_for_status()
