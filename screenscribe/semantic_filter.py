@@ -27,6 +27,7 @@ from .api_utils import (
     responses_reasoning_options,
     retry_request,
     stream_chunk_has_model_output,
+    validate_provider_endpoint,
 )
 from .config import ScreenScribeConfig
 from .keywords import KeywordsConfig, format_keywords_hint
@@ -387,6 +388,7 @@ def semantic_prefilter(
                 )
 
                 with httpx.Client(timeout=120.0) as client:
+                    validate_provider_endpoint(config.llm_endpoint)
                     with client.stream(
                         "POST",
                         config.llm_endpoint,

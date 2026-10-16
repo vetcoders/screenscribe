@@ -52,7 +52,8 @@ jobs:
           fi
 
       - name: Sync dependencies
-        run: uv sync --dev
+        # Exercise the optional provider SDK boundary with mocked transports too.
+        run: uv sync --dev --extra anthropic
 
       # ONE gate. `make verify` runs scripts/ss_verify.py against this checkout:
       # no-junk · no-secrets · leak-scan · branding · compiles · ruff check + ruff

@@ -42,10 +42,14 @@ import httpx
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from ..api_utils import (
+    PROVIDER_HOSTS,
+    canonical_host,
     extract_stream_error_event,
     is_chat_completions_endpoint,
+    is_loopback_host,
     redact_error_message,
     responses_reasoning_options,
+    validate_provider_endpoint,
 )
 from ..config import ScreenScribeConfig
 from .context import PreparedTurn, prepare_turn
@@ -67,7 +71,6 @@ _USER_IMAGE_MAGIC = {
     "image/webp": (b"RIFF",),
     "image/gif": (b"GIF87a", b"GIF89a"),
 }
-_INTERNAL_HOSTS = {"api.libraxis.cloud"}
 _TRUST_LEVELS = {"local", "internal", "processor", "external"}
 _KEPT_UNDER_DENY = {"local", "internal", "processor"}
 # Seconds of provider silence before an SSE keepalive comment is emitted.
@@ -196,6 +199,9 @@ def analysis_hosts(
         marker in host for marker in ("://", "/", "@", "?", "#")
     ):
         return frozenset()
+    host = canonical_host(host)
+    if not host:
+        return frozenset()
     expected_host = _host_of(config.llm_endpoint)
     expected_protocol = (
         "chat_completions" if is_chat_completions_endpoint(config.llm_endpoint) else "responses"
@@ -226,10 +232,10 @@ def infer_trust(
         level = explicit.strip().lower()
         if level in _TRUST_LEVELS:
             return level
-    lowered = (host or "").lower()
-    if lowered in {"localhost", "127.0.0.1", "::1"}:
+    lowered = canonical_host(host or "")
+    if is_loopback_host(lowered):
         return "local"
-    if lowered in _INTERNAL_HOSTS or lowered.endswith(".libraxis.cloud"):
+    if PROVIDER_HOSTS.get(lowered) == "libraxis":
         return "internal"
     if processor_hosts and lowered in processor_hosts:
         return "processor"
@@ -796,6 +802,7 @@ async def _responses_round(
     # answer, and must not be presented as one.
     completed = False
     async with httpx.AsyncClient(timeout=90.0) as client:
+        validate_provider_endpoint(provider.url)
         async with client.stream("POST", provider.url, headers=headers, json=payload) as resp:
             if resp.status_code >= 400:
                 body = (await resp.aread()).decode("utf-8", errors="replace")
@@ -980,15 +987,22 @@ async def _anthropic_round(
     payload: dict[str, Any],
     on_delta: Callable[[str], None] | None = None,
 ) -> ProviderRound:
+    validate_provider_endpoint(provider.url)
     try:
-        from anthropic import AsyncAnthropic
+        from anthropic import AsyncAnthropic, DefaultAsyncHttpxClient
     except ImportError as exc:
         raise AgentChatError(
             "Anthropic fallback requested but the optional extra is not installed "
             "(pip install 'screenscribe[anthropic]')."
         ) from exc
 
-    client = AsyncAnthropic(api_key=provider.key, base_url=_anthropic_base_url(provider.url))
+    base_url = _anthropic_base_url(provider.url)
+    validate_provider_endpoint(base_url)
+    client = AsyncAnthropic(
+        api_key=provider.key,
+        base_url=base_url,
+        http_client=DefaultAsyncHttpxClient(follow_redirects=False),
+    )
     messages = _anthropic_messages_from_input(payload.get("input") or [])
     system = str(payload.get("instructions") or "")
     tools = payload.get("tools") or []
@@ -1002,18 +1016,22 @@ async def _anthropic_round(
         kwargs["system"] = system
 
     text_parts: list[str] = []
-    async with client.messages.stream(**kwargs) as stream:
-        async for event in stream:
-            if getattr(event, "type", None) != "content_block_delta":
-                continue
-            delta = getattr(event, "delta", None)
-            if getattr(delta, "type", None) == "text_delta":
-                piece = getattr(delta, "text", "")
-                if piece:
-                    text_parts.append(piece)
-                    if on_delta is not None:
-                        on_delta(piece)
-        final = await stream.get_final_message()
+    try:
+        async with client.messages.stream(**kwargs) as stream:
+            async for event in stream:
+                if getattr(event, "type", None) != "content_block_delta":
+                    continue
+                delta = getattr(event, "delta", None)
+                if getattr(delta, "type", None) == "text_delta":
+                    piece = getattr(delta, "text", "")
+                    if piece:
+                        text_parts.append(piece)
+                        if on_delta is not None:
+                            on_delta(piece)
+            final = await stream.get_final_message()
+
+    finally:
+        await client.close()
 
     calls: list[FunctionCall] = []
     tool_use_blocks: list[dict[str, Any]] = []
@@ -1146,7 +1164,7 @@ def _no_provider_message(skipped: list[AgentProvider], config: ScreenScribeConfi
 
 def _host_of(url: str) -> str:
     try:
-        return (urlsplit(url).hostname or "").lower()
+        return canonical_host(urlsplit(url).hostname or "")
     except ValueError:
         return ""
 

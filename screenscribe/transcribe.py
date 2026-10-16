@@ -8,7 +8,14 @@ import httpx
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from .api_utils import retry_request
+from .api_utils import (
+    PROVIDER_HOSTS,
+    canonical_host,
+    endpoint_host,
+    is_loopback_host,
+    retry_request,
+    validate_provider_endpoint,
+)
 from .config import LIBRAXIS_STT_ENDPOINT
 from .providers.xai import transcribe_file_xai
 
@@ -151,7 +158,7 @@ def _is_xai_endpoint(stt_endpoint: str | None) -> bool:
         host = (urlsplit(stt_endpoint).hostname or "").lower()
     except ValueError:
         return False
-    return host == "x.ai" or host.endswith(".x.ai")
+    return PROVIDER_HOSTS.get(canonical_host(host)) == "xai"
 
 
 def _transcribe_via_xai(
@@ -298,7 +305,7 @@ def _request_transcription_payload(
 
     url = _resolve_stt_url(use_local, stt_endpoint)
     mime_type = _normalize_content_type(filename, content_type)
-    is_local_endpoint = url.startswith("http://127.0.0.1") or url.startswith("http://localhost")
+    is_local_endpoint = is_loopback_host(endpoint_host(url))
     field_name = "audio" if is_local_endpoint else "file"
     files = {field_name: (filename, audio_data, mime_type)}
     headers: dict[str, str] = {}
@@ -319,6 +326,7 @@ def _request_transcription_payload(
         if stt_glossary:
             data["prompt"] = stt_glossary
         with httpx.Client(timeout=600.0) as client:
+            validate_provider_endpoint(url)
             response = client.post(url, files=files, data=data, headers=headers)
             response.raise_for_status()
             return response

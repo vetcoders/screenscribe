@@ -1010,7 +1010,15 @@ def test_anthropic_client_uses_configured_base_url(monkeypatch: pytest.MonkeyPat
             captured["client_kwargs"] = kwargs
             self.messages = FakeMessages()
 
-    monkeypatch.setitem(sys.modules, "anthropic", SimpleNamespace(AsyncAnthropic=FakeAnthropic))
+        async def close(self) -> None:
+            await captured["client_kwargs"]["http_client"].aclose()
+            captured["closed"] = True
+
+    monkeypatch.setitem(
+        sys.modules,
+        "anthropic",
+        SimpleNamespace(AsyncAnthropic=FakeAnthropic, DefaultAsyncHttpxClient=httpx.AsyncClient),
+    )
     provider = AgentProvider(
         name="fallback",
         protocol="anthropic",
@@ -1028,6 +1036,8 @@ def test_anthropic_client_uses_configured_base_url(monkeypatch: pytest.MonkeyPat
         )
     )
     assert captured["client_kwargs"]["base_url"] == "https://proxy.example/custom"
+    assert captured["client_kwargs"]["http_client"].follow_redirects is False
+    assert captured["closed"] is True
     assert result.response_id is None
 
 

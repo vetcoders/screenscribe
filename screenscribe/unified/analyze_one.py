@@ -20,6 +20,7 @@ from ..api_utils import (
     redact_error_message,
     retry_request,
     stream_chunk_has_model_output,
+    validate_provider_endpoint,
 )
 from ..config import ScreenScribeConfig
 from ..detect import Detection
@@ -218,6 +219,7 @@ def analyze_finding_unified_streaming(
                     on_reasoning(text)
 
             with httpx.Client(timeout=120.0) as client:
+                validate_provider_endpoint(endpoint)
                 with client.stream(
                     "POST",
                     endpoint,
@@ -505,6 +507,7 @@ def analyze_finding_unified(
                     ),
                 )
 
+                validate_provider_endpoint(endpoint)
                 response = client.post(
                     endpoint,
                     headers={

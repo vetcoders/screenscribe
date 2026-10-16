@@ -624,17 +624,17 @@ class TestKeyEndpointMismatchWarning:
     @pytest.mark.parametrize(
         ("endpoint", "expected"),
         [
-            ("https://openai.com/v1/responses", "openai"),
+            ("https://openai.com/v1/responses", None),
             ("https://api.openai.com/v1/responses", "openai"),
             ("https://api.openai\u3002com/v1/responses", "openai"),
             ("https://api.openai\uff61com/v1/responses", "openai"),
-            ("https://libraxis.cloud/v1/responses", "libraxis"),
+            ("https://libraxis.cloud/v1/responses", None),
             ("https://api.libraxis.cloud/v1/responses", "libraxis"),
             ("https://api.libraxis\uff0ecloud/v1/responses", "libraxis"),
         ],
     )
     def test_endpoint_provider_accepts_only_canonical_domain_boundaries(
-        self, endpoint: str, expected: str
+        self, endpoint: str, expected: str | None
     ) -> None:
         assert ScreenScribeConfig._endpoint_provider(endpoint) == expected
 

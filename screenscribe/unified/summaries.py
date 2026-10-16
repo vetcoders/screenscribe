@@ -9,7 +9,12 @@ from __future__ import annotations
 import httpx
 from rich.markup import escape
 
-from ..api_utils import extract_response_payload_error, redact_error_message, retry_request
+from ..api_utils import (
+    extract_response_payload_error,
+    redact_error_message,
+    retry_request,
+    validate_provider_endpoint,
+)
 from ..config import ScreenScribeConfig
 from ._console import console
 from .finding import UnifiedFinding
@@ -90,6 +95,7 @@ def generate_unified_summary(findings: list[UnifiedFinding], config: ScreenScrib
                 # Build request body based on API format
                 from ..api_utils import build_llm_request_body
 
+                validate_provider_endpoint(config.llm_endpoint)
                 response = client.post(
                     config.llm_endpoint,
                     headers={

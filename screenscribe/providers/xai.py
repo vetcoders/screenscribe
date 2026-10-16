@@ -23,6 +23,7 @@ from typing import Any
 
 import httpx
 
+from ..api_utils import validate_provider_endpoint
 from ..transcribe_types import Segment, TranscriptionResult
 
 XAI_API_BASE = "https://api.x.ai"
@@ -146,6 +147,7 @@ def transcribe_file_xai(
     headers = {"Authorization": f"Bearer {api_key}"}
 
     with _client(transport, STT_TIMEOUT_SECONDS) as client:
+        validate_provider_endpoint(endpoint)
         response = client.post(endpoint, data=data, files=files, headers=headers)
         response.raise_for_status()
         payload = response.json()
@@ -212,6 +214,7 @@ def synthesize_speech_xai(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     with _client(transport, TTS_TIMEOUT_SECONDS) as client:
+        validate_provider_endpoint(endpoint)
         response = client.post(endpoint, json=body, headers=headers)
         response.raise_for_status()
         content_type = response.headers.get("content-type", "").split(";", 1)[0].strip()
@@ -229,6 +232,7 @@ def list_voices_xai(
         raise ValueError("API key required for xAI TTS (set SCREENSCRIBE_TTS_API_KEY)")
     headers = {"Authorization": f"Bearer {api_key}"}
     with _client(transport, TTS_TIMEOUT_SECONDS) as client:
+        validate_provider_endpoint(endpoint)
         response = client.get(endpoint, headers=headers)
         response.raise_for_status()
         payload = response.json()

@@ -188,9 +188,19 @@ coherent set of credentials, endpoints, and compatible models. A known OpenAI↔
 mismatch blocks before any request is sent. Custom endpoints remain available
 with a warning when provider compatibility cannot be verified.
 
+Remote provider endpoints require HTTPS (WSS for live STT). HTTP/WS is allowed
+only for `localhost` or a literal loopback address, including IPv6. Private LAN
+addresses still require TLS. Provider identity is restricted to the exact API
+hosts `api.libraxis.cloud`, `api.openai.com`, and `api.x.ai`; other gateways are
+custom providers and need explicitly configured credentials. Provider redirects
+are not followed; configure the final endpoint directly.
+
 The legacy `config --set-key` option remains for advanced compatibility, but it
 changes only the generic key and exposes its argument to shell history. It is
 not the recommended onboarding path.
+The existing config and its exact-byte backup are each replaced atomically with
+owner-only permissions. A failed backup leaves the config unchanged; a failed
+config replacement preserves the old config and the completed backup.
 
 > **Billing — bring-your-own-key (BYOK).** screenscribe does not resell or proxy
 > AI capacity. You bring your own provider key and you pay that provider directly

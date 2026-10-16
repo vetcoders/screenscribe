@@ -490,6 +490,29 @@ uv run screenscribe --version    # short form (also -V)
 
 ## Configuration reference
 
+Provider transport is checked again immediately before each request, including
+direct API calls, STT fallback, TTS, agent fallback, and live STT. Remote URLs
+must use `https://` or, for WebSockets, `wss://`. Plain `http://` / `ws://` is
+supported only for `localhost` (case/trailing-dot normalized) and literal
+loopback IPs: IPv4 `127.0.0.0/8`, IPv6 `::1`, and IPv4-mapped loopback. Hostname
+prefixes, DNS aliases, private LAN IPs, and alternate integer/octal IPv4 spelling
+are not loopback exceptions. Use TLS for those deployments. Redirects are not
+followed; set the final destination URL directly.
+
+Automatic provider identity uses only `api.libraxis.cloud`, `api.openai.com`,
+and `api.x.ai`, after IDNA/case/trailing-dot normalization. Parent domains and
+unlisted subdomains are custom endpoints, not proof of provider ownership.
+Custom HTTPS gateways remain available with explicitly configured keys.
+
+`config --set-key` writes an exact-byte `config.env.bak` before replacing the
+config; each file uses a temporary file in the same directory, `0600`, flush,
+fsync, and atomic replacement. Other config lines and their line endings are
+preserved. Failure before replacement leaves the old target intact. The two
+files are not a single transaction: if config replacement fails after a
+successful backup, the old config and its completed backup remain. This does
+not promise recovery from arbitrary hardware failure or serialize concurrent
+writers; avoid simultaneous configuration edits.
+
 screenscribe reads configuration from (in order) a config file and then
 environment variables, where **environment variables always win**.
 
@@ -644,7 +667,7 @@ keep, or a recording without narration minute by minute.
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `SCREENSCRIBE_AGENT_EGRESS` | `deny` | `deny` skips providers whose trust is `external`. `allow` sends the loaded report (and therefore the recording's contents) to those hosts. Analysis hosts (`processor`) are always kept. |
-| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from host and report receipt | `local` / `internal` / `processor` / `external`. localhost is `local`; `api.libraxis.cloud` is `internal`; a recorded successful semantic LLM host is `processor`. Set `external` to exclude that host under `deny`. |
+| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from host and report receipt | `local` / `internal` / `processor` / `external`. Strict loopback is `local`; only the canonical `api.libraxis.cloud` is implicitly `internal`, not other subdomains; a recorded successful semantic LLM host is `processor`. Set `external` to exclude that host under `deny`. An explicit trust override never bypasses transport validation. |
 
 Optional Anthropic fallback (skipped when unset): `ANTHROPIC_API_KEY` or `SCREENSCRIBE_AGENT_FALLBACK_API_KEY`. Install the extra with `pip install 'screenscribe[anthropic]'`.
 

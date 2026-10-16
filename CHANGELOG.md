@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+- **Security: atomic key and backup updates.** `config --set-key` now uses
+  same-directory atomic replacement for both the exact-byte backup and config,
+  preserving line endings and owner-only permissions without truncating the
+  existing target on a failed write.
+- **Security: validate provider transport at send time.** Remote HTTP and WS
+  endpoints are rejected, including fallback and direct API paths; strict
+  localhost/literal loopback HTTP and WS remain supported. Provider redirects
+  are not followed. Automatic provider identity now requires an exact API
+  hostname, and unlisted LibraxisAI subdomains no longer inherit internal trust
+  or ambient provider credentials. Custom HTTPS gateways remain supported.
+
 ## [0.1.20] - 2026-10-15
 
 - **Security: API keys stay with their provider.** `screenscribe doctor` no

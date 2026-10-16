@@ -10,6 +10,7 @@ from .api_utils import (
     extract_response_payload_error,
     redact_error_message,
     retry_request,
+    validate_provider_endpoint,
 )
 from .config import ScreenScribeConfig
 from .detect import Detection, format_timestamp
@@ -43,6 +44,7 @@ def generate_detection_executive_summary(
 
         def do_summary_request() -> httpx.Response:
             with httpx.Client(timeout=60.0) as client:
+                validate_provider_endpoint(config.llm_endpoint)
                 response = client.post(
                     config.llm_endpoint,
                     headers={

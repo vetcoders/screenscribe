@@ -31,6 +31,7 @@ from ..api_utils import (
     extract_response_payload_error,
     redact_error_message,
     retry_request,
+    validate_provider_endpoint,
 )
 from ..config import ScreenScribeConfig
 from ._console import console
@@ -172,6 +173,7 @@ def _default_llm_caller(config: ScreenScribeConfig) -> LlmCaller:
 
         def do_request() -> httpx.Response:
             with httpx.Client(timeout=120.0) as client:
+                validate_provider_endpoint(endpoint)
                 response = client.post(
                     endpoint,
                     headers={

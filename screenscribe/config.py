@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 from urllib.parse import urlsplit
 
-from .api_utils import redact_url
+from .api_utils import (
+    PROVIDER_HOSTS,
+    UnsafeEndpointError,
+    canonical_host,
+    redact_url,
+    validate_provider_endpoint,
+)
 
 
 def _invalid_endpoint_label(endpoint: str) -> str:
@@ -261,8 +267,7 @@ class ScreenScribeConfig:
             )
         if normalized == "custom":
             base = cls._normalize_api_base(custom_base)
-            if not base.startswith(("https://", "http://")):
-                raise ValueError("Custom provider base URL must start with https:// or http://")
+            validate_provider_endpoint(base)
             return cls(
                 provider="custom",
                 api_key=api_key,
@@ -453,10 +458,9 @@ class ScreenScribeConfig:
     def validate(self, providers: set[str] | None = None) -> list[str]:
         """Return BLOCKING configuration errors (empty when the config is usable).
 
-        Only genuinely fatal misconfigurations are returned here -- currently an
-        endpoint pointed at the wrong API path (a LibraxisAI host using
-        ``/v1/chat/completions`` instead of ``/v1/responses``), which fails every
-        request. Callers turn a non-empty result into ``Exit(1)``.
+        Invalid transport and provider/API-path mismatches are blocking.
+        Callers turn a non-empty result into ``Exit(1)``. Transports also check
+        the actual destination before sending, independently of this preflight.
 
         A LibraxisAI key (``sk-vista``/legacy ``vista-``) aimed at the openai.com
         endpoint stays blocking -- that key must never reach OpenAI. An ambiguous
@@ -468,9 +472,36 @@ class ScreenScribeConfig:
         "stt"). When ``None`` (the default, used by ``review``) every provider is
         checked.
         """
+        check_all = providers is None
         if providers is None:
             providers = {"llm", "vision", "stt"}
         errors = []
+
+        endpoints = [
+            (name.upper(), endpoint, False)
+            for name, endpoint in (
+                ("stt", self.stt_endpoint),
+                ("llm", self.llm_endpoint),
+                ("vision", self.vision_endpoint),
+            )
+            if name in providers
+        ]
+        if "stt" in providers:
+            endpoints.append(("STT fallback", self.stt_fallback_endpoint, False))
+        if check_all:
+            endpoints.extend(
+                [
+                    ("TTS", self.get_tts_endpoint(), False),
+                    ("Live STT", self.get_stt_live_endpoint(), True),
+                ]
+            )
+        for label, endpoint, websocket in endpoints:
+            if not endpoint:
+                continue
+            try:
+                validate_provider_endpoint(endpoint, websocket=websocket)
+            except UnsafeEndpointError as exc:
+                errors.append(f"{label}: {exc}")
 
         # LLM and Vision are one locked provider group: both endpoints must
         # resolve to the same known provider. A split (e.g. llm on xAI, vision
@@ -589,20 +620,7 @@ class ScreenScribeConfig:
             return None
         if not parsed_host:
             return None
-        try:
-            # HTTP clients IDNA-normalize Unicode label separators (for example
-            # U+3002) before DNS. Classify that same canonical ASCII host so the
-            # credential boundary cannot disagree with the eventual request.
-            host = parsed_host.encode("idna").decode("ascii").rstrip(".").lower()
-        except UnicodeError:
-            return None
-        if host == "libraxis.cloud" or host.endswith(".libraxis.cloud"):
-            return "libraxis"
-        if host == "openai.com" or host.endswith(".openai.com"):
-            return "openai"
-        if host == "x.ai" or host.endswith(".x.ai"):
-            return "xai"
-        return None
+        return PROVIDER_HOSTS.get(canonical_host(parsed_host))
 
     @staticmethod
     def _key_provider(key: str) -> str | None:
@@ -614,7 +632,7 @@ class ScreenScribeConfig:
         - Any other ``sk-`` key is ``"ambiguous"``: OpenAI issues ``sk-``/
           ``sk-proj-`` keys, but so do OpenAI-compatible gateways, so the shape
           alone never proves OpenAI. It is never auto-tagged OpenAI and never
-          hard-blocked -- only warned about on a LibraxisAI endpoint.
+        hard-blocked -- only warned about on a LibraxisAI endpoint.
         - Everything else is truly unknown (a custom provider's opaque token) and
           yields ``None`` so it stays silent. The key value is never returned.
         """
@@ -1241,17 +1259,17 @@ class ScreenScribeConfig:
         return config_path
 
     @staticmethod
-    def _atomic_write(config_path: Path, content: str) -> None:
+    def _atomic_write(config_path: Path, content: str | bytes) -> None:
         """Atomically replace a secret-bearing config with owner-only permissions."""
         fd, temp_name = tempfile.mkstemp(prefix=".config.env.", dir=config_path.parent)
         temp_path = Path(temp_name)
         fd_needs_close = True
         try:
             os.chmod(temp_path, 0o600)
-            file = os.fdopen(fd, "w", encoding="utf-8")
+            file = os.fdopen(fd, "wb")
             fd_needs_close = False
             with file:
-                file.write(content)
+                file.write(content.encode("utf-8") if isinstance(content, str) else content)
                 file.flush()
                 os.fsync(file.fileno())
             os.replace(temp_path, config_path)
@@ -1278,12 +1296,18 @@ class ScreenScribeConfig:
         state is always recoverable. When no config file exists yet, the full
         default template is written (which now emits every non-empty field).
         """
-        self.api_key = api_key
         config_path = Path.home() / ".config" / "screenscribe" / "config.env"
         if not config_path.exists():
-            return self.save_default_config()
+            previous = self.api_key
+            self.api_key = api_key
+            try:
+                return self.save_default_config()
+            except BaseException:
+                self.api_key = previous
+                raise
         self._backup_config(config_path)
         self._rewrite_api_key_line(config_path, api_key)
+        self.api_key = api_key
         return config_path
 
     @staticmethod
@@ -1291,13 +1315,7 @@ class ScreenScribeConfig:
         """Copy the current config to ``config.env.bak`` (owner-only 0600)."""
         backup_path = config_path.with_name(config_path.name + ".bak")
         data = config_path.read_bytes()
-        fd = os.open(backup_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        try:  # tighten an existing backup too (no-op on Windows)
-            os.chmod(backup_path, 0o600)
-        except OSError:
-            pass
+        ScreenScribeConfig._atomic_write(backup_path, data)
         return backup_path
 
     @staticmethod
@@ -1309,7 +1327,11 @@ class ScreenScribeConfig:
         touched); the original newline style is preserved. When the file has no
         active line, one is appended.
         """
-        lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
+        lines = config_path.read_bytes().decode("utf-8").splitlines(keepends=True)
+        preferred_newline = next(
+            (line[len(line.rstrip("\r\n")) :] for line in lines if line.endswith(("\r", "\n"))),
+            "\n",
+        )
         new_value = f"SCREENSCRIBE_API_KEY={api_key}"
         replaced = False
         for i, line in enumerate(lines):
@@ -1317,20 +1339,14 @@ class ScreenScribeConfig:
             if stripped.startswith("#") or "=" not in stripped:
                 continue
             if stripped.split("=", 1)[0].strip() == "SCREENSCRIBE_API_KEY":
-                newline = line[len(line.rstrip("\r\n")) :] or "\n"
+                newline = line[len(line.rstrip("\r\n")) :]
                 lines[i] = new_value + newline
                 replaced = True
                 break
         if not replaced:
             if lines and not lines[-1].endswith(("\n", "\r")):
-                lines[-1] += "\n"
-            lines.append(new_value + "\n")
+                lines[-1] += preferred_newline
+            lines.append(new_value + preferred_newline)
         content = "".join(lines)
 
-        fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(content)
-        try:  # tighten an existing file too (no-op on Windows)
-            os.chmod(config_path, 0o600)
-        except OSError:
-            pass
+        ScreenScribeConfig._atomic_write(config_path, content)

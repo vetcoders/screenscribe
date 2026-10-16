@@ -37,7 +37,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
-from .api_utils import extract_response_payload_error, retry_request
+from .api_utils import extract_response_payload_error, retry_request, validate_provider_endpoint
 from .audio import get_video_duration
 from .config import ScreenScribeConfig
 from .prompts import apply_analysis_prompt_override
@@ -209,6 +209,7 @@ class FrameOCRConfigError(ValueError):
 def _post_ocr_request(endpoint: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Transport for one OCR request (the patch seam for tests)."""
     with httpx.Client(timeout=120.0) as client:
+        validate_provider_endpoint(endpoint)
         response = client.post(
             endpoint,
             headers={
