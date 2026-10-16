@@ -3087,24 +3087,215 @@ html.ss-agent-sheet .app-container {
 }
 
 .ss-agent-msg {
+    max-width: 88%;
     padding: var(--space-xs) var(--space-sm);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     font-size: var(--fs-sm);
     line-height: 1.45;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
     user-select: text;
+}
+
+/* Who said it: a small role caption above each bubble (i18n text from JS). */
+.ss-agent-msg[data-role-label]::before {
+    content: attr(data-role-label);
+    display: block;
+    margin-bottom: 2px;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
 }
 
 .ss-agent-msg-user {
     align-self: flex-end;
-    background: var(--surface-hover);
-    color: var(--text-primary);
+    background: var(--ss-accent);
+    color: var(--ss-accent-ink);
+    border-bottom-right-radius: 3px;
+}
+
+.ss-agent-msg-user[data-role-label]::before {
+    color: var(--ss-accent-ink);
+    opacity: 0.7;
+    text-align: right;
 }
 
 .ss-agent-msg-assistant {
     align-self: flex-start;
     background: var(--surface-elevated);
     color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-bottom-left-radius: 3px;
+}
+
+/* Rendered Markdown answers. */
+.ss-agent-md {
+    white-space: normal;
+}
+
+.ss-agent-md > :first-child { margin-top: 0; }
+.ss-agent-md > :last-child { margin-bottom: 0; }
+
+.ss-agent-md p,
+.ss-agent-md ul,
+.ss-agent-md ol,
+.ss-agent-md blockquote,
+.ss-agent-md pre,
+.ss-agent-md .ss-agent-table-wrap {
+    margin: 0 0 var(--space-xs);
+}
+
+.ss-agent-md ul,
+.ss-agent-md ol {
+    padding-left: 1.3em;
+}
+
+.ss-agent-md li + li { margin-top: 2px; }
+
+.ss-agent-md h3,
+.ss-agent-md h4,
+.ss-agent-md h5,
+.ss-agent-md h6 {
+    margin: var(--space-sm) 0 var(--space-xs);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+.ss-agent-md h3 { font-size: calc(var(--fs-sm) * 1.12); }
+
+.ss-agent-md code {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+    padding: 0 3px;
+    border-radius: 3px;
+    background: var(--surface-hover);
+}
+
+.ss-agent-md pre {
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-default);
+    overflow-x: auto;
+    white-space: pre;
+}
+
+.ss-agent-md pre code {
+    padding: 0;
+    background: none;
+}
+
+.ss-agent-md blockquote {
+    padding-left: var(--space-sm);
+    border-left: 3px solid var(--border-accent);
+    color: var(--text-secondary);
+}
+
+.ss-agent-md-link {
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    overflow-wrap: anywhere;
+}
+
+.ss-agent-md hr {
+    border: 0;
+    border-top: 1px solid var(--border-default);
+    margin: var(--space-sm) 0;
+}
+
+.ss-agent-table-wrap { overflow-x: auto; }
+
+.ss-agent-md table {
+    border-collapse: collapse;
+    font-size: var(--fs-xs);
+}
+
+.ss-agent-md th,
+.ss-agent-md td {
+    border: 1px solid var(--border-default);
+    padding: 2px 6px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.ss-agent-md th { background: var(--surface-hover); }
+
+/* Screenshots: in a sent message and queued for the next one. */
+.ss-agent-msg-images,
+.ss-agent-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+}
+
+.ss-agent-msg-images { margin-top: var(--space-xs); }
+
+.ss-agent-msg-image {
+    max-width: 160px;
+    max-height: 110px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(0, 0, 0, 0.25);
+    object-fit: cover;
+}
+
+.ss-agent-attachments {
+    margin-bottom: var(--space-xs);
+}
+
+.ss-agent-attachments[hidden] { display: none; }
+
+.ss-agent-attachment {
+    position: relative;
+}
+
+.ss-agent-attachment-img {
+    display: block;
+    width: 64px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-default);
+}
+
+.ss-agent-attachment .ss-agent-attachment-remove {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 20px;
+    height: 20px;
+    min-width: 0;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-default);
+}
+
+.ss-agent-attachment .ss-agent-attachment-remove .ss-agent-icon {
+    width: 12px;
+    height: 12px;
+}
+
+.ss-agent-panel.ss-agent-dropping .ss-agent-log {
+    outline: 2px dashed var(--border-accent);
+    outline-offset: -6px;
+}
+
+.ss-agent-autosend {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.ss-agent-autosend input {
+    margin: 0;
+    accent-color: var(--ss-accent);
 }
 
 .ss-agent-msg-error {
@@ -4196,6 +4387,7 @@ window.I18N_BUNDLE = {
             "agentInterruptedHistory": "[answer stopped by the reviewer]",
             "agentTimeout": "No response from the agent for {{seconds}} s. The connection was closed.",
             "agentDisconnected": "Connection to the agent was lost: {{message}}",
+            "agentStreamCut": "The connection ended before the answer was complete.",
             "agentComposerHint": "Enter sends · Shift+Enter new line",
             "agentSendLabel": "Send message",
             "agentMic": "Dictate",
@@ -4207,6 +4399,18 @@ window.I18N_BUNDLE = {
             "agentMicRecording": "Recording… click the microphone to finish ({{seconds}} s)",
             "agentMicTranscribing": "Transcribing…",
             "agentMicInserted": "Dictation added to the draft. Edit it, then send.",
+            "agentMicSent": "Dictation sent.",
+            "agentAutosend": "Send after dictation",
+            "agentRoleUser": "You",
+            "agentRoleAgent": "Agent",
+            "agentAttachLabel": "Attach screenshots (or paste / drop them here)",
+            "agentAttachmentsLabel": "Screenshots for the next message",
+            "agentAttachRemove": "Remove screenshot",
+            "agentAttachmentAlt": "Attached screenshot",
+            "agentAttachLimit": "Up to {{count}} screenshots per message.",
+            "agentAttachFailed": "That file could not be read as an image.",
+            "agentImageOnly": "Look at the attached screenshot(s).",
+            "agentAttachedHistory": "[{{count}} screenshot(s) attached]",
             "agentMicNoSpeech": "No speech recognised. Try again closer to the microphone.",
             "agentMicCancelled": "Recording cancelled.",
             "agentMicDenied": "Microphone access was blocked. Allow it in the browser's site settings and try again.",
@@ -4537,6 +4741,7 @@ window.I18N_BUNDLE = {
             "agentInterruptedHistory": "[odpowiedź przerwana przez recenzenta]",
             "agentTimeout": "Agent nie odpowiada od {{seconds}} s. Połączenie zostało zamknięte.",
             "agentDisconnected": "Utracono połączenie z agentem: {{message}}",
+            "agentStreamCut": "Połączenie urwało się przed końcem odpowiedzi.",
             "agentComposerHint": "Enter wysyła · Shift+Enter nowa linia",
             "agentSendLabel": "Wyślij wiadomość",
             "agentMic": "Dyktuj",
@@ -4548,6 +4753,18 @@ window.I18N_BUNDLE = {
             "agentMicRecording": "Nagrywam… kliknij mikrofon, aby zakończyć ({{seconds}} s)",
             "agentMicTranscribing": "Transkrybuję…",
             "agentMicInserted": "Dyktowanie dodane do szkicu. Popraw je i wyślij.",
+            "agentMicSent": "Dyktowanie wysłane.",
+            "agentAutosend": "Wyślij po podyktowaniu",
+            "agentRoleUser": "Ty",
+            "agentRoleAgent": "Agent",
+            "agentAttachLabel": "Dołącz zrzuty ekranu (albo wklej / upuść je tutaj)",
+            "agentAttachmentsLabel": "Zrzuty do następnej wiadomości",
+            "agentAttachRemove": "Usuń zrzut",
+            "agentAttachmentAlt": "Dołączony zrzut ekranu",
+            "agentAttachLimit": "Maksymalnie {{count}} zrzuty na wiadomość.",
+            "agentAttachFailed": "Tego pliku nie da się odczytać jako obrazu.",
+            "agentImageOnly": "Spójrz na dołączone zrzuty.",
+            "agentAttachedHistory": "[dołączono zrzuty: {{count}}]",
             "agentMicNoSpeech": "Nie rozpoznano mowy. Spróbuj ponownie bliżej mikrofonu.",
             "agentMicCancelled": "Nagranie anulowane.",
             "agentMicDenied": "Dostęp do mikrofonu jest zablokowany. Zezwól na niego w ustawieniach strony w przeglądarce i spróbuj ponownie.",
@@ -6323,7 +6540,7 @@ function applyTranscriptCorrectionOverlay() {
     transcriptCorrectionRuntime.applying = true;
     try {
         const entries = transcriptCorrectionRuntime.entries;
-        document.querySelectorAll('.subtitle-item .text, .finding-transcript').forEach((el) => {
+        document.querySelectorAll('.subtitle-item .text, .finding-transcript, .merged-frame-transcript').forEach((el) => {
             applyCorrectionElement(el, entries);
         });
         const current = document.getElementById('currentSubtitle');
@@ -9206,11 +9423,34 @@ async function seekPlayerBeforeFrameCapture(timestamp) {
     });
 }
 
+let agentMarkerSeq = 0;
+
 async function addFindingFromPatch(op) {
     const timestamp = Number(op.timestamp);
     const summary = String(op.summary || '');
     const severity = String(op.severity || '');
     const category = String(op.category || '');
+    // A retried agent turn replays its tool calls (the dedupe inside one turn
+    // does not reach across a Retry). The same timestamp + summary is the same
+    // finding: hand back the stored marker instead of minting a twin.
+    const existing = (reportState.manualFrames || []).find((entry) => {
+        if (Number(entry.timestamp) !== timestamp) return false;
+        const notes = String(entry.notes || '');
+        const stored = entry.result && typeof entry.result === 'object'
+            ? String(entry.result.summary || '')
+            : '';
+        // notes may carry an appended "[chat] instruction" block after apply.
+        return stored === summary || notes === summary || notes.startsWith(summary + '\n');
+    });
+    if (existing) {
+        return {
+            op: 'add_finding',
+            markerId: existing.marker_id,
+            captured: false,
+            reversible: false,
+            duplicate: true,
+        };
+    }
     if (Number.isFinite(timestamp)) {
         seekToTimestamp(timestamp);
     }
@@ -9247,7 +9487,10 @@ async function addFindingFromPatch(op) {
             return { op: 'add_finding', markerId, captured: true, reversible: false };
         }
     }
-    const markerId = `agent-${String(Number.isFinite(timestamp) ? timestamp : 0)}-${Date.now()}`;
+    agentMarkerSeq += 1;
+    // Date.now() alone collides when two agent findings land in the same
+    // millisecond, and upsertManualFrame would silently replace the first.
+    const markerId = `agent-${String(Number.isFinite(timestamp) ? timestamp : 0)}-${Date.now()}-${agentMarkerSeq}`;
     upsertManualFrame({
         marker_id: markerId,
         timestamp: Number.isFinite(timestamp) ? timestamp : 0,
@@ -12270,6 +12513,18 @@ document.addEventListener('DOMContentLoaded', () => {
     var GAP = 16;
     var VIEW_MARGIN = 8;
     var SHEET_CLASS = 'ss-agent-sheet';
+    // Screenshots attached to one message (paste, drop or the image button).
+    // Large captures are downscaled so a Retina screenshot stays readable but
+    // the request stays a few hundred KB.
+    // Mirror of the backend request contract (agent/chat.py): more history
+    // items than _MAX_HISTORY_ITEMS or longer fields than
+    // _MAX_HISTORY_FIELD_CHARS get a 422 before the agent even starts.
+    var HISTORY_MAX_ITEMS = 50;
+    var HISTORY_MAX_FIELD_CHARS = 16000;
+    var MAX_ATTACHMENTS = 4;
+    var ATTACH_MAX_SIDE = 2048;
+    var ATTACH_KEEP_BYTES = 1500000;
+    var ATTACH_JPEG_QUALITY = 0.9;
 
     var state = {
         collapsed: true,
@@ -12296,6 +12551,10 @@ document.addEventListener('DOMContentLoaded', () => {
         timedOut: false,
         retryRows: [],
         mic: { status: 'idle', transport: null, timer: null, startedAt: 0, message: '' },
+        attachments: [],
+        retryImages: [],
+        autosend: false,
+        threadFingerprint: null,
     };
 
     function tx(key, args) {
@@ -12338,6 +12597,50 @@ document.addEventListener('DOMContentLoaded', () => {
     function storageKey() {
         var loc = root.location || {};
         return STORAGE_KEY + ':' + String(loc.origin || '') + String(loc.pathname || '');
+    }
+
+    function contentHash(text) {
+        // djb2: tiny, stable, no crypto dependency; this is a bucket key, not a secret.
+        var hash = 5381;
+        for (var i = 0; i < text.length; i += 1) {
+            hash = ((hash << 5) + hash + text.charCodeAt(i)) >>> 0;
+        }
+        return hash.toString(16);
+    }
+
+    function threadFingerprint() {
+        // Two different reports can share origin+pathname (same port, same
+        // report filename, different directory). The conversation must follow
+        // the REPORT, not the URL, or one recording's chat resurfaces - and
+        // gets resent to the model - under another recording.
+        if (state.threadFingerprint) return state.threadFingerprint;
+        var parts = [];
+        try {
+            var doc = root.document;
+            parts.push(String(doc.title || ''));
+            var island = doc.getElementById ? doc.getElementById('original-findings') : null;
+            var findings = island && island.textContent ? String(island.textContent) : '';
+            parts.push(String(findings.length));
+            parts.push(findings.slice(0, 400));
+            var segments = root.TRANSCRIPT_SEGMENTS;
+            if (Array.isArray(segments) && segments.length) {
+                var first = segments[0] || {};
+                var last = segments[segments.length - 1] || {};
+                parts.push(String(segments.length));
+                parts.push(String(first.start) + ':' + String(first.text || '').slice(0, 120));
+                parts.push(String(last.end) + ':' + String(last.text || '').slice(0, 120));
+            }
+            var video = doc.getElementById ? doc.getElementById('videoPlayer') : null;
+            if (video && typeof video.getAttribute === 'function') {
+                parts.push(String(video.getAttribute('src') || ''));
+            }
+        } catch (_err) { /* a partial fingerprint still beats a URL-only key */ }
+        state.threadFingerprint = contentHash(parts.join('|'));
+        return state.threadFingerprint;
+    }
+
+    function threadKey() {
+        return storageKey() + ':' + threadFingerprint();
     }
 
     function persist() {
@@ -12985,11 +13288,259 @@ document.addEventListener('DOMContentLoaded', () => {
         setCollapsed(!state.collapsed);
     }
 
-    function appendMessage(role, text) {
+    // ---- Markdown ----------------------------------------------------------
+    // Agent answers are Markdown. They are parsed into a small block/inline tree
+    // and built with createElement + text nodes only: model text never reaches
+    // innerHTML or a URL attribute, so a reply cannot inject markup or navigation.
+
+    function mdIsBlockStart(line) {
+        return /^\s*```/.test(line) || /^#{1,6}\s+/.test(line) || /^\s*>/.test(line)
+            || /^\s*[-*+]\s+/.test(line) || /^\s*\d+[.)]\s+/.test(line)
+            || /^\s*([-*_])(\s*\1){2,}\s*$/.test(line);
+    }
+
+    function mdTableCells(line) {
+        var trimmed = String(line).trim().replace(/^\|/, '').replace(/\|$/, '');
+        return trimmed.split('|').map(function (cell) { return cell.trim(); });
+    }
+
+    function mdBlocks(text) {
+        var lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+        var blocks = [];
+        var i = 0;
+        while (i < lines.length) {
+            var line = lines[i];
+            var fence = line.match(/^\s*```\s*([\w+#.-]*)\s*$/);
+            if (fence) {
+                var code = [];
+                i += 1;
+                while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
+                    code.push(lines[i]);
+                    i += 1;
+                }
+                i += 1;
+                blocks.push({ type: 'code', lang: fence[1] || '', text: code.join('\n') });
+                continue;
+            }
+            if (/^\s*$/.test(line)) { i += 1; continue; }
+            var heading = line.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/);
+            if (heading) {
+                blocks.push({ type: 'heading', level: heading[1].length, text: heading[2] });
+                i += 1;
+                continue;
+            }
+            if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+                blocks.push({ type: 'hr' });
+                i += 1;
+                continue;
+            }
+            if (line.indexOf('|') >= 0 && i + 1 < lines.length
+                && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
+                var header = mdTableCells(line);
+                var rows = [];
+                i += 2;
+                while (i < lines.length && lines[i].indexOf('|') >= 0 && !/^\s*$/.test(lines[i])) {
+                    rows.push(mdTableCells(lines[i]));
+                    i += 1;
+                }
+                blocks.push({ type: 'table', header: header, rows: rows });
+                continue;
+            }
+            if (/^\s*>/.test(line)) {
+                var quote = [];
+                while (i < lines.length && /^\s*>/.test(lines[i])) {
+                    quote.push(lines[i].replace(/^\s*>\s?/, ''));
+                    i += 1;
+                }
+                blocks.push({ type: 'quote', text: quote.join('\n') });
+                continue;
+            }
+            var bullet = /^\s*[-*+]\s+(.*)$/;
+            var ordered = /^\s*(\d+)[.)]\s+(.*)$/;
+            if (bullet.test(line) || ordered.test(line)) {
+                var isOrdered = !bullet.test(line);
+                var pattern = isOrdered ? ordered : bullet;
+                var first = line.match(pattern);
+                var list = { type: isOrdered ? 'ol' : 'ul', start: isOrdered ? Number(first[1]) : 1, items: [] };
+                while (i < lines.length) {
+                    var item = lines[i].match(pattern);
+                    if (item) {
+                        list.items.push(isOrdered ? item[2] : item[1]);
+                        i += 1;
+                    } else if (list.items.length && /^\s{2,}\S/.test(lines[i])) {
+                        list.items[list.items.length - 1] += '\n' + lines[i].trim();
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                blocks.push(list);
+                continue;
+            }
+            var para = [line];
+            i += 1;
+            while (i < lines.length && !/^\s*$/.test(lines[i]) && !mdIsBlockStart(lines[i])) {
+                para.push(lines[i]);
+                i += 1;
+            }
+            blocks.push({ type: 'p', text: para.join('\n') });
+        }
+        return blocks;
+    }
+
+    var MD_INLINE = /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\*\*(?=\S)([\s\S]*?\S)\*\*|\*(?=[^\s*])([^*\n]*?[^\s*])\*|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"])|(\n)/g;
+
+    function mdInline(text) {
+        var src = String(text || '');
+        var out = [];
+        var last = 0;
+        var re = new RegExp(MD_INLINE.source, 'g');
+        var match;
+        while ((match = re.exec(src)) !== null) {
+            if (match.index > last) out.push({ t: 'text', v: src.slice(last, match.index) });
+            if (match[1]) out.push({ t: 'code', v: match[2] });
+            else if (match[3] != null) out.push({ t: 'strong', c: mdInline(match[3]) });
+            else if (match[4] != null) out.push({ t: 'em', c: mdInline(match[4]) });
+            else if (match[5] != null) out.push({ t: 'link', href: match[6], c: mdInline(match[5]) });
+            else if (match[7] != null) out.push({ t: 'link', href: match[7], c: [{ t: 'text', v: match[7] }] });
+            else if (match[8] != null) out.push({ t: 'br' });
+            last = re.lastIndex;
+            if (match[0] === '') re.lastIndex += 1;
+        }
+        if (last < src.length) out.push({ t: 'text', v: src.slice(last) });
+        return out;
+    }
+
+    function mdInlineNodes(doc, parent, tokens) {
+        tokens.forEach(function (token) {
+            var node;
+            if (token.t === 'text') {
+                parent.appendChild(doc.createTextNode(token.v));
+                return;
+            }
+            if (token.t === 'br') {
+                parent.appendChild(doc.createElement('br'));
+                return;
+            }
+            if (token.t === 'code') {
+                node = doc.createElement('code');
+                node.textContent = token.v;
+            } else if (token.t === 'link') {
+                // Links stay text: a model-written URL never becomes an href
+                // (no javascript:/data: navigation from an answer). The address
+                // is shown so it can be copied.
+                node = doc.createElement('span');
+                node.className = 'ss-agent-md-link';
+                mdInlineNodes(doc, node, token.c);
+                var label = token.c.map(function (part) { return part.v || ''; }).join('');
+                if (label !== token.href) node.appendChild(doc.createTextNode(' (' + token.href + ')'));
+            } else {
+                node = doc.createElement(token.t === 'strong' ? 'strong' : 'em');
+                mdInlineNodes(doc, node, token.c);
+            }
+            parent.appendChild(node);
+        });
+    }
+
+    function mdNodes(doc, text) {
+        return mdBlocks(text).map(function (block) {
+            var node;
+            if (block.type === 'code') {
+                node = doc.createElement('pre');
+                var code = doc.createElement('code');
+                if (block.lang) code.setAttribute('data-lang', block.lang);
+                code.textContent = block.text;
+                node.appendChild(code);
+            } else if (block.type === 'heading') {
+                node = doc.createElement('h' + Math.min(6, block.level + 2));
+                mdInlineNodes(doc, node, mdInline(block.text));
+            } else if (block.type === 'hr') {
+                node = doc.createElement('hr');
+            } else if (block.type === 'quote') {
+                node = doc.createElement('blockquote');
+                mdNodes(doc, block.text).forEach(function (child) { node.appendChild(child); });
+            } else if (block.type === 'ul' || block.type === 'ol') {
+                node = doc.createElement(block.type);
+                if (block.type === 'ol' && block.start !== 1) node.setAttribute('start', String(block.start));
+                block.items.forEach(function (item) {
+                    var li = doc.createElement('li');
+                    mdInlineNodes(doc, li, mdInline(item));
+                    node.appendChild(li);
+                });
+            } else if (block.type === 'table') {
+                node = doc.createElement('div');
+                node.className = 'ss-agent-table-wrap';
+                var table = doc.createElement('table');
+                var thead = doc.createElement('thead');
+                var headRow = doc.createElement('tr');
+                block.header.forEach(function (cell) {
+                    var th = doc.createElement('th');
+                    mdInlineNodes(doc, th, mdInline(cell));
+                    headRow.appendChild(th);
+                });
+                thead.appendChild(headRow);
+                table.appendChild(thead);
+                var tbody = doc.createElement('tbody');
+                block.rows.forEach(function (cells) {
+                    var tr = doc.createElement('tr');
+                    cells.forEach(function (cell) {
+                        var td = doc.createElement('td');
+                        mdInlineNodes(doc, td, mdInline(cell));
+                        tr.appendChild(td);
+                    });
+                    tbody.appendChild(tr);
+                });
+                table.appendChild(tbody);
+                node.appendChild(table);
+            } else {
+                node = doc.createElement('p');
+                mdInlineNodes(doc, node, mdInline(block.text));
+            }
+            return node;
+        });
+    }
+
+    // Real DOM: rebuild the row from Markdown. Minimal DOMs without
+    // replaceChildren (the node-vm harness) keep the plain text.
+    function renderRich(row, text) {
+        if (!row) return;
+        var doc = root.document;
+        var value = String(text || '');
+        if (typeof row.replaceChildren !== 'function' || !doc || typeof doc.createTextNode !== 'function') {
+            row.textContent = value;
+            return;
+        }
+        row.replaceChildren.apply(row, mdNodes(doc, value));
+        if (row.classList) row.classList.add('ss-agent-md');
+    }
+
+    function roleLabel(role) {
+        if (role === 'user') return t('review.agentRoleUser');
+        if (role === 'assistant') return t('review.agentRoleAgent');
+        return '';
+    }
+
+    function appendImageStrip(row, images) {
+        if (!row || !images || !images.length) return;
+        var strip = el('div', 'ss-agent-msg-images');
+        images.forEach(function (image) {
+            var src = image.url || ('data:' + image.media_type + ';base64,' + image.data);
+            var img = el('img', 'ss-agent-msg-image', { alt: image.name || t('review.agentAttachmentAlt') });
+            img.src = src;
+            strip.appendChild(img);
+        });
+        row.appendChild(strip);
+    }
+
+    function appendMessage(role, text, images) {
         var log = root.document.getElementById('ss-agent-log');
         if (!log) return null;
         var row = el('div', 'ss-agent-msg ss-agent-msg-' + role);
-        row.textContent = text;
+        var label = roleLabel(role);
+        if (label && typeof row.setAttribute === 'function') row.setAttribute('data-role-label', label);
+        if (role === 'assistant') renderRich(row, text);
+        else row.textContent = text;
+        appendImageStrip(row, images);
         log.appendChild(row);
         if (typeof log.scrollTop === 'number') {
             log.scrollTop = log.scrollHeight || 0;
@@ -13111,7 +13662,7 @@ document.addEventListener('DOMContentLoaded', () => {
         var activity = doc.getElementById('ss-agent-activity');
         var panel = doc.getElementById('ss-agent-panel');
         if (input) input.disabled = false;
-        var hasText = Boolean(input && String(input.value || '').trim());
+        var hasText = Boolean(input && String(input.value || '').trim()) || state.attachments.length > 0;
         if (sendBtn) {
             sendBtn.disabled = !hasText || state.streaming;
             if (typeof sendBtn.setAttribute === 'function') {
@@ -13189,11 +13740,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function threadRecord() {
+        var identity = state.previousResponseIdentity;
         return {
             messages: state.history.map(function (entry) {
                 return { role: entry.role, content: entry.content };
             }),
             previousResponseId: state.previousResponseId || null,
+            // Without the identity a restored id is rejected by send() and the
+            // server-side chain silently restarts after every reload.
+            previousResponseIdentity: identity ? {
+                provider: identity.provider,
+                protocol: identity.protocol,
+                host: identity.host,
+            } : null,
         };
     }
 
@@ -13211,7 +13770,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function persistThread() {
         if (!root.indexedDB) return Promise.resolve(false);
-        var key = storageKey();
+        var key = threadKey();
         var record = threadRecord();
         return withThreadStore('readwrite', function (store) {
             return new Promise(function (resolve) {
@@ -13230,7 +13789,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function readThread() {
         if (!root.indexedDB) return Promise.resolve(null);
-        var key = storageKey();
+        var key = threadKey();
         return withThreadStore('readonly', function (store) {
             return new Promise(function (resolve) {
                 var req;
@@ -13283,6 +13842,19 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!restored.length && typeof chain !== 'string') return false;
             state.history = restored;
             state.previousResponseId = typeof chain === 'string' && chain ? chain : null;
+            var identity = record.previousResponseIdentity;
+            state.previousResponseIdentity = (
+                identity
+                && typeof identity === 'object'
+                && typeof identity.provider === 'string'
+                && typeof identity.protocol === 'string'
+                && typeof identity.host === 'string'
+            ) ? {
+                provider: identity.provider,
+                protocol: identity.protocol,
+                host: identity.host,
+            } : null;
+            if (!state.previousResponseIdentity) state.previousResponseId = null;
             state.retryMessage = null;
             state.retryRow = null;
             paintStoredMessages(restored);
@@ -13367,7 +13939,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         if (row) {
-            row.textContent = assembled;
+            renderRich(row, assembled);
             markPartial(row);
         }
         var errorRow = appendMessage('error', messageText);
@@ -13387,7 +13959,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 row.parentNode.removeChild(row);
             }
         });
-        return send(message, { retry: true });
+        return send(message, { retry: true, images: state.retryImages });
     }
 
     function clearIdleTimer() {
@@ -13433,7 +14005,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         if (row) {
-            row.textContent = assembled;
+            renderRich(row, assembled);
             markPartial(row);
         }
         state.history.push({
@@ -13470,7 +14042,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function canSend(text) {
-        return Boolean(String(text || '').trim()) && !state.streaming;
+        return (Boolean(String(text || '').trim()) || state.attachments.length > 0) && !state.streaming;
     }
 
     function makeAbortController() {
@@ -13483,6 +14055,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function requestHistory() {
+        // The full conversation stays in state.history (and IndexedDB) for the
+        // log; the API accepts at most HISTORY_MAX_ITEMS entries of at most
+        // HISTORY_MAX_FIELD_CHARS each. Sending everything used to 422 the
+        // 27th turn and every Retry after it.
+        var past = state.history.slice(0, -1);
+        return past.slice(-HISTORY_MAX_ITEMS).map(function (entry) {
+            return {
+                role: entry.role,
+                content: String(entry.content || '').slice(0, HISTORY_MAX_FIELD_CHARS),
+            };
+        });
+    }
+
     async function send(text, options) {
         if (state.threadReady) {
             try {
@@ -13490,12 +14076,20 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (_err) { /* restore is best-effort; never block the turn */ }
         }
         var retrying = Boolean(options && options.retry);
+        var images = options && Array.isArray(options.images) ? options.images : [];
         var message = String(text || '').trim();
+        if (!message && images.length) message = t('review.agentImageOnly');
         if (!message || state.streaming) return false;
         if (!retrying) {
             disarmRetry();
-            appendMessage('user', message);
-            state.history.push({ role: 'user', content: message });
+            state.retryImages = images;
+            appendMessage('user', message, images);
+            state.history.push({
+                role: 'user',
+                content: images.length
+                    ? message + '\n' + tx('review.agentAttachedHistory', { count: images.length })
+                    : message,
+            });
         }
         if (isOffline()) {
             showOfflineNotice();
@@ -13515,6 +14109,7 @@ document.addEventListener('DOMContentLoaded', () => {
         armIdleTimer();
         var assembled = '';
         var errored = false;
+        var sawDone = false;
         var seenToolResults = new Set();
         var requestCursor = state.previousResponseId;
         var requestIdentity = state.previousResponseIdentity;
@@ -13534,7 +14129,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
                 body: JSON.stringify({
                     message: message,
-                    history: state.history.slice(0, -1),
+                    images: images.map(function (image) {
+                        return { media_type: image.media_type, data: image.data };
+                    }),
+                    history: requestHistory(),
                     previous_response_id: requestCursor,
                     previous_response_provider: requestIdentity && requestIdentity.provider,
                     previous_response_protocol: requestIdentity && requestIdentity.protocol,
@@ -13559,7 +14157,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!evt) return;
                 if (evt.event === 'token') {
                     assembled += (evt.data && evt.data.text) || '';
-                    if (assistantRow && !errored) assistantRow.textContent = assembled;
+                    if (assistantRow && !errored) renderRich(assistantRow, assembled);
                     var log = root.document.getElementById('ss-agent-log');
                     if (log && typeof log.scrollTop === 'number') log.scrollTop = log.scrollHeight || 0;
                 } else if (evt.event === 'tool_call') {
@@ -13575,6 +14173,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         message
                     );
                 } else if (evt.event === 'done') {
+                    sawDone = true;
                     if (!errored) {
                         acceptDoneCursor(evt.data, requestIdentity);
                     }
@@ -13593,7 +14192,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 onActivity: armIdleTimer,
             });
             if (state.stopRequested || state.timedOut) throw abortError();
-            if (assembled && !errored) {
+            if (!errored && !sawDone) {
+                // The server stream ended without its own `done` event: the
+                // text on screen is a fragment. Mark it and offer Retry
+                // instead of logging it as a finished answer.
+                errored = true;
+                failTurn(assistantRow, assembled, tx('review.agentStreamCut'), message);
+            } else if (assembled && !errored) {
                 state.history.push({ role: 'assistant', content: assembled });
             } else if (!errored) {
                 removeEmptyAssistant(assistantRow);
@@ -13703,11 +14308,18 @@ document.addEventListener('DOMContentLoaded', () => {
             if (event && event.preventDefault) event.preventDefault();
             var value = input.value;
             if (!canSend(value)) return;
+            var images = takeAttachments();
             input.value = '';
             onDraftChanged(input);
-            send(value);
+            send(value, { images: images });
         });
         input.addEventListener('input', function () { onDraftChanged(input); });
+        input.addEventListener('paste', function (event) {
+            var files = clipboardImages(event);
+            if (!files.length) return;
+            if (event.preventDefault) event.preventDefault();
+            addImageFiles(files);
+        });
         input.addEventListener('keydown', function (event) {
             if (event && event.key === 'Escape') {
                 if (state.mic.status === 'recording' || state.mic.status === 'requesting') {
@@ -13725,6 +14337,177 @@ document.addEventListener('DOMContentLoaded', () => {
             if (event.preventDefault) event.preventDefault();
             submitComposer(form);
         });
+    }
+
+    // ---- Screenshot attachments --------------------------------------------
+
+    function clipboardImages(event) {
+        var data = event && (event.clipboardData || event.dataTransfer);
+        var files = [];
+        if (!data) return files;
+        var items = data.items || [];
+        for (var i = 0; i < items.length; i += 1) {
+            var item = items[i];
+            if (item && item.kind === 'file' && /^image\//.test(String(item.type || ''))) {
+                var file = typeof item.getAsFile === 'function' ? item.getAsFile() : null;
+                if (file) files.push(file);
+            }
+        }
+        if (!files.length && data.files) {
+            for (var j = 0; j < data.files.length; j += 1) {
+                if (/^image\//.test(String(data.files[j].type || ''))) files.push(data.files[j]);
+            }
+        }
+        return files;
+    }
+
+    function readAsDataUrl(blob) {
+        return new Promise(function (resolve, reject) {
+            var reader = new root.FileReader();
+            reader.onload = function () { resolve(String(reader.result || '')); };
+            reader.onerror = function () { reject(reader.error || new Error('read failed')); };
+            reader.readAsDataURL(blob);
+        });
+    }
+
+    function loadImage(url) {
+        return new Promise(function (resolve, reject) {
+            var img = new root.Image();
+            img.onload = function () { resolve(img); };
+            img.onerror = function () { reject(new Error('not an image')); };
+            img.src = url;
+        });
+    }
+
+    function splitDataUrl(url) {
+        var match = String(url).match(/^data:([^;,]+);base64,(.*)$/);
+        return match ? { media_type: match[1], data: match[2] } : null;
+    }
+
+    // Keep small PNG/JPEG screenshots byte-exact (sharp text); re-encode large
+    // or exotic ones as JPEG with the long side capped.
+    async function prepareImage(file) {
+        var original = await readAsDataUrl(file);
+        var img = await loadImage(original);
+        var width = img.naturalWidth || img.width;
+        var height = img.naturalHeight || img.height;
+        var keep = (file.type === 'image/png' || file.type === 'image/jpeg')
+            && file.size <= ATTACH_KEEP_BYTES
+            && Math.max(width, height) <= ATTACH_MAX_SIDE;
+        if (keep) {
+            var parts = splitDataUrl(original);
+            if (parts) return { media_type: parts.media_type, data: parts.data, url: original, name: file.name || '' };
+        }
+        var scale = Math.min(1, ATTACH_MAX_SIDE / Math.max(width, height || 1));
+        var canvas = root.document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(width * scale));
+        canvas.height = Math.max(1, Math.round(height * scale));
+        var ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        var jpeg = canvas.toDataURL('image/jpeg', ATTACH_JPEG_QUALITY);
+        var encoded = splitDataUrl(jpeg);
+        if (!encoded) throw new Error('encode failed');
+        return { media_type: encoded.media_type, data: encoded.data, url: jpeg, name: file.name || '' };
+    }
+
+    function setAttachStatus(message) {
+        var status = root.document.getElementById('ss-agent-mic-status');
+        if (!status) return;
+        status.textContent = message || '';
+        status.hidden = !message;
+    }
+
+    async function addImageFiles(files) {
+        var list = Array.prototype.slice.call(files || []);
+        var room = MAX_ATTACHMENTS - state.attachments.length;
+        if (room <= 0) {
+            setAttachStatus(tx('review.agentAttachLimit', { count: MAX_ATTACHMENTS }));
+            return 0;
+        }
+        if (list.length > room) {
+            setAttachStatus(tx('review.agentAttachLimit', { count: MAX_ATTACHMENTS }));
+            list = list.slice(0, room);
+        }
+        var added = 0;
+        for (var i = 0; i < list.length; i += 1) {
+            try {
+                state.attachments.push(await prepareImage(list[i]));
+                added += 1;
+            } catch (_err) {
+                setAttachStatus(tx('review.agentAttachFailed'));
+            }
+        }
+        renderAttachments();
+        syncComposer();
+        return added;
+    }
+
+    function removeAttachment(index) {
+        state.attachments.splice(index, 1);
+        renderAttachments();
+        syncComposer();
+    }
+
+    function takeAttachments() {
+        var taken = state.attachments;
+        state.attachments = [];
+        renderAttachments();
+        return taken;
+    }
+
+    function renderAttachments() {
+        var strip = root.document.getElementById('ss-agent-attachments');
+        if (!strip) return;
+        if (typeof strip.replaceChildren === 'function') strip.replaceChildren();
+        else if (strip.children) strip.children.length = 0;
+        strip.hidden = state.attachments.length === 0;
+        state.attachments.forEach(function (image, index) {
+            var chip = el('div', 'ss-agent-attachment');
+            var img = el('img', 'ss-agent-attachment-img', { alt: image.name || t('review.agentAttachmentAlt') });
+            img.src = image.url;
+            var remove = iconButton(
+                'ss-agent-attachment-remove-' + index,
+                'ss-agent-icon-btn ss-agent-attachment-remove',
+                'close',
+                tx('review.agentAttachRemove')
+            );
+            remove.addEventListener('click', function () { removeAttachment(index); });
+            chip.appendChild(img);
+            chip.appendChild(remove);
+            strip.appendChild(chip);
+        });
+    }
+
+    function autosendKey() {
+        return storageKey() + ':autosend';
+    }
+
+    function loadAutosend() {
+        try {
+            return root.localStorage.getItem(autosendKey()) === '1';
+        } catch (_err) {
+            return false;
+        }
+    }
+
+    function setAutosend(enabled) {
+        state.autosend = Boolean(enabled);
+        try {
+            if (state.autosend) root.localStorage.setItem(autosendKey(), '1');
+            else root.localStorage.removeItem(autosendKey());
+        } catch (_err) { /* private mode: the toggle lasts for this page */ }
+        var box = root.document.getElementById('ss-agent-autosend');
+        if (box) box.checked = state.autosend;
+    }
+
+    function autosendDictation() {
+        if (!state.autosend || state.streaming) return false;
+        var form = root.document.getElementById('ss-agent-form');
+        if (!form) return false;
+        submitComposer(form);
+        return true;
     }
 
     // ---- Panel size -------------------------------------------------------
@@ -14016,8 +14799,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (busy) setMicState('transcribing', tx('review.agentMicTranscribing'));
             },
             onTranscript: function (text) {
-                if (insertDictation(text)) setMicState('idle', tx('review.agentMicInserted'));
-                else setMicState('idle', tx('review.agentMicNoSpeech'));
+                if (insertDictation(text)) {
+                    setMicState('idle', tx(state.autosend ? 'review.agentMicSent' : 'review.agentMicInserted'));
+                    autosendDictation();
+                } else {
+                    setMicState('idle', tx('review.agentMicNoSpeech'));
+                }
             },
             onError: function (error) {
                 var detail = error && error.message ? String(error.message) : '';
@@ -14100,6 +14887,7 @@ document.addEventListener('DOMContentLoaded', () => {
             close: 'M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6z',
             resize: 'M4 20h2v-2H4zm0-4h2v-2H4zm4 4h2v-2H8zm-4-8h2v-2H4zm4 4h2v-2H8zm4 4h2v-2h-2z',
             size: 'M4 4h7v2H7.4l4.3 4.3-1.4 1.4L6 7.4V11H4zm16 16h-7v-2h3.6l-4.3-4.3 1.4-1.4 4.3 4.3V13h2z',
+            image: 'M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v9.6l3.5-3.5 2.5 2.5 4.5-4.5L19 13.6V6H5zm3.5 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z',
         };
         if (!doc || typeof doc.createElementNS !== 'function' || !paths[name]) {
             return null;
@@ -14128,6 +14916,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function buildDom() {
         var doc = root.document;
         if (getRoot()) return;
+        state.autosend = loadAutosend();
         var rootEl = el('div', 'ss-agent-root ss-agent-collapsed', { id: 'ss-agent-root' });
         var fab = el('button', 'ss-agent-fab', {
             id: 'ss-agent-fab',
@@ -14157,6 +14946,22 @@ document.addEventListener('DOMContentLoaded', () => {
         sizeBtn.addEventListener('click', function () { cycleSizePreset(); });
         header.appendChild(sizeBtn);
         header.addEventListener('mousedown', startDrag);
+        panel.addEventListener('dragover', function (event) {
+            if (!clipboardImages(event).length && !(event && event.dataTransfer
+                && Array.prototype.indexOf.call(event.dataTransfer.types || [], 'Files') >= 0)) return;
+            if (event.preventDefault) event.preventDefault();
+            if (panel.classList) panel.classList.add('ss-agent-dropping');
+        });
+        panel.addEventListener('dragleave', function () {
+            if (panel.classList) panel.classList.remove('ss-agent-dropping');
+        });
+        panel.addEventListener('drop', function (event) {
+            if (panel.classList) panel.classList.remove('ss-agent-dropping');
+            var files = clipboardImages(event);
+            if (!files.length) return;
+            if (event.preventDefault) event.preventDefault();
+            addImageFiles(files);
+        });
         header.addEventListener('touchstart', startDrag);
 
         var log = el('div', 'ss-agent-log', {
@@ -14228,6 +15033,27 @@ document.addEventListener('DOMContentLoaded', () => {
         );
         micCancel.hidden = true;
         micCancel.addEventListener('click', function () { cancelMic(); });
+        var attachBtn = iconButton(
+            'ss-agent-attach',
+            'ss-agent-icon-btn ss-agent-attach',
+            'image',
+            tx('review.agentAttachLabel')
+        );
+        var fileInput = el('input', 'ss-agent-visually-hidden', {
+            id: 'ss-agent-file',
+            type: 'file',
+            accept: 'image/png,image/jpeg,image/webp,image/gif',
+            multiple: 'multiple',
+            tabindex: '-1',
+            'aria-hidden': 'true',
+        });
+        attachBtn.addEventListener('click', function () {
+            if (typeof fileInput.click === 'function') fileInput.click();
+        });
+        fileInput.addEventListener('change', function () {
+            var files = fileInput.files;
+            addImageFiles(files).then(function () { fileInput.value = ''; });
+        });
         var sendBtn = el('button', 'ss-agent-send', {
             id: 'ss-agent-send',
             type: 'submit',
@@ -14236,10 +15062,16 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         sendBtn.textContent = t('review.agentSend');
         actions.appendChild(micCancel);
+        actions.appendChild(attachBtn);
         actions.appendChild(micBtn);
         actions.appendChild(sendBtn);
         composer.appendChild(input);
         composer.appendChild(actions);
+        var attachments = el('div', 'ss-agent-attachments', {
+            id: 'ss-agent-attachments',
+            hidden: 'hidden',
+            'aria-label': tx('review.agentAttachmentsLabel'),
+        });
 
         var foot = el('div', 'ss-agent-composer-foot');
         var micStatus = el('p', 'ss-agent-mic-status', {
@@ -14250,10 +15082,21 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         var hint = el('span', 'ss-agent-hint', { id: hintId, 'data-i18n': 'agentComposerHint' });
         hint.textContent = t('review.agentComposerHint');
+        var autosendLabel = el('label', 'ss-agent-autosend');
+        var autosendBox = el('input', '', { id: 'ss-agent-autosend', type: 'checkbox' });
+        autosendBox.checked = state.autosend;
+        autosendBox.addEventListener('change', function () { setAutosend(autosendBox.checked); });
+        var autosendText = el('span', '', { 'data-i18n': 'agentAutosend' });
+        autosendText.textContent = t('review.agentAutosend');
+        autosendLabel.appendChild(autosendBox);
+        autosendLabel.appendChild(autosendText);
         foot.appendChild(micStatus);
+        foot.appendChild(autosendLabel);
         foot.appendChild(hint);
+        form.appendChild(attachments);
         form.appendChild(composer);
         form.appendChild(foot);
+        form.appendChild(fileInput);
         bindComposer(form, input);
 
         var resizeHandle = el('div', 'ss-agent-resize', {
@@ -14371,6 +15214,8 @@ document.addEventListener('DOMContentLoaded', () => {
         formatReference: formatReference,
         insertReference: insertReference,
         restoreThread: restoreThread,
+        threadKey: threadKey,
+        requestHistory: requestHistory,
         whenThreadReady: function () { return state.threadReady || Promise.resolve(false); },
         stop: stop,
         setPanelSize: setPanelSize,
@@ -14387,6 +15232,14 @@ document.addEventListener('DOMContentLoaded', () => {
         toggleMic: toggleMic,
         micSupport: micSupport,
         insertDictation: insertDictation,
+        mdBlocks: mdBlocks,
+        mdInline: mdInline,
+        renderRich: renderRich,
+        addImageFiles: addImageFiles,
+        takeAttachments: takeAttachments,
+        setAutosend: setAutosend,
+        autosendDictation: autosendDictation,
+        MAX_ATTACHMENTS: MAX_ATTACHMENTS,
         syncComposer: syncComposer,
         IDLE_TIMEOUT_MS: IDLE_TIMEOUT_MS,
         MIN_WIDTH: MIN_WIDTH,
@@ -14598,6 +15451,21 @@ document.addEventListener('DOMContentLoaded', () => {
         return null;
     }
 
+    function focusNode(selection) {
+        if (!selection) return null;
+        if (selection.focusNode) return selection.focusNode;
+        if (selection.rangeCount && typeof selection.getRangeAt === 'function') {
+            var range = selection.getRangeAt(0);
+            if (range) return range.endContainer || null;
+        }
+        return null;
+    }
+
+    function referenceIdFor(el) {
+        var id = closestFindingId(el);
+        return id != null ? id : headingFallback(el);
+    }
+
     function envelopeForSelection(selection, documentRef) {
         if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
         var raw = '';
@@ -14613,11 +15481,25 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!field) return null;
         var momentId = null;
         if (field !== 'executive_summary' && field !== 'subtitle') {
-            momentId = closestFindingId(el);
-            if (momentId == null) momentId = headingFallback(el);
+            momentId = referenceIdFor(el);
+        }
+        var endEl = asElement(focusNode(selection));
+        if (endEl && endEl !== el) {
+            // A selection spanning two findings (or two fields) has no single
+            // honest reference: attributing both cards' text to the first
+            // finding feeds the agent wrong evidence. Offer nothing instead.
+            if (fieldFor(endEl) !== field) return null;
+            if (
+                field !== 'executive_summary'
+                && field !== 'subtitle'
+                && String(referenceIdFor(endEl)) !== String(momentId)
+            ) {
+                return null;
+            }
         }
         var transcriptError = Boolean(
             closestClass(el, 'finding-transcript')
+            || closestClass(el, 'merged-frame-transcript')
             || closestClass(el, 'subtitle-list')
             || closestClass(el, 'subtitle-item')
             || closestClass(el, 'transcript-list')

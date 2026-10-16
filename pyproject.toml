@@ -133,6 +133,13 @@ exclude = [
 module = "tests.*"
 disallow_untyped_defs = false
 
+# hatchling ships no type stubs; with ignore_missing_imports its
+# BuildHookInterface resolves to Any and strict mode refuses the subclass.
+# Keep the build hook type-checked instead of excluding it.
+[[tool.mypy.overrides]]
+module = "hatch_build"
+disallow_subclassing_any = false
+
 # Pytest
 [tool.pytest.ini_options]
 testpaths = ["tests"]

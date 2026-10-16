@@ -386,3 +386,55 @@ def test_transcribe_video_ocr_raises_when_every_frame_fails(
         frame_ocr.transcribe_video_ocr(
             tmp_path / "clip.mov", ScreenScribeConfig(), work_dir=tmp_path / "frames"
         )
+
+
+def test_one_malformed_provider_payload_is_a_gap_not_a_lost_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R5-05: a ValueError from one frame's response must not kill the run.
+
+    ``_post_ocr_request`` raises ValueError when a provider answers with a
+    non-object payload; only ``FrameOCRConfigError`` (setup) aborts the run.
+    """
+    monkeypatch.setattr(frame_ocr, "get_video_duration", lambda _p: 15.0)
+    monkeypatch.setattr(
+        frame_ocr,
+        "extract_screenshot",
+        lambda _video, timestamp, out: out.write_bytes(f"jpeg-{timestamp}".encode()),
+    )
+    monkeypatch.setattr(frame_ocr, "_frame_probe_hash", lambda p: p.name)
+
+    def flaky_ocr(frame_path: Path, config: ScreenScribeConfig, *, cache_dir: Path | None = None):
+        timestamp = float(frame_path.stem.split("_")[-1].removesuffix("s"))
+        if timestamp == 5.0:
+            raise ValueError("Frame OCR endpoint returned a non-object JSON payload")
+        return f"text at {timestamp:g}", f"resp-{timestamp:g}"
+
+    monkeypatch.setattr(frame_ocr, "ocr_frame", flaky_ocr)
+    result = frame_ocr.transcribe_video_ocr(
+        tmp_path / "clip.mov", ScreenScribeConfig(), work_dir=tmp_path / "frames"
+    )
+    assert [segment.start for segment in result.segments] == [0.0, 10.0]
+
+
+def test_missing_vision_key_still_fails_the_whole_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(frame_ocr, "get_video_duration", lambda _p: 10.0)
+    monkeypatch.setattr(
+        frame_ocr,
+        "extract_screenshot",
+        lambda _video, timestamp, out: out.write_bytes(f"jpeg-{timestamp}".encode()),
+    )
+    monkeypatch.setattr(frame_ocr, "_frame_probe_hash", lambda p: p.name)
+
+    def missing_key(*_args: Any, **_kwargs: Any) -> tuple[str, str]:
+        raise frame_ocr.FrameOCRConfigError(
+            "Vision API key required for OCR transcript source."
+        )
+
+    monkeypatch.setattr(frame_ocr, "ocr_frame", missing_key)
+    with pytest.raises(frame_ocr.FrameOCRConfigError, match="Vision API key required"):
+        frame_ocr.transcribe_video_ocr(
+            tmp_path / "clip.mov", ScreenScribeConfig(), work_dir=tmp_path / "frames"
+        )

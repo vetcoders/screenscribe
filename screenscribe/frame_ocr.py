@@ -196,6 +196,16 @@ def _write_private_cache_entry(cache_path: Path, payload: dict[str, str]) -> Non
     cache_path.chmod(0o600)
 
 
+class FrameOCRConfigError(ValueError):
+    """A setup problem that dooms every frame (e.g. missing vision key).
+
+    Subclasses ``ValueError`` so existing handlers keep working. The OCR pool
+    aborts the whole run only for this type; any other error from a single
+    frame (including a provider returning a malformed payload) is a gap in
+    the transcript, not a lost run.
+    """
+
+
 def _post_ocr_request(endpoint: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Transport for one OCR request (the patch seam for tests)."""
     with httpx.Client(timeout=120.0) as client:
@@ -227,7 +237,7 @@ def ocr_frame(
     """
     api_key = config.get_vision_api_key()
     if not api_key:
-        raise ValueError(
+        raise FrameOCRConfigError(
             "Vision API key required for OCR transcript source. "
             "Run `screenscribe auth login` or set SCREENSCRIBE_VISION_API_KEY."
         )
@@ -350,9 +360,11 @@ def transcribe_video_ocr(
                     index = futures[future]
                     try:
                         results[index] = future.result()
-                    except ValueError:
+                    except FrameOCRConfigError:
                         # Configuration errors (missing key) are not per-frame
-                        # transients: fail the whole source immediately.
+                        # transients: fail the whole source immediately. A
+                        # plain ValueError (e.g. one malformed provider
+                        # payload) stays a per-frame gap below.
                         raise
                     except Exception as exc:  # one bad frame is a gap, not a lost run
                         failures.append((kept[index][0], exc))
