@@ -1708,3 +1708,113 @@ def test_restored_chain_keeps_its_identity_after_reload() -> None:
         )
     )
     assert "identity-reload:ok" in output
+
+
+def test_escape_stops_the_stream_from_anywhere_in_the_panel() -> None:
+    """R4-05: after click-to-send the focus sits on the button, not the field.
+
+    Escape used to be handled only by the textarea's keydown listener, so a
+    mouse user had no keyboard stop.
+    """
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            let aborted = false;
+            function makeAbort() {
+                return { signal: {}, abort() { aborted = true; } };
+            }
+            window.AbortController = function () { return makeAbort(); };
+            fetch = async () => ({
+                ok: true,
+                text: () => new Promise(() => {}),  // a stream that never ends
+            });
+            window.fetch = fetch;
+            api.init();
+            const pending = api.send('long question');
+            await Promise.resolve();
+            if (!api.getState().streaming) throw new Error('turn did not start streaming');
+            const panel = document.getElementById('ss-agent-panel');
+            let prevented = false;
+            panel.dispatchEvent({
+                type: 'keydown',
+                key: 'Escape',
+                preventDefault() { prevented = true; },
+            });
+            if (!api.getState().stopRequested && !aborted) {
+                throw new Error('Escape on the panel did not request a stop');
+            }
+            if (!prevented) throw new Error('Escape default not prevented');
+            process.stdout.write('panel-escape:ok');
+            """
+        )
+    )
+    assert "panel-escape:ok" in output
+
+
+def test_stacked_sheet_scrolls_into_view_and_hides_size_controls() -> None:
+    """R4-03/R4-04: on a phone the sheet sits at the end of the document.
+
+    Opening the chat must scroll it on screen, and the resize controls that
+    the mobile CSS overrides into a fixed size must disappear.
+    """
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            window.matchMedia = (query) => ({ matches: String(query).includes('max-width: 900px') });
+            innerWidth = 390;
+            innerHeight = 700;
+            window.innerWidth = 390;
+            window.innerHeight = 700;
+            const video = document.getElementById('videoPlayer');
+            video._rect = { left: 0, top: 0, right: 390, bottom: 600, width: 390, height: 600 };
+            api.init();
+            const rootEl = document.getElementById('ss-agent-root');
+            let scrolled = 0;
+            rootEl.scrollIntoView = () => { scrolled += 1; };
+            api.setCollapsed(false);
+            if (!api.getState().sheet) throw new Error('cramped phone layout must dock as a sheet');
+            if (scrolled !== 1) throw new Error('open did not scroll the sheet into view: ' + scrolled);
+            const handle = document.getElementById('ss-agent-resize');
+            const sizeBtn = document.getElementById('ss-agent-size');
+            if (!handle.hidden || !sizeBtn.hidden) {
+                throw new Error('size controls visible in the fixed-size sheet');
+            }
+            // Desktop: controls come back.
+            window.matchMedia = () => ({ matches: false });
+            innerWidth = 1280; innerHeight = 800;
+            window.innerWidth = 1280; window.innerHeight = 800;
+            video._rect = { left: 8, top: 8, right: 600, bottom: 400, width: 592, height: 392 };
+            api.applyDomState();
+            if (handle.hidden || sizeBtn.hidden) throw new Error('size controls missing on desktop');
+            process.stdout.write('stacked-sheet:ok');
+            """
+        )
+    )
+    assert "stacked-sheet:ok" in output
+
+
+def test_fab_label_survives_a_language_switch_while_open() -> None:
+    """R4-07: applyTranslations rewrites aria-label from data-i18n-attr.
+
+    The attribute used to be frozen at 'agentToggle', so a PL→EN switch on an
+    OPEN panel announced "open chat" on the collapse control.
+    """
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            api.init();
+            const fab = document.getElementById('ss-agent-fab');
+            api.setCollapsed(false);
+            const attr = fab.getAttribute('data-i18n-attr');
+            if (attr !== 'aria-label:agentCollapse') throw new Error('open attr: ' + attr);
+            api.setCollapsed(true);
+            const closedAttr = fab.getAttribute('data-i18n-attr');
+            if (closedAttr !== 'aria-label:agentToggle') throw new Error('closed attr: ' + closedAttr);
+            process.stdout.write('fab-i18n:ok');
+            """
+        )
+    )
+    assert "fab-i18n:ok" in output

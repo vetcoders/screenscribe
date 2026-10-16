@@ -667,6 +667,17 @@
         return placeBesidePlayer(obstacle, viewport, panelSize);
     }
 
+    function isStackedSheet() {
+        // Below 900px the sheet leaves fixed positioning and sits in document
+        // flow at the END of the report (agent_panel.css); opening it there
+        // must bring it on screen or the chat appears to do nothing.
+        try {
+            return Boolean(root.matchMedia && root.matchMedia('(max-width: 900px)').matches);
+        } catch (_err) {
+            return false;
+        }
+    }
+
     function setSheetMode(rootEl, enabled) {
         var doc = root.document;
         var htmlEl = doc && doc.documentElement;
@@ -699,6 +710,13 @@
         if (fab) {
             fab.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
             fab.setAttribute('aria-label', collapsed ? tx('review.agentToggle') : tx('review.agentCollapse'));
+            // applyTranslations() rewrites aria-label from this attribute on
+            // every language switch; keep it pointing at the CURRENT state or
+            // an open panel announces "open chat".
+            fab.setAttribute(
+                'data-i18n-attr',
+                'aria-label:' + (collapsed ? 'agentToggle' : 'agentCollapse')
+            );
         }
         var panel = root.document.getElementById('ss-agent-panel');
         var view = viewportSize();
@@ -791,6 +809,12 @@
             state.sheet = false;
         }
         applyDomState();
+        if (!state.collapsed && state.sheet && isStackedSheet()) {
+            var rootEl = getRoot();
+            if (rootEl && typeof rootEl.scrollIntoView === 'function') {
+                rootEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+        }
         persist();
     }
 
@@ -1838,13 +1862,7 @@
         });
         input.addEventListener('keydown', function (event) {
             if (event && event.key === 'Escape') {
-                if (state.mic.status === 'recording' || state.mic.status === 'requesting') {
-                    if (event.preventDefault) event.preventDefault();
-                    cancelMic();
-                } else if (state.streaming) {
-                    if (event.preventDefault) event.preventDefault();
-                    stop();
-                }
+                onEscapeKey(event);
                 return;
             }
             if (!isComposerEnter(event)) return;
@@ -1853,6 +1871,16 @@
             if (event.preventDefault) event.preventDefault();
             submitComposer(form);
         });
+    }
+
+    function onEscapeKey(event) {
+        if (state.mic.status === 'recording' || state.mic.status === 'requesting') {
+            if (event && event.preventDefault) event.preventDefault();
+            cancelMic();
+        } else if (state.streaming) {
+            if (event && event.preventDefault) event.preventDefault();
+            stop();
+        }
     }
 
     // ---- Screenshot attachments --------------------------------------------
@@ -2062,7 +2090,11 @@
         if (!doc) return;
         var current = size || panelSize();
         var bounds = sizeBounds();
+        // The stacked mobile sheet is width:100% !important and fixed height:
+        // live resize controls there update numbers without moving a pixel.
+        var fixedSize = state.sheet && isStackedSheet();
         var handle = doc.getElementById('ss-agent-resize');
+        if (handle) handle.hidden = fixedSize;
         if (handle && typeof handle.setAttribute === 'function') {
             handle.setAttribute('aria-valuenow', String(current.width));
             handle.setAttribute('aria-valuemin', String(bounds.minWidth));
@@ -2073,6 +2105,7 @@
             }));
         }
         var sizeBtn = doc.getElementById('ss-agent-size');
+        if (sizeBtn) sizeBtn.hidden = fixedSize;
         if (sizeBtn && typeof sizeBtn.setAttribute === 'function') {
             var id = currentPresetId();
             var label = tx('review.agentSize', { size: presetLabel(id) });
@@ -2253,6 +2286,10 @@
             btn.classList.toggle('is-busy', status === 'requesting' || status === 'transcribing');
             btn.setAttribute('aria-pressed', recording ? 'true' : 'false');
             btn.setAttribute('aria-label', recording ? tx('review.agentMicStopLabel') : tx('review.agentMicLabel'));
+            btn.setAttribute(
+                'data-i18n-attr',
+                'aria-label:' + (recording ? 'agentMicStopLabel' : 'agentMicLabel')
+            );
             btn.title = recording ? tx('review.agentMicStopLabel') : tx('review.agentMicLabel');
             var unavailable = status === 'unavailable';
             btn.setAttribute('aria-disabled', unavailable || status === 'transcribing' ? 'true' : 'false');
@@ -2462,6 +2499,11 @@
         sizeBtn.addEventListener('click', function () { cycleSizePreset(); });
         header.appendChild(sizeBtn);
         header.addEventListener('mousedown', startDrag);
+        // Escape must stop the turn wherever focus sits inside the panel
+        // (e.g. on the Send button after a click), not only in the textarea.
+        panel.addEventListener('keydown', function (event) {
+            if (event && event.key === 'Escape') onEscapeKey(event);
+        });
         panel.addEventListener('dragover', function (event) {
             if (!clipboardImages(event).length && !(event && event.dataTransfer
                 && Array.prototype.indexOf.call(event.dataTransfer.types || [], 'Files') >= 0)) return;

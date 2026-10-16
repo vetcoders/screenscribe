@@ -46,7 +46,14 @@
 .ss-selection-toolbar button:hover,
 .ss-selection-toolbar button:focus-visible {
     background: var(--surface-hover);
-    outline: none;
+}
+
+/* Keyboard focus must be visible on its own: the hover background is
+   identical, so without a ring a keyboard user cannot see which action
+   is active (R4-02). */
+.ss-selection-toolbar button:focus-visible {
+    outline: 2px solid var(--border-accent);
+    outline-offset: 1px;
 }
 
 .ss-selection-toolbar [hidden] {
