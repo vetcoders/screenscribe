@@ -1518,3 +1518,193 @@ def test_autosend_submits_dictation_only_when_enabled() -> None:
         )
     )
     assert "autosend:ok" in output
+
+
+def test_request_history_is_capped_to_the_api_contract() -> None:
+    """R3-02: the 27th turn must not 422 on history length.
+
+    The backend accepts at most 50 history items of at most 16000 chars each;
+    the panel used to send the whole conversation verbatim.
+    """
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const bodies = [];
+            fetch = async (_url, opts) => {
+                bodies.push(JSON.parse(opts.body));
+                return {
+                    ok: true,
+                    text: async () => 'event: token\\ndata: {"text":"ok"}\\n\\nevent: done\\ndata: {"response_id":null}\\n\\n',
+                };
+            };
+            window.fetch = fetch;
+            api.init();
+            await api.whenThreadReady();
+            const history = api.getState().history;
+            for (let i = 0; i < 30; i += 1) {
+                history.push({ role: 'user', content: 'q' + i });
+                history.push({ role: 'assistant', content: i === 29 ? 'x'.repeat(20000) : 'a' + i });
+            }
+            await api.send('turn 31');
+            const sent = bodies[0].history;
+            if (sent.length !== 50) throw new Error('history length ' + sent.length);
+            if (sent[sent.length - 1].content.length !== 16000) {
+                throw new Error('field not truncated: ' + sent[sent.length - 1].content.length);
+            }
+            if (sent[0].content !== 'q5') throw new Error('oldest kept entry ' + sent[0].content);
+            // The full conversation stays local.
+            if (api.getState().history.length !== 62) {
+                throw new Error('local history ' + api.getState().history.length);
+            }
+            process.stdout.write('history-cap:ok');
+            """
+        )
+    )
+    assert "history-cap:ok" in output
+
+
+def test_stream_without_done_is_marked_interrupted_with_retry() -> None:
+    """R3-01 (frontend): clean EOF without `done` is a fragment, not an answer."""
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            fetch = async () => ({
+                ok: true,
+                text: async () => 'event: token\\ndata: {"text":"partial answ"}\\n\\n',
+            });
+            window.fetch = fetch;
+            api.init();
+            await api.whenThreadReady();
+            await api.send('co z tym buildem?');
+            const state = api.getState();
+            if (state.retryMessage !== 'co z tym buildem?') {
+                throw new Error('no retry affordance: ' + state.retryMessage);
+            }
+            const assistant = state.history.filter((m) => m.role === 'assistant');
+            if (assistant.length) throw new Error('fragment logged as an answer');
+            const log = document.getElementById('ss-agent-log');
+            const rendered = (log.children || []).map((n) => n.textContent).join('|');
+            if (!rendered.includes('partial answ')) throw new Error('partial text lost: ' + rendered);
+            process.stdout.write('stream-cut:ok');
+            """
+        )
+    )
+    assert "stream-cut:ok" in output
+
+
+def test_thread_key_follows_the_report_not_just_the_url() -> None:
+    """R3-03: two reports on one URL must not share a conversation."""
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            api.init();
+            document.title = 'Screenscribe - recording_a.mov';
+            api.getState().threadFingerprint = null;
+            const keyA = api.threadKey();
+            api.getState().threadFingerprint = null;
+            const keyAgain = api.threadKey();
+            if (keyA !== keyAgain) throw new Error('key not stable: ' + keyA + ' vs ' + keyAgain);
+            document.title = 'Screenscribe - recording_b.mov';
+            api.getState().threadFingerprint = null;
+            const keyB = api.threadKey();
+            if (keyA === keyB) throw new Error('different reports share a thread key');
+            process.stdout.write('thread-key:ok');
+            """
+        )
+    )
+    assert "thread-key:ok" in output
+
+
+def test_restored_chain_keeps_its_identity_after_reload() -> None:
+    """R3-05: previousResponseId without its identity is dropped by send().
+
+    The thread record now stores the provider identity; a real reload restores
+    both, so the next turn still chains server-side.
+    """
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            function later(fn) { setTimeout(fn, 0); }
+            function makeIdb() {
+                const stores = {};
+                let upgraded = false;
+                return {
+                    open() {
+                        const req = {};
+                        later(() => {
+                            const db = {
+                                objectStoreNames: {
+                                    contains(name) { return Object.prototype.hasOwnProperty.call(stores, name); },
+                                },
+                                createObjectStore(name) { stores[name] = new Map(); },
+                                transaction() {
+                                    return {
+                                        objectStore(name) {
+                                            const data = stores[name];
+                                            if (!data) throw new Error('missing store ' + name);
+                                            return {
+                                                get(key) {
+                                                    const result = {};
+                                                    later(() => {
+                                                        result.result = data.has(key) ? data.get(key) : undefined;
+                                                        if (result.onsuccess) result.onsuccess();
+                                                    });
+                                                    return result;
+                                                },
+                                                put(value, key) {
+                                                    data.set(key, JSON.parse(JSON.stringify(value)));
+                                                    const result = {};
+                                                    later(() => { if (result.onsuccess) result.onsuccess(); });
+                                                    return result;
+                                                },
+                                            };
+                                        },
+                                    };
+                                },
+                            };
+                            req.result = db;
+                            if (!upgraded && req.onupgradeneeded) req.onupgradeneeded();
+                            upgraded = true;
+                            if (req.onsuccess) req.onsuccess();
+                        });
+                        return req;
+                    },
+                };
+            }
+            window.indexedDB = makeIdb();
+            const api = screenscribeAgentPanel;
+            const bodies = [];
+            fetch = async (_url, opts) => {
+                bodies.push(JSON.parse(opts.body));
+                return {
+                    ok: true,
+                    text: async () => 'event: token\\ndata: {"text":"ok"}\\n\\nevent: done\\ndata: {"response_id":"resp_a","provider":"primary","protocol":"responses","host":"api.x.ai"}\\n\\n',
+                };
+            };
+            window.fetch = fetch;
+            api.init();
+            await api.whenThreadReady();
+            await api.send('first');
+            // Simulate a reload: a fresh state restores from IndexedDB only.
+            const state = api.getState();
+            state.history = [];
+            state.previousResponseId = null;
+            state.previousResponseIdentity = null;
+            const restored = await api.restoreThread();
+            if (!restored) throw new Error('restore returned false');
+            if (state.previousResponseId !== 'resp_a') throw new Error('chain lost: ' + state.previousResponseId);
+            if (!state.previousResponseIdentity || state.previousResponseIdentity.host !== 'api.x.ai') {
+                throw new Error('identity lost: ' + JSON.stringify(state.previousResponseIdentity));
+            }
+            await api.send('second');
+            if (bodies[1].previous_response_id !== 'resp_a') {
+                throw new Error('post-reload turn did not chain: ' + bodies[1].previous_response_id);
+            }
+            process.stdout.write('identity-reload:ok');
+            """
+        )
+    )
+    assert "identity-reload:ok" in output

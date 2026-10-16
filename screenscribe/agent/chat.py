@@ -768,6 +768,13 @@ async def _dispatch_round(
     return await _responses_round(provider, payload, on_delta=on_delta)
 
 
+# Terminal Responses stream events: the provider finished (well or badly) and
+# said so. A stream that ends without one of these was cut mid-response.
+_TERMINAL_RESPONSE_EVENTS = frozenset(
+    {"response.completed", "response.done", "response.incomplete", "response.failed"}
+)
+
+
 async def _responses_round(
     provider: AgentProvider,
     payload: dict[str, Any],
@@ -784,6 +791,10 @@ async def _responses_round(
     calls: dict[str, dict[str, Any]] = {}
     item_to_call: dict[str, str] = {}
     response_output_items: list[dict[str, Any]] = []
+    # A 200 stream can end mid-answer with a clean EOF (proxy timeout, provider
+    # crash). Without a terminal event the collected text is a fragment, not an
+    # answer, and must not be presented as one.
+    completed = False
     async with httpx.AsyncClient(timeout=90.0) as client:
         async with client.stream("POST", provider.url, headers=headers, json=payload) as resp:
             if resp.status_code >= 400:
@@ -797,6 +808,7 @@ async def _responses_round(
                     continue
                 raw = line[6:]
                 if raw.strip() == "[DONE]":
+                    completed = True
                     break
                 try:
                     event = json.loads(raw)
@@ -808,6 +820,8 @@ async def _responses_round(
                 if stream_error is not None:
                     raise AgentChatError(str(stream_error))
                 event_type = str(event.get("type") or "")
+                if event_type in _TERMINAL_RESPONSE_EVENTS:
+                    completed = True
                 if event_type == "response.created":
                     created = event.get("response")
                     if isinstance(created, dict):
@@ -819,6 +833,9 @@ async def _responses_round(
                         if on_delta is not None:
                             on_delta(delta)
                 elif event_type == "response.output_text.done":
+                    # Carries the complete final text; counts as a terminal
+                    # signal for providers that skip response.completed.
+                    completed = True
                     text = event.get("text")
                     if isinstance(text, str):
                         final_text = text
@@ -834,17 +851,23 @@ async def _responses_round(
                     item = event.get("item")
                     if event_type == "response.output_item.done" and isinstance(item, dict):
                         _upsert_response_output_item(response_output_items, item)
-                    completed = event.get("response")
-                    if isinstance(completed, dict) and completed.get("id"):
-                        response_id = completed.get("id") or response_id
-                        output = completed.get("output")
+                    completed_response = event.get("response")
+                    if isinstance(completed_response, dict) and completed_response.get("id"):
+                        response_id = completed_response.get("id") or response_id
+                        output = completed_response.get("output")
                         if isinstance(output, list):
                             _ingest_output_list(output, calls, item_to_call)
                             response_output_items = [
                                 dict(item) for item in output if isinstance(item, dict)
                             ]
+    collected = "".join(text_parts) if text_parts else (final_text or "")
+    if not completed:
+        raise AgentChatError(
+            f"Provider {provider.name} ended the stream before completing the "
+            f"response ({len(collected)} characters received)."
+        )
     return ProviderRound(
-        text="".join(text_parts) if text_parts else (final_text or ""),
+        text=collected,
         response_id=response_id if isinstance(response_id, str) else None,
         function_calls=_calls_from_bucket(calls),
         response_output_items=response_output_items,

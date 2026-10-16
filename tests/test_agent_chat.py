@@ -1600,3 +1600,78 @@ def test_corrections_survive_seed_truncation_of_a_long_report(tmp_path: Path) ->
     assert "…(truncated)" in turn.instructions
     assert '"corrections"' in turn.instructions
     assert "sign-in" in turn.instructions
+
+
+def test_responses_round_refuses_a_stream_cut_before_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3-01: tokens + clean EOF without a terminal event is not an answer.
+
+    A proxy timeout or provider crash can close a 200 stream mid-response with
+    no error event. Returning the fragment as a finished turn hides the loss
+    from the reviewer and blocks Retry.
+    """
+    events = [
+        {"type": "response.created", "response": {"id": "resp_cut"}},
+        {"type": "response.output_text.delta", "delta": "the answer begins"},
+        # ...and the stream ends here: no response.completed, no [DONE].
+    ]
+
+    class FakeResponse:
+        status_code = 200
+
+        async def __aenter__(self) -> FakeResponse:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def aiter_lines(self) -> Any:
+            for event in events:
+                yield f"data: {json.dumps(event)}"
+
+    class FakeClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        def stream(self, *_args: Any, **_kwargs: Any) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("screenscribe.agent.chat.httpx.AsyncClient", FakeClient)
+    provider = AgentProvider(
+        name="primary",
+        protocol="responses",
+        key="fake",
+        model="m",
+        url="https://provider.example/v1/responses",
+        trust="internal",
+        slot="primary",
+        host="provider.example",
+    )
+    with pytest.raises(AgentChatError, match="before completing"):
+        asyncio.run(agent_chat._responses_round(provider, {}))
+
+    # The same stream with a terminal [DONE] sentinel is a complete answer.
+    events.append("__DONE__")
+
+    class DoneResponse(FakeResponse):
+        async def aiter_lines(self) -> Any:
+            for event in events:
+                if event == "__DONE__":
+                    yield "data: [DONE]"
+                else:
+                    yield f"data: {json.dumps(event)}"
+
+    class DoneClient(FakeClient):
+        def stream(self, *_args: Any, **_kwargs: Any) -> DoneResponse:
+            return DoneResponse()
+
+    monkeypatch.setattr("screenscribe.agent.chat.httpx.AsyncClient", DoneClient)
+    result = asyncio.run(agent_chat._responses_round(provider, {}))
+    assert result.text == "the answer begins"

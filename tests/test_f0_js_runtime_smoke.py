@@ -2466,3 +2466,44 @@ def test_f0_add_finding_waits_for_seeked_before_frame_capture() -> None:
             """
         )
     )
+
+
+def test_f0_add_finding_retry_does_not_mint_a_twin() -> None:
+    """R3-04: a retried agent turn replays add_finding; one finding, not two.
+
+    The per-turn tool-result dedupe does not survive a Retry, so the apply
+    layer treats same timestamp + same summary as the same finding.
+    """
+    _run_review_app_smoke(
+        _finding_card_stubs()
+        + textwrap.dedent(
+            """
+            const first = await applyReviewPatch([
+                { op: 'add_finding', timestamp: 12.5, summary: 'Safari overlay', severity: 'high', category: 'bug' },
+            ], 'Dodaj ten problem.');
+            const before = reportState.manualFrames.length;
+            const second = await applyReviewPatch([
+                { op: 'add_finding', timestamp: 12.5, summary: 'Safari overlay', severity: 'high', category: 'bug' },
+            ], 'Dodaj ten problem.');
+            const row = second.find((r) => r.op === 'add_finding');
+            if (!row || row.duplicate !== true) {
+                console.error('retry row not marked duplicate: ' + JSON.stringify(second)); process.exitCode = 1;
+            }
+            if (reportState.manualFrames.length !== before) {
+                console.error('retry minted a twin finding: ' + reportState.manualFrames.length + ' vs ' + before);
+                process.exitCode = 1;
+            }
+            const firstRow = first.find((r) => r.op === 'add_finding');
+            if (!firstRow || String(row.markerId) !== String(firstRow.markerId)) {
+                console.error('duplicate must point at the original marker'); process.exitCode = 1;
+            }
+            // A different finding at the same second still goes through.
+            await applyReviewPatch([
+                { op: 'add_finding', timestamp: 12.5, summary: 'Another issue', severity: 'low', category: 'ux' },
+            ], '');
+            if (reportState.manualFrames.length !== before + 1) {
+                console.error('distinct finding was wrongly deduped'); process.exitCode = 1;
+            }
+            """
+        )
+    )

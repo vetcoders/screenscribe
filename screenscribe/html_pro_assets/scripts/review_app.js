@@ -3721,11 +3721,34 @@ async function seekPlayerBeforeFrameCapture(timestamp) {
     });
 }
 
+let agentMarkerSeq = 0;
+
 async function addFindingFromPatch(op) {
     const timestamp = Number(op.timestamp);
     const summary = String(op.summary || '');
     const severity = String(op.severity || '');
     const category = String(op.category || '');
+    // A retried agent turn replays its tool calls (the dedupe inside one turn
+    // does not reach across a Retry). The same timestamp + summary is the same
+    // finding: hand back the stored marker instead of minting a twin.
+    const existing = (reportState.manualFrames || []).find((entry) => {
+        if (Number(entry.timestamp) !== timestamp) return false;
+        const notes = String(entry.notes || '');
+        const stored = entry.result && typeof entry.result === 'object'
+            ? String(entry.result.summary || '')
+            : '';
+        // notes may carry an appended "[chat] instruction" block after apply.
+        return stored === summary || notes === summary || notes.startsWith(summary + '\n');
+    });
+    if (existing) {
+        return {
+            op: 'add_finding',
+            markerId: existing.marker_id,
+            captured: false,
+            reversible: false,
+            duplicate: true,
+        };
+    }
     if (Number.isFinite(timestamp)) {
         seekToTimestamp(timestamp);
     }
@@ -3762,7 +3785,10 @@ async function addFindingFromPatch(op) {
             return { op: 'add_finding', markerId, captured: true, reversible: false };
         }
     }
-    const markerId = `agent-${String(Number.isFinite(timestamp) ? timestamp : 0)}-${Date.now()}`;
+    agentMarkerSeq += 1;
+    // Date.now() alone collides when two agent findings land in the same
+    // millisecond, and upsertManualFrame would silently replace the first.
+    const markerId = `agent-${String(Number.isFinite(timestamp) ? timestamp : 0)}-${Date.now()}-${agentMarkerSeq}`;
     upsertManualFrame({
         marker_id: markerId,
         timestamp: Number.isFinite(timestamp) ? timestamp : 0,

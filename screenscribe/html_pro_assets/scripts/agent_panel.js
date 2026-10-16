@@ -32,6 +32,11 @@
     // Screenshots attached to one message (paste, drop or the image button).
     // Large captures are downscaled so a Retina screenshot stays readable but
     // the request stays a few hundred KB.
+    // Mirror of the backend request contract (agent/chat.py): more history
+    // items than _MAX_HISTORY_ITEMS or longer fields than
+    // _MAX_HISTORY_FIELD_CHARS get a 422 before the agent even starts.
+    var HISTORY_MAX_ITEMS = 50;
+    var HISTORY_MAX_FIELD_CHARS = 16000;
     var MAX_ATTACHMENTS = 4;
     var ATTACH_MAX_SIDE = 2048;
     var ATTACH_KEEP_BYTES = 1500000;
@@ -65,6 +70,7 @@
         attachments: [],
         retryImages: [],
         autosend: false,
+        threadFingerprint: null,
     };
 
     function tx(key, args) {
@@ -107,6 +113,50 @@
     function storageKey() {
         var loc = root.location || {};
         return STORAGE_KEY + ':' + String(loc.origin || '') + String(loc.pathname || '');
+    }
+
+    function contentHash(text) {
+        // djb2: tiny, stable, no crypto dependency; this is a bucket key, not a secret.
+        var hash = 5381;
+        for (var i = 0; i < text.length; i += 1) {
+            hash = ((hash << 5) + hash + text.charCodeAt(i)) >>> 0;
+        }
+        return hash.toString(16);
+    }
+
+    function threadFingerprint() {
+        // Two different reports can share origin+pathname (same port, same
+        // report filename, different directory). The conversation must follow
+        // the REPORT, not the URL, or one recording's chat resurfaces - and
+        // gets resent to the model - under another recording.
+        if (state.threadFingerprint) return state.threadFingerprint;
+        var parts = [];
+        try {
+            var doc = root.document;
+            parts.push(String(doc.title || ''));
+            var island = doc.getElementById ? doc.getElementById('original-findings') : null;
+            var findings = island && island.textContent ? String(island.textContent) : '';
+            parts.push(String(findings.length));
+            parts.push(findings.slice(0, 400));
+            var segments = root.TRANSCRIPT_SEGMENTS;
+            if (Array.isArray(segments) && segments.length) {
+                var first = segments[0] || {};
+                var last = segments[segments.length - 1] || {};
+                parts.push(String(segments.length));
+                parts.push(String(first.start) + ':' + String(first.text || '').slice(0, 120));
+                parts.push(String(last.end) + ':' + String(last.text || '').slice(0, 120));
+            }
+            var video = doc.getElementById ? doc.getElementById('videoPlayer') : null;
+            if (video && typeof video.getAttribute === 'function') {
+                parts.push(String(video.getAttribute('src') || ''));
+            }
+        } catch (_err) { /* a partial fingerprint still beats a URL-only key */ }
+        state.threadFingerprint = contentHash(parts.join('|'));
+        return state.threadFingerprint;
+    }
+
+    function threadKey() {
+        return storageKey() + ':' + threadFingerprint();
     }
 
     function persist() {
@@ -1206,11 +1256,19 @@
     }
 
     function threadRecord() {
+        var identity = state.previousResponseIdentity;
         return {
             messages: state.history.map(function (entry) {
                 return { role: entry.role, content: entry.content };
             }),
             previousResponseId: state.previousResponseId || null,
+            // Without the identity a restored id is rejected by send() and the
+            // server-side chain silently restarts after every reload.
+            previousResponseIdentity: identity ? {
+                provider: identity.provider,
+                protocol: identity.protocol,
+                host: identity.host,
+            } : null,
         };
     }
 
@@ -1228,7 +1286,7 @@
 
     function persistThread() {
         if (!root.indexedDB) return Promise.resolve(false);
-        var key = storageKey();
+        var key = threadKey();
         var record = threadRecord();
         return withThreadStore('readwrite', function (store) {
             return new Promise(function (resolve) {
@@ -1247,7 +1305,7 @@
 
     function readThread() {
         if (!root.indexedDB) return Promise.resolve(null);
-        var key = storageKey();
+        var key = threadKey();
         return withThreadStore('readonly', function (store) {
             return new Promise(function (resolve) {
                 var req;
@@ -1300,6 +1358,19 @@
             if (!restored.length && typeof chain !== 'string') return false;
             state.history = restored;
             state.previousResponseId = typeof chain === 'string' && chain ? chain : null;
+            var identity = record.previousResponseIdentity;
+            state.previousResponseIdentity = (
+                identity
+                && typeof identity === 'object'
+                && typeof identity.provider === 'string'
+                && typeof identity.protocol === 'string'
+                && typeof identity.host === 'string'
+            ) ? {
+                provider: identity.provider,
+                protocol: identity.protocol,
+                host: identity.host,
+            } : null;
+            if (!state.previousResponseIdentity) state.previousResponseId = null;
             state.retryMessage = null;
             state.retryRow = null;
             paintStoredMessages(restored);
@@ -1500,6 +1571,20 @@
         }
     }
 
+    function requestHistory() {
+        // The full conversation stays in state.history (and IndexedDB) for the
+        // log; the API accepts at most HISTORY_MAX_ITEMS entries of at most
+        // HISTORY_MAX_FIELD_CHARS each. Sending everything used to 422 the
+        // 27th turn and every Retry after it.
+        var past = state.history.slice(0, -1);
+        return past.slice(-HISTORY_MAX_ITEMS).map(function (entry) {
+            return {
+                role: entry.role,
+                content: String(entry.content || '').slice(0, HISTORY_MAX_FIELD_CHARS),
+            };
+        });
+    }
+
     async function send(text, options) {
         if (state.threadReady) {
             try {
@@ -1540,6 +1625,7 @@
         armIdleTimer();
         var assembled = '';
         var errored = false;
+        var sawDone = false;
         var seenToolResults = new Set();
         var requestCursor = state.previousResponseId;
         var requestIdentity = state.previousResponseIdentity;
@@ -1562,7 +1648,7 @@
                     images: images.map(function (image) {
                         return { media_type: image.media_type, data: image.data };
                     }),
-                    history: state.history.slice(0, -1),
+                    history: requestHistory(),
                     previous_response_id: requestCursor,
                     previous_response_provider: requestIdentity && requestIdentity.provider,
                     previous_response_protocol: requestIdentity && requestIdentity.protocol,
@@ -1603,6 +1689,7 @@
                         message
                     );
                 } else if (evt.event === 'done') {
+                    sawDone = true;
                     if (!errored) {
                         acceptDoneCursor(evt.data, requestIdentity);
                     }
@@ -1621,7 +1708,13 @@
                 onActivity: armIdleTimer,
             });
             if (state.stopRequested || state.timedOut) throw abortError();
-            if (assembled && !errored) {
+            if (!errored && !sawDone) {
+                // The server stream ended without its own `done` event: the
+                // text on screen is a fragment. Mark it and offer Retry
+                // instead of logging it as a finished answer.
+                errored = true;
+                failTurn(assistantRow, assembled, tx('review.agentStreamCut'), message);
+            } else if (assembled && !errored) {
                 state.history.push({ role: 'assistant', content: assembled });
             } else if (!errored) {
                 removeEmptyAssistant(assistantRow);
@@ -2637,6 +2730,8 @@
         formatReference: formatReference,
         insertReference: insertReference,
         restoreThread: restoreThread,
+        threadKey: threadKey,
+        requestHistory: requestHistory,
         whenThreadReady: function () { return state.threadReady || Promise.resolve(false); },
         stop: stop,
         setPanelSize: setPanelSize,
