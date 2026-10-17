@@ -1,6 +1,6 @@
 [project]
 name = "screenscribe"
-version = "0.1.20.dev0"
+version = "0.1.20"
 description = "Turn screen recordings into actionable engineering reports — narrated screencast review (STT → LLM → VLM)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -56,6 +56,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["screenscribe"]
+
+# Bake git commit provenance into wheels (see hatch_build.py) so an installed
+# `screenscribe --version` always reports +g<sha>[-dirty].
+[tool.hatch.build.hooks.custom]
 
 [dependency-groups]
 dev = [
@@ -128,6 +132,13 @@ exclude = [
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+# hatchling ships no type stubs; with ignore_missing_imports its
+# BuildHookInterface resolves to Any and strict mode refuses the subclass.
+# Keep the build hook type-checked instead of excluding it.
+[[tool.mypy.overrides]]
+module = "hatch_build"
+disallow_subclassing_any = false
 
 # Pytest
 [tool.pytest.ini_options]

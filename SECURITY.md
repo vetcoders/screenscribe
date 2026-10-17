@@ -37,6 +37,25 @@ screenscribe processes two sensitive classes of data:
 In scope: any way screenscribe leaks an API key, exfiltrates user media to an
 unintended destination, or writes secrets into an artifact (report, log, ZIP).
 
+## Provider transport and configuration
+
+Outbound provider requests require HTTPS/WSS except for strictly parsed
+localhost and literal loopback addresses. This policy is enforced at request
+boundaries, including fallback and live-STT paths, independently of an agent
+trust override. Provider redirects are disabled. Automatic provider identity
+uses an exact API-host allowlist; arbitrary sibling subdomains do not inherit
+internal trust or ambient provider credentials.
+The plaintext loopback exception also requires direct routing: HTTP clients
+disable environment proxies and mask SDK HTTP proxy mounts, and WS connections
+disable automatic proxies. HTTPS/WSS proxy support is unchanged. OAuth has no
+plaintext exception: issuers and every device/code/refresh POST require HTTPS,
+and redirects are rejected independently of an injected client's defaults.
+
+Config updates and backups use owner-only temporary files and atomic
+replacement. A backup is completed before the existing config is replaced;
+failure preserves the prior target rather than truncating it. Concurrent config
+writers and whole-directory power-loss durability are not guaranteed.
+
 ## Local server hardening
 
 The review and analyze servers bind only to `127.0.0.1` and reject any request

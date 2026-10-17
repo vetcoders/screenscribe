@@ -185,10 +185,29 @@ See [shared-shell.md](shared-shell.md) for the "adding a tab/panel safely" rule.
 Two modules are imported almost everywhere. Changing their public shape has a
 wide blast radius — check consumers (`loct impact`, or grep) before editing:
 
-- `config.py` — ~50 importers, no internal dependencies. A stable data/env hub:
+- `config.py` — ~50 importers; shares provider URL/host policy with `api_utils.py`.
+  A stable data/env hub:
   high fan-in, but a flat container, so risk is *reach*, not fragility.
 - `transcribe.py` — ~51 importers and real business logic. Changing the
   `Segment` signature ripples across the whole tree.
+
+Provider transport policy lives in `api_utils.validate_provider_endpoint` and
+is enforced at each HTTP/WebSocket send boundary, not just by CLI config
+validation. Remote providers require TLS; only parsed loopback destinations may
+use plaintext. Automatic provider identity is an exact host allowlist shared
+with agent trust classification. Anthropic and live-STT redirects are disabled
+to keep the checked destination authoritative. Config and backup writes share
+the byte-capable atomic replacement helper in `config.py`.
+`api_utils.provider_client_options` binds HTTP client construction to the same
+captured endpoint used for sending. For plaintext loopback it disables
+environment proxy discovery and explicitly masks HTTP proxy mounts (required
+by the Anthropic SDK as well as ordinary HTTPX). WS disables proxy discovery;
+HTTPS/WSS retains environment proxy support. The generic `make_api_request`
+helper rejects plaintext URLs with caller-owned clients because their routing
+cannot be proven direct through its public interface.
+OAuth issuer resolution and both token POST boundaries enforce HTTPS-only and
+no redirects, preserving `AccountAuthError` for callers and injected test
+clients. Provider loopback exceptions do not apply to OAuth credentials.
 
 Note also that several symbols have legacy import aliases (`UnifiedFinding`,
 `Segment`, `Detection`, `render_html_report_pro`). Prefer the canonical path in

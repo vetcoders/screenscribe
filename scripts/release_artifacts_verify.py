@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import runpy
 import subprocess
 import sys
@@ -77,6 +78,9 @@ print(json.dumps(sorted(
     return set(json.loads(run(str(python), "-c", source, cwd=cwd).stdout))
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
 def verify_install(
     artifact: Path,
     label: str,
@@ -84,6 +88,7 @@ def verify_install(
     expected: set[str],
     *,
     render_smoke: bool,
+    expect_commit: str | None = None,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix=f"screenscribe-{label}-") as raw_tmp:
         tmp = Path(raw_tmp)
@@ -108,6 +113,20 @@ def verify_install(
         if installed != version:
             raise RuntimeError(f"{label} installed version {installed!r} != {version!r}")
         run(str(python), "-m", "screenscribe", "--help", cwd=tmp)
+        # The provenance contract is proven on the real installed entrypoint,
+        # not on metadata: `--version` must name the version, and a wheel
+        # built from this work tree must carry its commit (+g<sha>). An sdist
+        # install builds outside the git tree, so it legitimately has none.
+        version_out = _ANSI.sub(
+            "", run(str(python), "-m", "screenscribe", "--version", cwd=tmp).stdout
+        ).strip()
+        if f"v{version}" not in version_out:
+            raise RuntimeError(f"{label} --version says {version_out!r}, expected v{version}")
+        if expect_commit and f"+g{expect_commit}" not in version_out:
+            raise RuntimeError(
+                f"{label} --version says {version_out!r}, expected commit +g{expect_commit}"
+            )
+        print(f"{label}: --version reports {version_out!r}")
         assert_assets(f"{label} clean install", expected, installed_assets(python, tmp))
         if render_smoke:
             smoke = tmp / "ss_effect_smoke.py"
@@ -136,7 +155,10 @@ def main() -> int:
     wheel_assets, sdist_assets = archive_assets(wheels[0], sdists[0])
     assert_assets("wheel archive", expected, wheel_assets)
     assert_assets("sdist archive", expected, sdist_assets)
-    verify_install(wheels[0], "wheel", version, expected, render_smoke=True)
+    head = run("git", "rev-parse", "--short", "HEAD").stdout.strip()
+    verify_install(
+        wheels[0], "wheel", version, expected, render_smoke=True, expect_commit=head or None
+    )
     verify_install(sdists[0], "sdist", version, expected, render_smoke=False)
     print("release artifacts: PASS")
     return 0

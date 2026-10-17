@@ -175,6 +175,10 @@ class TestEnvKeyMapping:
     def test_openai_key_fills_llm_and_vision_when_empty(self, monkeypatch):
         """OPENAI_API_KEY fills llm/vision keys only when they are empty."""
         monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        # Selection sovereignty: the ambient key fills the group only under an
+        # OpenAI selection (OpenAI endpoints here).
+        monkeypatch.setenv("SCREENSCRIBE_LLM_ENDPOINT", "https://api.openai.com/v1/responses")
+        monkeypatch.setenv("SCREENSCRIBE_VISION_ENDPOINT", "https://api.openai.com/v1/responses")
         config = ScreenScribeConfig()
 
         config._load_from_env()
@@ -188,6 +192,8 @@ class TestEnvKeyMapping:
         """An explicit per-endpoint key wins over the provider-generic OPENAI key."""
         monkeypatch.setenv("SCREENSCRIBE_LLM_API_KEY", "sk-explicit-llm")
         monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        monkeypatch.setenv("SCREENSCRIBE_LLM_ENDPOINT", "https://api.openai.com/v1/responses")
+        monkeypatch.setenv("SCREENSCRIBE_VISION_ENDPOINT", "https://api.openai.com/v1/responses")
         config = ScreenScribeConfig()
 
         config._load_from_env()
@@ -396,6 +402,9 @@ class TestValidate:
         """A non-libraxis chat/completions endpoint is not flagged."""
         config = ScreenScribeConfig()
         config.llm_endpoint = "https://api.openai.com/v1/chat/completions"
+        # LLM/VLM are one locked group: keep both on the same provider or the
+        # group-split law fires instead of the path check under test here.
+        config.vision_endpoint = "https://api.openai.com/v1/chat/completions"
 
         assert config.validate() == []
 

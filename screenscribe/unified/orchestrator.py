@@ -82,6 +82,7 @@ def analyze_all_findings_unified(
     screenshots: list[tuple[Detection, Path]],
     config: ScreenScribeConfig,
     previous_response_id: str = "",
+    output_dir: Path | None = None,
 ) -> list[UnifiedFinding]:
     """
     Analyze all findings using unified VLM pipeline with parallel streaming.
@@ -94,6 +95,7 @@ def analyze_all_findings_unified(
         screenshots: List of (detection, screenshot_path) tuples
         config: screenscribe configuration
         previous_response_id: Optional response ID from previous batch for context chaining
+        output_dir: Review output dir; its corrections ledger feeds the prompt glossary
 
     Returns:
         List of UnifiedFinding results (ordered by original index)
@@ -134,6 +136,7 @@ def analyze_all_findings_unified(
         first_screenshot,
         config,
         previous_response_id=seed_response_id,
+        output_dir=output_dir,
     )
     results_by_idx: dict[int, UnifiedFinding | None] = {0: probe_result}
     # A degraded/parse-error probe is not a real success (BH27): count it as a
@@ -218,6 +221,7 @@ def analyze_all_findings_unified(
             config,
             previous_response_id=prev_id,
             on_reasoning=on_reasoning,
+            output_dir=output_dir,
         )
 
         # Update shared response_id for next task

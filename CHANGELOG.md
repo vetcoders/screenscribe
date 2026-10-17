@@ -1,6 +1,148 @@
 # Changelog
 
-## [0.1.20.dev0] - Unreleased
+## [Unreleased]
+
+- **Security: direct loopback and OAuth transport.** Plaintext local HTTP/WS
+  cannot be routed through environment proxies, including Anthropic SDK proxy
+  mounts. OAuth issuer overrides, device/code exchanges, and token refreshes
+  now require HTTPS and reject redirects, including with injected clients.
+  Real loopback target/proxy regressions cover sync, async, SDK, and WebSocket
+  routing; HTTPS proxy compatibility is retained.
+
+- **Security: atomic key and backup updates.** `config --set-key` now uses
+  same-directory atomic replacement for both the exact-byte backup and config,
+  preserving line endings and owner-only permissions without truncating the
+  existing target on a failed write.
+- **Security: validate provider transport at send time.** Remote HTTP and WS
+  endpoints are rejected, including fallback and direct API paths; strict
+  localhost/literal loopback HTTP and WS remain supported. Provider redirects
+  are not followed. Automatic provider identity now requires an exact API
+  hostname, and unlisted LibraxisAI subdomains no longer inherit internal trust
+  or ambient provider credentials. Custom HTTPS gateways remain supported.
+
+## [0.1.20] - 2026-10-15
+
+- **Security: API keys stay with their provider.** `screenscribe doctor` no
+  longer sends the configured STT key to xAI when STT routes elsewhere; the
+  xAI probe runs only for an xAI STT endpoint and calls that endpoint. A
+  LibraxisAI key (from `LIBRAXIS_API_KEY` or the config file) is never handed
+  to a known non-LibraxisAI host through the shared key fallback, so STT on
+  xAI with LLM/Vision on LibraxisAI uses the xAI key or account sign-in.
+  After an independent review pass, the boundary is tighter still: a
+  LibraxisAI-provenance key serves only hosts positively recognized as
+  LibraxisAI (unknown and custom hosts are refused; an explicit
+  `SCREENSCRIBE_*_API_KEY` keeps serving custom gateways), and a saved config
+  re-emits such keys as `LIBRAXIS_API_KEY` lines so the protection survives
+  save → reload.
+
+- **Security: `doctor` artifacts are private and redacted.** Receipts,
+  `MATRIX.md` and `summary.json` are written owner-only (0600, dir 0700),
+  endpoint URLs are stored without query strings, and configured secrets are
+  masked in provider error text. Probes got honest too: the OpenAI-compatible
+  STT probe declines when STT routes to xAI instead of claiming the other
+  transport's roundtrip, an empty model response (no text, no response id) is
+  `NOT-PROVEN`, and the frame-OCR probe bypasses the user OCR cache so a
+  `PROVEN` stamp always reflects a live roundtrip.
+
+- **Fixed: the agent conversation survives real-world turbulence.** A provider
+  stream that ends mid-answer (no terminal event) is reported as interrupted
+  with Retry instead of posing as a complete answer — on the server and in the
+  panel. Long conversations no longer die at turn 27: the request history is
+  capped to the API contract while the full log stays local. Conversations are
+  keyed to the report (not just the URL), so two reports served on one port do
+  not leak history into each other, a reload keeps the server-side response
+  chain, and a Retry no longer duplicates `add_finding` or
+  `correct_transcript` effects.
+
+- **Fixed: corrections reach every surface.** Browser dictation and voice
+  notes pass the review directory, so report-scoped corrections steer their
+  STT glossary; the agent context seed puts corrections ahead of the transcript
+  (long reports used to truncate them away); one oversized entry no longer
+  empties the whole glossary block; merged-frame narration gets the same
+  correction overlay and selection toolbar action as the main card; and a
+  retried save is idempotent instead of appending a duplicate ledger row.
+
+- **Fixed: mobile and keyboard chat UX.** On narrow viewports the opened chat
+  scrolls into view (it used to open below the fold) and the resize controls
+  that mobile CSS overrides are hidden; `Escape` stops the agent from anywhere
+  inside the panel; the selection toolbar shows a visible keyboard focus ring;
+  state-dependent labels survive a PL/EN switch. A selection spanning two
+  findings is refused instead of being attributed to the first one.
+
+- **Fixed: release checks prove what they claim.** The release verifier runs
+  the real `screenscribe --version` from the installed wheel (commit
+  provenance `+g<sha>` included) and sdist; the public demo page is
+  regenerated with the current agent panel and a test pins it to the installed
+  assets; one malformed provider payload in frame OCR is a transcript gap, not
+  a lost run; the agent-conversation e2e synthesizes speech with `espeak-ng`
+  on Linux, so CI actually runs it off-macOS.
+
+- **Added: screenshots in the agent chat, and frames on demand.** Paste a
+  screenshot into the composer, drop it on the panel or pick it with the image
+  button (up to 4 per message; large captures are downscaled to a 2048 px long
+  side). The agent receives them with the message. The new
+  `capture_video_frames` tool lets the agent grab fresh frames from the source
+  video at any timestamps (4 per call, 8 per turn, nothing saved), so a
+  recording without narration can still be read frame by frame.
+
+- **Changed: the agent panel reads like a conversation.** Answers render
+  Markdown (lists, bold, code, tables) without ever passing model text
+  through `innerHTML`; links are shown as text, never as clickable URLs. Your messages sit on the right on the accent colour, the
+  agent's on the left, each with a "You" / "Agent" caption. An optional
+  **Send after dictation** checkbox sends a dictated message straight away.
+
+- **Fixed: `screenscribe serve` after renaming the recording.** A review whose
+  recording was renamed (for example spaces turned into underscores) or moved
+  now serves: the recording is found beside the review folder, and `--video`
+  with the new name uses the only report in the folder. Reports made by an
+  older version get the current agent panel when served; the file on disk is
+  unchanged.
+
+- **Fixed: `review --no-audio` (OCR) shows progress.** Frame extraction and
+  OCR each show a progress bar, up to 4 frames are read at once, and one failed
+  frame becomes a reported gap instead of ending the run.
+
+- **Changed: the existing-review prompt names what each answer does.** It
+  shows the folder **N** (new copy, default) and **O** (overwrite) write to and
+  accepts the letter or the word, instead of an ambiguous `[o/n]`.
+
+- **Fixed: report corrections shape the next run.** Corrections saved for one
+  report now reach the production STT calls (primary and fallback), the batch
+  and single-finding visual analysis, manual-frame analysis in the review app
+  and `screenscribe preprocess`, instead of only the global glossary.
+
+- **Added: a conversation panel built for real use.** Agent answers now
+  stream: the server forwards provider text deltas as they arrive instead of
+  one buffered block per round, with SSE keepalives during silent reasoning
+  and cancellation of the provider request when the stream closes. The panel
+  shows "Agent is responding…" with **Stop** (also `Esc`); a stopped answer
+  keeps its text, marked as stopped. Timeouts and lost connections keep the
+  partial text and **Retry** replaces it without duplicating. The composer is
+  a growing multi-line field (`Enter` sends, `Shift+Enter` new line, IME-safe)
+  with a draft that survives reloads. Dictation records, transcribes through
+  the new chain-neutral `POST /api/agent/stt`, and fills the draft for editing
+  without sending; denied, missing or unsupported microphones are explained.
+  The panel resizes by drag, keyboard or size presets, remembers its size and
+  stays inside the viewport and off the player.
+
+- **Fixed: the review agent can see the frames.** Previously the agent received
+  only a one-line summary per finding; `show_frame` only moved the browser, so
+  questions about what is on screen were answered from that summary. The new
+  `view_frame` tool attaches the real screenshot pixels to the model
+  conversation (main frame plus merged frames, a merged member, a manual marker,
+  the frame nearest a timestamp, or one named file), as Responses `input_image`
+  or Anthropic image blocks inside the tool result. The new `get_finding` tool
+  returns the full visual analysis: UI elements, detected issues, accessibility,
+  design and technical observations, suggested fix and every merged frame with
+  its narration. Frames are read only from inside the report directory, checked
+  by magic bytes, capped per call and per turn, and never sent to the browser
+  over SSE. Text inside screenshots is marked as screen data, not instructions.
+
+- **Fixed: agent panel failures show the HTTP status again.** A failed agent
+  request without a response body showed only the word "Retry". The error row
+  now states the HTTP status and appends the server's detail when present. The
+  selection toolbar's browser global is `screenscribeSelectionToolbar`, matching
+  `screenscribeAgentPanel`.
 
 - **Changed: manual review cards identify their content sources.** Human words
   and notes appear first, followed by an explicitly labelled AI summary and
@@ -28,6 +170,47 @@
   and repository hook are aligned at 1.179.0, whose dependency range permits
   the patched PyJWT release; the local ruleset and fail-closed gates remain
   enforced.
+
+- **Changed: provider selection is sovereign over ambient env keys.** A stray
+  `LIBRAXIS_API_KEY`/`OPENAI_API_KEY` in the environment no longer leaks onto a
+  foreign provider's endpoints (field incident: a LibraxisAI key exported from
+  `~/.zshenv` was sent to api.x.ai and 400'd every STT call while `doctor`,
+  running without that env, stayed green). Ambient keys now fill only slots
+  whose selection identity matches their provenance; elsewhere they are ignored
+  with a warning that names the variable. STT stays a free slot group (many
+  providers offer no STT); LLM and Vision are one locked provider group — a
+  known-provider split between their endpoints is a blocking config error.
+- **Added: `screenscribe config auth <libraxis|openai|xai> --login|--key`.**
+  Writes one coherent provider selection and sets credentials in a single
+  gesture — device-flow OAuth (`--login`, account bearer fallback) or a hidden
+  API-key prompt (`--key`). An OpenAI `--login` refuses instead of writing a
+  dead selection, since ChatGPT account tokens cannot serve REST calls.
+
+- **Added: `screenscribe doctor` — stamped roundtrip proofs for every outbound
+  path.** One command probes every configured provider path (STT, LLM, vision,
+  agent protocols) with a minimal live ping and exercises all 17 report-agent
+  tools against a local fixture, then writes one receipt per element plus a
+  `MATRIX.md` summary. A missing key or provider error is stamped `NOT-PROVEN`
+  with the verbatim reason — never silently skipped. Exits 2 when any element
+  is unproven, so scripts can gate on it.
+
+- **Added: report-agent-surfaces line — selectable AI prose, selection reference
+  toolbar, `serve` command, agent robustness, corrections ledger, annotation
+  text fix, and glossary in pipeline re-runs.** AI finding prose is now
+  selectable in the HTML Pro report; a selection toolbar lets the user insert
+  a structured reference (`screenscribe:agent-insert-reference`) into the
+  floating agent chat panel; `screenscribe serve` hosts existing report
+  directories; the agent loop gained bounded history, retryable errors,
+  persistent threads, and review-patch tools; transcript corrections are kept
+  in a report ledger plus a user glossary that flows back into pipeline
+  re-runs; and annotation canvas text rendering was fixed.
+
+- **Changed: `screenscribe --version` always carries commit provenance.**
+  Wheels now bake `+g<sha>[-dirty]` at build time (hatchling hook
+  `hatch_build.py` -> `screenscribe/_commit.py`), so an installed build
+  reports e.g. `v0.1.20.dev0+g5fce9cd` instead of the bare version — the same
+  contract `aicx --version` keeps. Source/editable checkouts are unchanged:
+  they keep probing the live work tree, which is always fresher.
 
 - **Changed: reasoning-effort default is now per provider preset; `minimal`
   removed, `xhigh`/`max` added.** `SCREENSCRIBE_LLM_REASONING_EFFORT` accepts
@@ -75,7 +258,7 @@
   fragment (who the viewer is, what counts as a finding). Shipped presets:
   `programming` (the default — bit-for-bit the historical behavior), `casual`
   (informal product feedback), `medical`, and `veterinary` (clinical
-  consultations, procedures, and clinic systems such as Vista, with
+  consultations, procedures, and clinic systems, with
   `finding/observation/risk/followup/other` categories and Polish+English
   dictionaries). `--preset custom` builds the profile from your own
   `--keywords-file` (its top-level keys become the categories) and fails with

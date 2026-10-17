@@ -174,3 +174,56 @@ def test_bh18_format_error_still_falls_back_to_normalization(
         b"voice", filename="a.webm", content_type="audio/webm", config=_stt_config()
     )
     assert fallback_calls == ["normalize", "transcribe_audio"]
+
+
+def test_browser_stt_passes_the_review_output_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """R2-01: dictation and voice notes must see report-scoped corrections.
+
+    Without ``output_dir`` the STT glossary builder only reads the global
+    glossary, so corrections saved for this review never steer browser STT.
+    Both transports (direct bytes and the MP3-normalization fallback) get it.
+    """
+    from pathlib import Path
+
+    seen: list[Any] = []
+
+    def record_bytes(*a: Any, **k: Any) -> Any:
+        seen.append(("bytes", k.get("output_dir")))
+        return "ok"
+
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio_bytes", record_bytes)
+    out = Path(tmp_path) / "review-out"
+    result = transcribe_browser_audio(
+        b"voice",
+        filename="a.webm",
+        content_type="audio/webm",
+        config=_stt_config(),
+        output_dir=out,
+    )
+    assert result == "ok"
+    assert seen == [("bytes", out)]
+
+    # Fallback transport: direct call fails with a format error, the
+    # normalized retry must carry the same output_dir.
+    seen.clear()
+    fallback_dirs: list[Any] = []
+
+    def raise_format(*a: Any, **k: Any) -> Any:
+        raise RuntimeError("unsupported codec / decode failure")
+
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio_bytes", raise_format)
+    monkeypatch.setattr("screenscribe.audio.normalize_audio_for_stt", lambda path: path)
+    monkeypatch.setattr(
+        "screenscribe.transcribe.transcribe_audio",
+        lambda *a, **k: fallback_dirs.append(k.get("output_dir")),
+    )
+    transcribe_browser_audio(
+        b"voice",
+        filename="a.webm",
+        content_type="audio/webm",
+        config=_stt_config(),
+        output_dir=out,
+    )
+    assert fallback_dirs == [out]

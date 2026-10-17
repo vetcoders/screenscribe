@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__
+from .agent import corrections as transcript_corrections
 from .agent.chat import AgentChatError, AgentChatRequest, collect_agent_chat, stream_agent_chat
 from .agent.tools import ReportToolbelt
 from .server_common import (
@@ -49,6 +50,7 @@ from .server_common import (
     validate_browser_stt_result,
     validate_browser_stt_upload,
 )
+from .shell.renderer import refresh_live_assets
 from .work_item import WorkItem, from_manual_frame, normalize_verdict
 
 if TYPE_CHECKING:
@@ -92,6 +94,16 @@ class ManualFrameUpdateRequest(BaseModel):
     # unchanged"; a value in VALID_MARKER_SEVERITIES sets it (incl. the explicit
     # "none" that clears a prior pick).
     severity: str | None = None
+
+
+class TranscriptCorrectionRequest(BaseModel):
+    """One literal transcript correction. ``match`` is not a regex."""
+
+    match: str
+    replacement: str
+    scope: str
+    note: str | None = None
+    source: str | None = None
 
 
 @dataclass
@@ -744,6 +756,7 @@ def create_review_app(
                 screenshot_path=screenshot_path,
                 config=config,
                 previous_response_id=previous_response_id,
+                output_dir=session.output_dir,
             )
 
             if not finding:
@@ -887,7 +900,7 @@ def create_review_app(
         report_path = session.output_dir / report_filename
         if not report_path.exists():
             raise HTTPException(status_code=404, detail="Report not found.")
-        html_text = report_path.read_text(encoding="utf-8")
+        html_text = refresh_live_assets(report_path.read_text(encoding="utf-8"))
         signed_src = f"/video?st={video_access_token(app.state.session_token)}"
 
         def _sign(match: re.Match[str]) -> str:
@@ -938,6 +951,7 @@ def create_review_app(
                 filename=filename,
                 content_type=content_type,
                 config=config,
+                output_dir=session.output_dir,
             )
             quality_warning = validate_browser_stt_result(result)
             # BH46/BH49 mirror (analyze-side): only advance the shared
@@ -1113,7 +1127,53 @@ def create_review_app(
                 reset_generation = session.reset_generation
             hydrate_state_with_session_frames(state, session_markers)
             state["resetGeneration"] = reset_generation
+            loaded = transcript_corrections.load_ledger(session.output_dir)
+            state["corrections"] = loaded.entries
+            if loaded.warning:
+                logger.warning(
+                    "Corrections ledger ignored for %s: %s",
+                    session.output_dir,
+                    loaded.warning,
+                )
+                state["correctionsWarning"] = loaded.warning
             return JSONResponse(content=state)
+
+    @app.post("/api/corrections")
+    async def save_transcript_correction(body: TranscriptCorrectionRequest) -> JSONResponse:
+        """Append one ledger entry. Invalid input is 400, never a torn write.
+
+        The original transcript files in the output dir are not opened. The
+        write uses the same tempfile + os.replace + fsync pattern as report JSON,
+        via the corrections ledger.
+        """
+        source = body.source or "user"
+        async with save_lock:
+            try:
+                entry = transcript_corrections.append_correction(
+                    session.output_dir,
+                    match=body.match,
+                    replacement=body.replacement,
+                    scope=body.scope,
+                    note=body.note,
+                    source=source,
+                    report_stem=Path(session.report_filename).stem,
+                    glossary_dir=transcript_corrections.default_glossary_dir(),
+                )
+            except transcript_corrections.CorrectionRejected as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except OSError as exc:
+                logger.error("Failed to write corrections ledger: %s", exc)
+                raise HTTPException(
+                    status_code=500, detail="Failed to write corrections ledger."
+                ) from exc
+            loaded = transcript_corrections.load_ledger(session.output_dir)
+        return JSONResponse(
+            content={
+                "status": "saved",
+                "entry": dict(entry),
+                "corrections": loaded.entries,
+            }
+        )
 
     @app.post("/api/reset-review")
     async def reset_review_state() -> JSONResponse:
@@ -1405,11 +1465,20 @@ def create_review_app(
 
     resolved_repo = repo_root.resolve() if repo_root is not None else None
 
+    def _checked_agent_images(payload: AgentChatRequest) -> list[dict[str, str]]:
+        for image in payload.images:
+            problem = image.problem()
+            if problem is not None:
+                raise HTTPException(status_code=422, detail=f"Attached image rejected: {problem}")
+        return [image.as_dict() for image in payload.images]
+
     def _agent_toolbelt(report_data: dict[str, Any]) -> ReportToolbelt:
         return ReportToolbelt(
             report_data,
             output_dir=session.output_dir,
             repo_root=resolved_repo,
+            report_stem=Path(session.report_filename).stem,
+            video_path=session.video_path,
         )
 
     @app.post("/api/agent/chat/stream")
@@ -1417,6 +1486,7 @@ def create_review_app(
         """SSE agent turn. Contract is binding for the w1-05 UI panel."""
         _json_path, report_data = load_report_json()
         toolbelt = _agent_toolbelt(report_data)
+        images = _checked_agent_images(payload)
 
         async def event_frames() -> Any:
             async for frame in stream_agent_chat(
@@ -1429,16 +1499,59 @@ def create_review_app(
                 previous_response_provider=payload.previous_response_provider,
                 previous_response_protocol=payload.previous_response_protocol,
                 previous_response_host=payload.previous_response_host,
+                images=images,
             ):
                 yield frame
 
-        return StreamingResponse(event_frames(), media_type="text/event-stream")
+        # no-cache + X-Accel-Buffering: a proxy or browser must hand each token
+        # frame on immediately instead of buffering the turn.
+        return StreamingResponse(
+            event_frames(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.post("/api/agent/stt")
+    async def agent_dictation(
+        audio: Annotated[UploadFile, File(description="Browser-recorded agent dictation")],
+    ) -> JSONResponse:
+        """Transcribe a dictated agent message into an editable draft.
+
+        Same upload limits and STT path as ``/api/stt``, but it never touches
+        the manual-frame conversation chain: dictating a chat message must not
+        advance or race the review session's VLM/STT ``response_id``. Audio
+        bytes are neither stored nor logged.
+        """
+        audio_data = await read_upload_capped(audio, max_bytes=MAX_AUDIO_BYTES)
+        validate_browser_stt_upload(audio_data)
+        filename = audio.filename or "dictation.webm"
+        content_type = audio.content_type or "audio/webm"
+        try:
+            result = await run_in_threadpool(
+                transcribe_browser_audio,
+                audio_data,
+                filename=filename,
+                content_type=content_type,
+                config=config,
+                output_dir=session.output_dir,
+            )
+            quality_warning = validate_browser_stt_result(result)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("Agent dictation STT failed (%s): %s", content_type, type(exc).__name__)
+            raise HTTPException(
+                status_code=502,
+                detail="Voice transcription failed. Try again in a moment.",
+            ) from exc
+        return JSONResponse(content=serialize_stt_result(result, quality_warning=quality_warning))
 
     @app.post("/api/agent/chat")
     async def agent_chat(payload: AgentChatRequest) -> dict[str, Any]:
         """Non-streaming agent turn: full text + response_id."""
         _json_path, report_data = load_report_json()
         toolbelt = _agent_toolbelt(report_data)
+        images = _checked_agent_images(payload)
         try:
             return await collect_agent_chat(
                 config=config,
@@ -1450,6 +1563,7 @@ def create_review_app(
                 previous_response_provider=payload.previous_response_provider,
                 previous_response_protocol=payload.previous_response_protocol,
                 previous_response_host=payload.previous_response_host,
+                images=images,
             )
         except AgentChatError as exc:
             raise HTTPException(

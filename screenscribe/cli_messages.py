@@ -251,6 +251,7 @@ def _transcribe_audio_or_exit(
     stt_endpoint: str | None,
     stt_model: str,
     resume_hint: bool = False,
+    output_dir: Path | None = None,
 ) -> Any:
     """Run STT for single-command paths with traceback-free CLI errors."""
     import screenscribe.cli as cli
@@ -266,6 +267,7 @@ def _transcribe_audio_or_exit(
             api_key=api_key,
             stt_endpoint=stt_endpoint,
             stt_model=stt_model,
+            output_dir=output_dir,
         )
     except (httpx.HTTPStatusError, httpx.RequestError, APIError, ValueError) as exc:
         cli.console.print()

@@ -1,0 +1,61 @@
+/* Selection reference toolbar — agent-panel chrome, miniature.
+   Tokens only; the root stays click-through so the report underneath still receives hits. */
+
+.ss-selection-toolbar-root {
+    position: fixed;
+    z-index: 7500;
+    margin: 0;
+    padding: 0;
+    pointer-events: none;
+}
+
+.ss-selection-toolbar {
+    display: none;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs);
+    background: var(--surface-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    line-height: 1.2;
+    pointer-events: auto;
+    user-select: none;
+}
+
+.ss-selection-toolbar.is-open {
+    display: inline-flex;
+}
+
+.ss-selection-toolbar button {
+    border: 1px solid var(--border-accent);
+    border-radius: var(--radius-sm);
+    background: var(--surface-elevated);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    line-height: 1.2;
+    padding: var(--space-xs) var(--space-sm);
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+.ss-selection-toolbar button:hover,
+.ss-selection-toolbar button:focus-visible {
+    background: var(--surface-hover);
+}
+
+/* Keyboard focus must be visible on its own: the hover background is
+   identical, so without a ring a keyboard user cannot see which action
+   is active (R4-02). */
+.ss-selection-toolbar button:focus-visible {
+    outline: 2px solid var(--border-accent);
+    outline-offset: 1px;
+}
+
+.ss-selection-toolbar [hidden] {
+    display: none;
+}

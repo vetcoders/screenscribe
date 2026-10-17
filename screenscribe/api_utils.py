@@ -1,5 +1,6 @@
 """API utilities including retry logic with exponential backoff."""
 
+import ipaddress
 import math
 import re
 import time
@@ -31,6 +32,77 @@ RETRIABLE_STATUS_CODES = {
 }
 
 AUTH_FAILURE_STATUS_CODES = {401, 403}
+
+# Only these endpoints establish provider identity; custom gateways remain custom.
+PROVIDER_HOSTS = {
+    "api.libraxis.cloud": "libraxis",
+    "api.openai.com": "openai",
+    "api.x.ai": "xai",
+}
+
+
+class UnsafeEndpointError(ValueError):
+    """A provider destination is invalid or would expose data in cleartext."""
+
+
+def canonical_host(host: str) -> str:
+    """Canonicalize a parsed hostname without resolving DNS."""
+    try:
+        return host.encode("idna").decode("ascii").rstrip(".").lower()
+    except UnicodeError:
+        return ""
+
+
+def is_loopback_host(host: str) -> bool:
+    """Recognize localhost and literal loopback addresses, never DNS lookalikes."""
+    host = canonical_host(host)
+    if host == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+        # Keep mapped-loopback behavior consistent across supported Python versions.
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+            address = address.ipv4_mapped
+        return address.is_loopback
+    except ValueError:
+        return False
+
+
+def validate_provider_endpoint(endpoint: str, *, websocket: bool = False) -> None:
+    """Require TLS for remote providers; allow cleartext only on loopback.
+
+    Use the HTTP client's URL parser and never include the supplied URL in an
+    error: it may contain credentials. Recheck at the actual transport boundary.
+    """
+    try:
+        if not endpoint or "\\" in endpoint or any(ord(c) <= 32 for c in endpoint):
+            raise ValueError("invalid URL characters")
+        url = httpx.URL(endpoint)
+        secure, local = ("wss", "ws") if websocket else ("https", "http")
+        if not url.host or url.scheme not in {secure, local}:
+            raise ValueError("invalid provider URL")
+    except (ValueError, httpx.InvalidURL):
+        raise UnsafeEndpointError("Invalid provider endpoint URL.") from None
+    if url.scheme == local and not is_loopback_host(url.host):
+        raise UnsafeEndpointError(
+            f"Remote provider endpoints require {secure.upper()}; "
+            f"{local.upper()} is allowed only for localhost or a literal loopback address."
+        )
+
+
+def provider_client_options(endpoint: str) -> dict[str, Any]:
+    """Bind HTTP client routing to a checked destination.
+
+    Plain HTTP is loopback-only and must be direct even with proxy environment
+    variables. Explicitly mask HTTP proxy mounts too: some SDK client wrappers
+    construct these independently of HTTPX's trust_env setting. HTTPS retains
+    configured proxy/CA support. Redirects cannot change the checked destination.
+    """
+    validate_provider_endpoint(endpoint)
+    options: dict[str, Any] = {"follow_redirects": False}
+    if httpx.URL(endpoint).scheme == "http":
+        options.update(trust_env=False, mounts={"http://": None})
+    return options
 
 
 class APIError(Exception):
@@ -465,6 +537,11 @@ def make_api_request(
     """
     Make an HTTP request with automatic retry on transient failures.
 
+    Caller-owned clients are supported only for HTTPS: this helper cannot
+    guarantee that their proxy routing is direct for plaintext loopback URLs.
+    Built-in provider transports construct their own clients with
+    :func:`provider_client_options` and retain local HTTP support.
+
     Args:
         client: httpx.Client instance
         method: HTTP method (GET, POST, etc.)
@@ -482,7 +559,13 @@ def make_api_request(
     """
 
     def do_request() -> httpx.Response:
-        response = client.request(method, url, **kwargs)
+        validate_provider_endpoint(url)
+        if httpx.URL(url).scheme == "http":
+            raise UnsafeEndpointError(
+                "A supplied HTTP client cannot guarantee direct loopback routing; "
+                "use a provider transport that creates its own direct client."
+            )
+        response = client.request(method, url, **{**kwargs, "follow_redirects": False})
         response.raise_for_status()
         return response
 

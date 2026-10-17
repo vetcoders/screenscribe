@@ -35,6 +35,7 @@ from ..api_utils import redact_error_message, redact_url
 from . import (
     AccountAuthError,
     AccountTokens,
+    _validate_oauth_endpoint,
     client_id_for,
     form_body,
     issuer_for,
@@ -83,14 +84,18 @@ def _json_or_error(response: httpx.Response, what: str) -> dict[str, Any]:
 
 
 def _post(client: httpx.Client, url: str, **kwargs: Any) -> httpx.Response:
+    _validate_oauth_endpoint(url)
     try:
-        return client.post(url, **kwargs)
+        response = client.post(url, **{**kwargs, "follow_redirects": False})
     except httpx.HTTPError as error:
         detail = redact_error_message(error)
         raise AccountAuthError(
             "http",
             f"request to {redact_url(url)} failed: {error.__class__.__name__}: {detail}",
         ) from None
+    if 300 <= response.status_code < 400:
+        raise AccountAuthError("http", "OAuth redirects are not permitted.")
+    return response
 
 
 def _interval(value: Any) -> int:

@@ -13,6 +13,13 @@ from screenscribe.api_utils import (
 )
 from screenscribe.config import ScreenScribeConfig
 
+from .api_utils import (
+    endpoint_host,
+    is_loopback_host,
+    provider_client_options,
+    validate_provider_endpoint,
+)
+
 console = Console()
 
 # Validation timeout - short, just checking availability
@@ -54,7 +61,7 @@ def _check_llm_model(config: ScreenScribeConfig, model: str, model_type: str) ->
     # `Authorization: Bearer ` (empty) and crash deep in the HTTP stack (h11
     # rejects the empty value) as a raw traceback. Fail clearly and early.
     # Local endpoints (e.g. a local model server) may legitimately need no key.
-    is_local = endpoint.startswith("http://127.0.0.1") or endpoint.startswith("http://localhost")
+    is_local = is_loopback_host(endpoint_host(endpoint))
     if not is_local and not api_key:
         raise APIKeyError(f"No API key configured for {model_type} endpoint")
 
@@ -63,7 +70,9 @@ def _check_llm_model(config: ScreenScribeConfig, model: str, model_type: str) ->
         headers["Authorization"] = f"Bearer {api_key}"
 
     try:
-        with httpx.Client(timeout=VALIDATION_TIMEOUT) as client:
+        with httpx.Client(
+            timeout=VALIDATION_TIMEOUT, **provider_client_options(endpoint)
+        ) as client:
             content_blocks: list[dict[str, Any]] = [{"type": "input_text", "text": "ping"}]
             if is_vision:
                 content_blocks.append(
@@ -89,6 +98,7 @@ def _check_llm_model(config: ScreenScribeConfig, model: str, model_type: str) ->
                 request_body["max_tokens"] = probe_token_budget
             else:
                 request_body["max_output_tokens"] = probe_token_budget
+            validate_provider_endpoint(endpoint)
             response = client.post(
                 endpoint,
                 headers=headers,
@@ -203,9 +213,7 @@ def _check_stt_model(config: ScreenScribeConfig) -> bool:
     Just verify the endpoint responds.
     """
     # Don't send auth to localhost endpoints
-    is_local = config.stt_endpoint.startswith("http://127.0.0.1") or config.stt_endpoint.startswith(
-        "http://localhost"
-    )
+    is_local = is_loopback_host(endpoint_host(config.stt_endpoint))
 
     # A remote endpoint with no key would send `Authorization: Bearer ` (empty),
     # which crashes deep in the HTTP stack (h11 rejects the empty value) as a raw
@@ -214,12 +222,16 @@ def _check_stt_model(config: ScreenScribeConfig) -> bool:
         raise APIKeyError("No API key configured for STT endpoint")
 
     try:
-        with httpx.Client(timeout=VALIDATION_TIMEOUT) as client:
+        request_endpoint = config.stt_endpoint
+        with httpx.Client(
+            timeout=VALIDATION_TIMEOUT, **provider_client_options(request_endpoint)
+        ) as client:
             headers = {} if is_local else {"Authorization": f"Bearer {config.get_stt_api_key()}"}
 
             # POST with empty file to check endpoint responds (400 expected)
+            validate_provider_endpoint(request_endpoint)
             response = client.post(
-                config.stt_endpoint,
+                request_endpoint,
                 headers=headers,
                 data={"model": config.stt_model},
                 files={"file": ("test.mp3", b"", "audio/mpeg")},

@@ -203,11 +203,19 @@ thumb.className = 'annotation-container';
 finding.appendChild(thumb);
 body.appendChild(finding);
 
+const docListeners = {};
 const documentRef = {
     body,
     documentElement: htmlEl,
     readyState: 'complete',
-    addEventListener() {},
+    addEventListener(type, fn) {
+        (docListeners[type] || (docListeners[type] = [])).push(fn);
+    },
+    dispatchEvent(event) {
+        const type = event && event.type;
+        (docListeners[type] || []).forEach((fn) => fn(event));
+        return true;
+    },
     getElementById(id) { return registry.get(id) || null; },
     querySelector(sel) {
         if (sel.startsWith('#')) return registry.get(sel.slice(1)) || query(body, sel, true);
@@ -235,6 +243,9 @@ const sandbox = {
     consoleCalls,
     setTimeout,
     clearTimeout,
+    setInterval,
+    clearInterval,
+    AbortController,
     TextDecoder,
     TextEncoder,
     JSON,
@@ -652,7 +663,11 @@ def test_error_turn_reuses_assistant_bubble() -> None:
             if (msgs.length !== 2) throw new Error('expected user+error, got ' + msgs.length + ' ' + msgs.map((m) => m.className + ':' + m.textContent).join('|'));
             if (!String(msgs[0].className).includes('ss-agent-msg-user')) throw new Error('first should be user');
             if (!String(msgs[1].className).includes('ss-agent-msg-error')) throw new Error('error class: ' + msgs[1].className);
-            if (msgs[1].textContent !== 'egress deny: external provider blocked') throw new Error('error text: ' + msgs[1].textContent);
+            if (!msgs[1].textContent.includes('egress deny: external provider blocked')) throw new Error('error text: ' + msgs[1].textContent);
+            if (!msgs[1].querySelector('.ss-agent-retry')) throw new Error('retry control missing');
+            const input = document.getElementById('ss-agent-input');
+            if (!input || input.disabled) throw new Error('composer dead after error');
+            if (api.getState().streaming) throw new Error('streaming stuck after error');
             const emptyAssistant = msgs.filter((m) => String(m.className).includes('ss-agent-msg-assistant') && !String(m.textContent || '').trim());
             if (emptyAssistant.length) throw new Error('empty assistant bubble remained');
             process.stdout.write('error-bubble:ok');
@@ -1177,3 +1192,629 @@ def test_review_tool_error_and_unsupported_are_system_lines() -> None:
         )
     )
     assert "patch-errors:ok" in output
+
+
+def test_provider_error_is_retryable_and_composer_stays_live() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const bodies = [];
+            fetch = async (_url, opts) => {
+                bodies.push(JSON.parse(opts.body));
+                if (bodies.length === 1) {
+                    return {
+                        ok: true,
+                        text: async () => 'event: token\\ndata: {"text":"partial"}\\n\\nevent: error\\ndata: {"message":"provider exploded"}\\n\\n',
+                    };
+                }
+                return {
+                    ok: true,
+                    text: async () => 'event: token\\ndata: {"text":"recovered"}\\n\\nevent: done\\ndata: {"response_id":"resp_ok","provider":"primary","protocol":"responses","host":"api.openai.com"}\\n\\n',
+                };
+            };
+            window.fetch = fetch;
+            api.init();
+            await api.whenThreadReady();
+            await api.send('What broke?');
+            const input = document.getElementById('ss-agent-input');
+            if (!input || input.disabled) throw new Error('dead input after provider error');
+            if (api.getState().streaming) throw new Error('streaming stuck');
+            const hist = api.getState().history;
+            if (hist.length !== 1 || hist[0].content !== 'What broke?') {
+                throw new Error('partial assistant was stored: ' + JSON.stringify(hist));
+            }
+            const log = document.getElementById('ss-agent-log');
+            const errorRow = (log.children || []).find((n) => String(n.className).includes('ss-agent-msg-error'));
+            if (!errorRow || !errorRow.textContent.includes('provider exploded')) {
+                throw new Error('error row missing');
+            }
+            const retry = errorRow.querySelector('.ss-agent-retry');
+            if (!retry) throw new Error('retry button missing');
+            retry.click();
+            await new Promise((resolve) => setTimeout(resolve, 40));
+            if (bodies.length !== 2) throw new Error('retry did not resend, got ' + bodies.length);
+            if (bodies[1].message !== 'What broke?') throw new Error('retry message: ' + bodies[1].message);
+            const users = (log.children || []).filter((n) => String(n.className).includes('ss-agent-msg-user'));
+            if (users.length !== 1) throw new Error('user bubble duplicated: ' + users.length);
+            if (api.getState().previousResponseId !== 'resp_ok') {
+                throw new Error('chain after retry: ' + api.getState().previousResponseId);
+            }
+            if (input.disabled) throw new Error('dead input after retry');
+            await api.send('third question');
+            if (bodies.length !== 3) throw new Error('composer did not accept a new question');
+            if (bodies[2].message !== 'third question') throw new Error('third message');
+            if (input.disabled || api.getState().streaming) throw new Error('composer dead after recovery');
+            process.stdout.write('retry-live:ok');
+            """
+        )
+    )
+    assert "retry-live:ok" in output
+
+
+def test_thread_restores_messages_and_chain_from_indexeddb() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            function later(fn) { setTimeout(fn, 0); }
+            function makeIdb() {
+                const stores = {};
+                let upgraded = false;
+                return {
+                    open() {
+                        const req = {};
+                        later(() => {
+                            const db = {
+                                objectStoreNames: {
+                                    contains(name) { return Object.prototype.hasOwnProperty.call(stores, name); },
+                                },
+                                createObjectStore(name) { stores[name] = new Map(); },
+                                transaction() {
+                                    return {
+                                        objectStore(name) {
+                                            const data = stores[name];
+                                            if (!data) throw new Error('missing store ' + name);
+                                            return {
+                                                get(key) {
+                                                    const result = {};
+                                                    later(() => {
+                                                        result.result = data.has(key) ? data.get(key) : undefined;
+                                                        if (result.onsuccess) result.onsuccess();
+                                                    });
+                                                    return result;
+                                                },
+                                                put(value, key) {
+                                                    data.set(key, JSON.parse(JSON.stringify(value)));
+                                                    const result = {};
+                                                    later(() => { if (result.onsuccess) result.onsuccess(); });
+                                                    return result;
+                                                },
+                                            };
+                                        },
+                                    };
+                                },
+                            };
+                            req.result = db;
+                            if (!upgraded && req.onupgradeneeded) req.onupgradeneeded();
+                            upgraded = true;
+                            if (req.onsuccess) req.onsuccess();
+                        });
+                        return req;
+                    },
+                };
+            }
+            window.indexedDB = makeIdb();
+            const api = screenscribeAgentPanel;
+            const bodies = [];
+            fetch = async (_url, opts) => {
+                bodies.push(JSON.parse(opts.body));
+                const n = bodies.length;
+                const text = n === 1 ? 'hello-reply' : 'again-reply';
+                const id = n === 1 ? 'resp_a' : 'resp_b';
+                return {
+                    ok: true,
+                    text: async () => 'event: token\\ndata: {"text":"' + text + '"}\\n\\nevent: done\\ndata: {"response_id":"' + id + '","provider":"primary","protocol":"responses","host":"api.openai.com"}\\n\\n',
+                };
+            };
+            window.fetch = fetch;
+            api.init();
+            await api.whenThreadReady();
+            await api.send('hello');
+            await api.send('again');
+            if (bodies[1].previous_response_id !== 'resp_a') {
+                throw new Error('second turn did not chain: ' + bodies[1].previous_response_id);
+            }
+            if (api.getState().previousResponseId !== 'resp_b') {
+                throw new Error('live chain: ' + api.getState().previousResponseId);
+            }
+            if (api.getState().history.length !== 4) {
+                throw new Error('live history: ' + JSON.stringify(api.getState().history));
+            }
+            api.getState().history = [];
+            api.getState().previousResponseId = null;
+            const restored = await api.restoreThread();
+            if (!restored) throw new Error('restore returned false');
+            const after = api.getState();
+            if (after.previousResponseId !== 'resp_b') throw new Error('restored chain: ' + after.previousResponseId);
+            const contents = after.history.map((m) => m.role + ':' + m.content);
+            if (contents.join('|') !== 'user:hello|assistant:hello-reply|user:again|assistant:again-reply') {
+                throw new Error('restored messages: ' + contents.join('|'));
+            }
+            const log = document.getElementById('ss-agent-log');
+            const rendered = (log.children || []).map((n) => n.textContent).join('|');
+            if (!rendered.includes('hello') || !rendered.includes('again-reply')) {
+                throw new Error('dom after reload: ' + rendered);
+            }
+            process.stdout.write('thread-persist:ok');
+            """
+        )
+    )
+    assert "thread-persist:ok" in output
+
+
+def test_reference_event_inserts_quote_and_opens_panel() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            api.init();
+            await api.whenThreadReady();
+            api.setCollapsed(true);
+            const input = document.getElementById('ss-agent-input');
+            input.value = 'draft';
+            document.dispatchEvent({
+                type: 'screenscribe:agent-insert-reference',
+                detail: {
+                    kind: 'reference',
+                    moment_id: '12',
+                    field: 'transcript',
+                    quote: 'sessions nie wchodzą',
+                    timestamp: '00:16',
+                },
+            });
+            const rootEl = document.getElementById('ss-agent-root');
+            if (rootEl.classList.contains('ss-agent-collapsed')) throw new Error('panel stayed closed');
+            if (!rootEl.classList.contains('ss-agent-expanded')) throw new Error('panel not expanded');
+            if (input.disabled) throw new Error('composer disabled');
+            const value = input.value;
+            if (!value.startsWith('draft')) throw new Error('draft lost: ' + value);
+            if (!value.includes('sessions nie wchodzą')) throw new Error('quote missing: ' + value);
+            if (!value.includes('moment=12') || !value.includes('t=00:16') || !value.includes('field=transcript')) {
+                throw new Error('marker missing: ' + value);
+            }
+            document.dispatchEvent({
+                type: 'screenscribe:agent-insert-reference',
+                detail: {
+                    kind: 'transcript-error',
+                    moment_id: null,
+                    field: 'subtitle',
+                    quote: 'zła linia',
+                    timestamp: null,
+                },
+            });
+            if (!input.value.includes('[transcript-error field=subtitle]')) {
+                throw new Error('transcript-error marker: ' + input.value);
+            }
+            if (!input.value.includes('> zła linia')) throw new Error('second quote missing');
+            process.stdout.write('reference:ok');
+            """
+        )
+    )
+    assert "reference:ok" in output
+
+
+def test_markdown_parser_builds_blocks_and_inline_tokens() -> None:
+    """Agent answers are Markdown; the parser must keep structure, not raw markers.
+
+    Falsification: render the assistant row with textContent again and the
+    real-DOM e2e shows literal ``**`` and ``-`` markers; here mdBlocks would be
+    missing from the API.
+    """
+    output = _run_agent_panel(
+        textwrap.dedent(
+            r"""
+            const api = screenscribeAgentPanel;
+            const text = '### Co widać\n\nTo **pulpit** z `Activity Monitor`.\n\n'
+                + '- pierwszy\n- drugi *ważny*\n\n1. raz\n2. dwa\n\n'
+                + '```bash\nls -la\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n'
+                + '> cytat\n\nLink [docs](https://example.com/x) i https://a.io/b.';
+            const blocks = api.mdBlocks(text);
+            const types = blocks.map((b) => b.type).join(',');
+            if (types !== 'heading,p,ul,ol,code,table,quote,p') throw new Error('types ' + types);
+            if (blocks[2].items.join('|') !== 'pierwszy|drugi *ważny*') throw new Error('ul');
+            if (blocks[4].lang !== 'bash' || blocks[4].text !== 'ls -la') throw new Error('code');
+            if (blocks[5].rows[0].join('|') !== '1|2') throw new Error('table');
+            const inline = api.mdInline('To **pulpit** z `x` i *y*');
+            const kinds = inline.map((t) => t.t).join(',');
+            if (kinds !== 'text,strong,text,code,text,em') throw new Error('inline ' + kinds);
+            const links = api.mdInline('[docs](https://example.com/x) https://a.io/b.');
+            if (links[0].t !== 'link' || links[0].href !== 'https://example.com/x') throw new Error('link');
+            if (links[2].t !== 'link' || links[2].href !== 'https://a.io/b') throw new Error('autolink');
+            const unsafe = api.mdInline('[x](javascript:alert(1))');
+            if (unsafe.some((t) => t.t === 'link')) throw new Error('javascript: must not link');
+            process.stdout.write('md:ok');
+            """
+        )
+    )
+    assert "md:ok" in output
+
+
+def test_attached_screenshots_ride_on_the_request_and_role_labels_are_set() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const fetches = [];
+            fetch = async (url, opts) => {
+                fetches.push(JSON.parse(opts.body));
+                return {
+                    ok: true,
+                    text: async () => 'event: token\\ndata: {"text":"Widzę."}\\n\\nevent: done\\ndata: {}\\n\\n',
+                };
+            };
+            window.fetch = fetch;
+            api.init();
+            const state = api.getState();
+            state.attachments.push({ media_type: 'image/png', data: 'iVBORw0KGgo=', url: 'data:image/png;base64,iVBORw0KGgo=' });
+            api.syncComposer();
+            const sendBtn = document.getElementById('ss-agent-send');
+            if (sendBtn.disabled) throw new Error('a screenshot alone must enable Send');
+            const input = document.getElementById('ss-agent-input');
+            input.value = '';
+            document.getElementById('ss-agent-form').submit();
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            if (fetches.length !== 1) throw new Error('expected one request');
+            const body = fetches[0];
+            if (!body.images || body.images.length !== 1) throw new Error('images missing');
+            if (body.images[0].media_type !== 'image/png' || body.images[0].data !== 'iVBORw0KGgo=') {
+                throw new Error('image shape');
+            }
+            if (!body.message) throw new Error('image-only message needs default text');
+            if (state.attachments.length !== 0) throw new Error('attachments must clear after send');
+            const user = document.querySelectorAll('.ss-agent-msg-user')[0];
+            const agent = document.querySelectorAll('.ss-agent-msg-assistant')[0];
+            if (!user.getAttribute('data-role-label')) throw new Error('user role label');
+            if (!agent.getAttribute('data-role-label')) throw new Error('agent role label');
+            if (user.getAttribute('data-role-label') === agent.getAttribute('data-role-label')) {
+                throw new Error('roles must differ');
+            }
+            process.stdout.write('attach:ok');
+            """
+        )
+    )
+    assert "attach:ok" in output
+
+
+def test_autosend_submits_dictation_only_when_enabled() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const fetches = [];
+            fetch = async (url, opts) => {
+                fetches.push(JSON.parse(opts.body));
+                return { ok: true, text: async () => 'event: done\\ndata: {}\\n\\n' };
+            };
+            window.fetch = fetch;
+            api.init();
+            const box = document.getElementById('ss-agent-autosend');
+            if (!box || box.checked) throw new Error('autosend starts off');
+            api.insertDictation('pierwsze');
+            if (api.autosendDictation()) throw new Error('off: dictation must stay a draft');
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            if (fetches.length !== 0) throw new Error('off: nothing may be sent');
+            api.setAutosend(true);
+            if (!box.checked) throw new Error('checkbox follows the setting');
+            if (![...localStorage._store.keys()].some((k) => k.endsWith(':autosend'))) {
+                throw new Error('autosend must persist');
+            }
+            if (!api.autosendDictation()) throw new Error('on: dictation must be sent');
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            if (fetches.length !== 1 || fetches[0].message !== 'pierwsze') {
+                throw new Error('on: expected the dictated draft, got ' + JSON.stringify(fetches));
+            }
+            process.stdout.write('autosend:ok');
+            """
+        )
+    )
+    assert "autosend:ok" in output
+
+
+def test_request_history_is_capped_to_the_api_contract() -> None:
+    """R3-02: the 27th turn must not 422 on history length.
+
+    The backend accepts at most 50 history items of at most 16000 chars each;
+    the panel used to send the whole conversation verbatim.
+    """
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const bodies = [];
+            fetch = async (_url, opts) => {
+                bodies.push(JSON.parse(opts.body));
+                return {
+                    ok: true,
+                    text: async () => 'event: token\\ndata: {"text":"ok"}\\n\\nevent: done\\ndata: {"response_id":null}\\n\\n',
+                };
+            };
+            window.fetch = fetch;
+            api.init();
+            await api.whenThreadReady();
+            const history = api.getState().history;
+            for (let i = 0; i < 30; i += 1) {
+                history.push({ role: 'user', content: 'q' + i });
+                history.push({ role: 'assistant', content: i === 29 ? 'x'.repeat(20000) : 'a' + i });
+            }
+            await api.send('turn 31');
+            const sent = bodies[0].history;
+            if (sent.length !== 50) throw new Error('history length ' + sent.length);
+            if (sent[sent.length - 1].content.length !== 16000) {
+                throw new Error('field not truncated: ' + sent[sent.length - 1].content.length);
+            }
+            if (sent[0].content !== 'q5') throw new Error('oldest kept entry ' + sent[0].content);
+            // The full conversation stays local.
+            if (api.getState().history.length !== 62) {
+                throw new Error('local history ' + api.getState().history.length);
+            }
+            process.stdout.write('history-cap:ok');
+            """
+        )
+    )
+    assert "history-cap:ok" in output
+
+
+def test_stream_without_done_is_marked_interrupted_with_retry() -> None:
+    """R3-01 (frontend): clean EOF without `done` is a fragment, not an answer."""
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            fetch = async () => ({
+                ok: true,
+                text: async () => 'event: token\\ndata: {"text":"partial answ"}\\n\\n',
+            });
+            window.fetch = fetch;
+            api.init();
+            await api.whenThreadReady();
+            await api.send('co z tym buildem?');
+            const state = api.getState();
+            if (state.retryMessage !== 'co z tym buildem?') {
+                throw new Error('no retry affordance: ' + state.retryMessage);
+            }
+            const assistant = state.history.filter((m) => m.role === 'assistant');
+            if (assistant.length) throw new Error('fragment logged as an answer');
+            const log = document.getElementById('ss-agent-log');
+            const rendered = (log.children || []).map((n) => n.textContent).join('|');
+            if (!rendered.includes('partial answ')) throw new Error('partial text lost: ' + rendered);
+            process.stdout.write('stream-cut:ok');
+            """
+        )
+    )
+    assert "stream-cut:ok" in output
+
+
+def test_thread_key_follows_the_report_not_just_the_url() -> None:
+    """R3-03: two reports on one URL must not share a conversation."""
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            api.init();
+            document.title = 'Screenscribe - recording_a.mov';
+            api.getState().threadFingerprint = null;
+            const keyA = api.threadKey();
+            api.getState().threadFingerprint = null;
+            const keyAgain = api.threadKey();
+            if (keyA !== keyAgain) throw new Error('key not stable: ' + keyA + ' vs ' + keyAgain);
+            document.title = 'Screenscribe - recording_b.mov';
+            api.getState().threadFingerprint = null;
+            const keyB = api.threadKey();
+            if (keyA === keyB) throw new Error('different reports share a thread key');
+            process.stdout.write('thread-key:ok');
+            """
+        )
+    )
+    assert "thread-key:ok" in output
+
+
+def test_restored_chain_keeps_its_identity_after_reload() -> None:
+    """R3-05: previousResponseId without its identity is dropped by send().
+
+    The thread record now stores the provider identity; a real reload restores
+    both, so the next turn still chains server-side.
+    """
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            function later(fn) { setTimeout(fn, 0); }
+            function makeIdb() {
+                const stores = {};
+                let upgraded = false;
+                return {
+                    open() {
+                        const req = {};
+                        later(() => {
+                            const db = {
+                                objectStoreNames: {
+                                    contains(name) { return Object.prototype.hasOwnProperty.call(stores, name); },
+                                },
+                                createObjectStore(name) { stores[name] = new Map(); },
+                                transaction() {
+                                    return {
+                                        objectStore(name) {
+                                            const data = stores[name];
+                                            if (!data) throw new Error('missing store ' + name);
+                                            return {
+                                                get(key) {
+                                                    const result = {};
+                                                    later(() => {
+                                                        result.result = data.has(key) ? data.get(key) : undefined;
+                                                        if (result.onsuccess) result.onsuccess();
+                                                    });
+                                                    return result;
+                                                },
+                                                put(value, key) {
+                                                    data.set(key, JSON.parse(JSON.stringify(value)));
+                                                    const result = {};
+                                                    later(() => { if (result.onsuccess) result.onsuccess(); });
+                                                    return result;
+                                                },
+                                            };
+                                        },
+                                    };
+                                },
+                            };
+                            req.result = db;
+                            if (!upgraded && req.onupgradeneeded) req.onupgradeneeded();
+                            upgraded = true;
+                            if (req.onsuccess) req.onsuccess();
+                        });
+                        return req;
+                    },
+                };
+            }
+            window.indexedDB = makeIdb();
+            const api = screenscribeAgentPanel;
+            const bodies = [];
+            fetch = async (_url, opts) => {
+                bodies.push(JSON.parse(opts.body));
+                return {
+                    ok: true,
+                    text: async () => 'event: token\\ndata: {"text":"ok"}\\n\\nevent: done\\ndata: {"response_id":"resp_a","provider":"primary","protocol":"responses","host":"api.x.ai"}\\n\\n',
+                };
+            };
+            window.fetch = fetch;
+            api.init();
+            await api.whenThreadReady();
+            await api.send('first');
+            // Simulate a reload: a fresh state restores from IndexedDB only.
+            const state = api.getState();
+            state.history = [];
+            state.previousResponseId = null;
+            state.previousResponseIdentity = null;
+            const restored = await api.restoreThread();
+            if (!restored) throw new Error('restore returned false');
+            if (state.previousResponseId !== 'resp_a') throw new Error('chain lost: ' + state.previousResponseId);
+            if (!state.previousResponseIdentity || state.previousResponseIdentity.host !== 'api.x.ai') {
+                throw new Error('identity lost: ' + JSON.stringify(state.previousResponseIdentity));
+            }
+            await api.send('second');
+            if (bodies[1].previous_response_id !== 'resp_a') {
+                throw new Error('post-reload turn did not chain: ' + bodies[1].previous_response_id);
+            }
+            process.stdout.write('identity-reload:ok');
+            """
+        )
+    )
+    assert "identity-reload:ok" in output
+
+
+def test_escape_stops_the_stream_from_anywhere_in_the_panel() -> None:
+    """R4-05: after click-to-send the focus sits on the button, not the field.
+
+    Escape used to be handled only by the textarea's keydown listener, so a
+    mouse user had no keyboard stop.
+    """
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            let aborted = false;
+            function makeAbort() {
+                return { signal: {}, abort() { aborted = true; } };
+            }
+            window.AbortController = function () { return makeAbort(); };
+            fetch = async () => ({
+                ok: true,
+                text: () => new Promise(() => {}),  // a stream that never ends
+            });
+            window.fetch = fetch;
+            api.init();
+            const pending = api.send('long question');
+            await Promise.resolve();
+            if (!api.getState().streaming) throw new Error('turn did not start streaming');
+            const panel = document.getElementById('ss-agent-panel');
+            let prevented = false;
+            panel.dispatchEvent({
+                type: 'keydown',
+                key: 'Escape',
+                preventDefault() { prevented = true; },
+            });
+            if (!api.getState().stopRequested && !aborted) {
+                throw new Error('Escape on the panel did not request a stop');
+            }
+            if (!prevented) throw new Error('Escape default not prevented');
+            process.stdout.write('panel-escape:ok');
+            """
+        )
+    )
+    assert "panel-escape:ok" in output
+
+
+def test_stacked_sheet_scrolls_into_view_and_hides_size_controls() -> None:
+    """R4-03/R4-04: on a phone the sheet sits at the end of the document.
+
+    Opening the chat must scroll it on screen, and the resize controls that
+    the mobile CSS overrides into a fixed size must disappear.
+    """
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            window.matchMedia = (query) => ({ matches: String(query).includes('max-width: 900px') });
+            innerWidth = 390;
+            innerHeight = 700;
+            window.innerWidth = 390;
+            window.innerHeight = 700;
+            const video = document.getElementById('videoPlayer');
+            video._rect = { left: 0, top: 0, right: 390, bottom: 600, width: 390, height: 600 };
+            api.init();
+            const rootEl = document.getElementById('ss-agent-root');
+            let scrolled = 0;
+            rootEl.scrollIntoView = () => { scrolled += 1; };
+            api.setCollapsed(false);
+            if (!api.getState().sheet) throw new Error('cramped phone layout must dock as a sheet');
+            if (scrolled !== 1) throw new Error('open did not scroll the sheet into view: ' + scrolled);
+            const handle = document.getElementById('ss-agent-resize');
+            const sizeBtn = document.getElementById('ss-agent-size');
+            if (!handle.hidden || !sizeBtn.hidden) {
+                throw new Error('size controls visible in the fixed-size sheet');
+            }
+            // Desktop: controls come back.
+            window.matchMedia = () => ({ matches: false });
+            innerWidth = 1280; innerHeight = 800;
+            window.innerWidth = 1280; window.innerHeight = 800;
+            video._rect = { left: 8, top: 8, right: 600, bottom: 400, width: 592, height: 392 };
+            api.applyDomState();
+            if (handle.hidden || sizeBtn.hidden) throw new Error('size controls missing on desktop');
+            process.stdout.write('stacked-sheet:ok');
+            """
+        )
+    )
+    assert "stacked-sheet:ok" in output
+
+
+def test_fab_label_survives_a_language_switch_while_open() -> None:
+    """R4-07: applyTranslations rewrites aria-label from data-i18n-attr.
+
+    The attribute used to be frozen at 'agentToggle', so a PL→EN switch on an
+    OPEN panel announced "open chat" on the collapse control.
+    """
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            api.init();
+            const fab = document.getElementById('ss-agent-fab');
+            api.setCollapsed(false);
+            const attr = fab.getAttribute('data-i18n-attr');
+            if (attr !== 'aria-label:agentCollapse') throw new Error('open attr: ' + attr);
+            api.setCollapsed(true);
+            const closedAttr = fab.getAttribute('data-i18n-attr');
+            if (closedAttr !== 'aria-label:agentToggle') throw new Error('closed attr: ' + closedAttr);
+            process.stdout.write('fab-i18n:ok');
+            """
+        )
+    )
+    assert "fab-i18n:ok" in output

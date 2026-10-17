@@ -162,8 +162,8 @@ describing who the viewer is and what counts as a finding:
 - `medical` — clinical consultations and medical systems; findings use
   `finding/observation/risk/followup/other` with a Polish+English clinical
   dictionary.
-- `veterinary` — veterinary consultations, procedures, and clinic systems
-  (e.g. Vista); same clinical categories with a veterinary dictionary.
+- `veterinary` — veterinary consultations, procedures, and clinic systems;
+  same clinical categories with a veterinary dictionary.
 - `custom` — your own profile, backed by `--keywords-file`; the file's
   top-level keys become the finding categories. Without `--keywords-file`,
   `review` stops with instructions.
@@ -490,6 +490,42 @@ uv run screenscribe --version    # short form (also -V)
 
 ## Configuration reference
 
+Provider transport is checked again immediately before each request, including
+direct API calls, STT fallback, TTS, agent fallback, and live STT. Remote URLs
+must use `https://` or, for WebSockets, `wss://`. Plain `http://` / `ws://` is
+supported only for `localhost` (case/trailing-dot normalized) and literal
+loopback IPs: IPv4 `127.0.0.0/8`, IPv6 `::1`, and IPv4-mapped loopback. Hostname
+prefixes, DNS aliases, private LAN IPs, and alternate integer/octal IPv4 spelling
+are not loopback exceptions. Use TLS for those deployments. Redirects are not
+followed; set the final destination URL directly.
+
+Local plaintext HTTP/WS always connects directly. Provider clients ignore proxy
+environment settings for HTTP, including SDK-specific proxy mounts; WebSocket
+clients explicitly disable proxy discovery for WS. This does not depend on
+`NO_PROXY`. HTTPS/WSS retains configured environment proxy support.
+
+OAuth has a stricter rule: device authorization, authorization-code exchange,
+and refresh-token requests require HTTPS, including on loopback. The
+`SCREENSCRIBE_OPENAI_OAUTH_ISSUER` and `SCREENSCRIBE_XAI_OAUTH_ISSUER` overrides
+remain available for trusted HTTPS issuers; HTTPS is transport protection, not
+proof that an arbitrary issuer is trustworthy. Both resolved issuers and final
+token destinations are validated, and OAuth redirects are refused even for an
+injected client configured to follow redirects.
+
+Automatic provider identity uses only `api.libraxis.cloud`, `api.openai.com`,
+and `api.x.ai`, after IDNA/case/trailing-dot normalization. Parent domains and
+unlisted subdomains are custom endpoints, not proof of provider ownership.
+Custom HTTPS gateways remain available with explicitly configured keys.
+
+`config --set-key` writes an exact-byte `config.env.bak` before replacing the
+config; each file uses a temporary file in the same directory, `0600`, flush,
+fsync, and atomic replacement. Other config lines and their line endings are
+preserved. Failure before replacement leaves the old target intact. The two
+files are not a single transaction: if config replacement fails after a
+successful backup, the old config and its completed backup remain. This does
+not promise recovery from arbitrary hardware failure or serialize concurrent
+writers; avoid simultaneous configuration edits.
+
 screenscribe reads configuration from (in order) a config file and then
 environment variables, where **environment variables always win**.
 
@@ -601,17 +637,60 @@ only after a successful save; a failed save remains visibly unconfirmed.
 
 `merge_findings` / `unmerge_finding` currently return `{"unsupported": true}` — merge is a client-only fold (`mergeFindings` in the report UI) with no patch-callable API.
 
+The agent sees the evidence, not only the one-line summaries: `get_finding`
+returns a finding's full visual analysis and every merged frame, and
+`view_frame` attaches the real screenshot pixels to the model conversation
+(Responses `input_image`, or Anthropic image blocks). Frames are read only
+from the report directory and are never streamed to the browser.
+`capture_video_frames` grabs fresh frames from the source video at any
+timestamps (4 per call, 8 frames per turn together with `view_frame`, nothing
+written to the report), so the agent can read moments the pipeline did not
+keep, or a recording without narration minute by minute.
+
+#### Chat panel
+
+- **Streaming and Stop.** Answers render as they stream. "Agent is
+  responding…" shows with a **Stop** button (or `Esc` in the composer); a
+  stopped answer keeps the received text, marked as stopped. A timeout or lost
+  connection keeps the partial text and offers **Retry**, which replaces it
+  instead of appending a duplicate.
+- **Composer.** Multi-line field that grows with its content. `Enter` sends,
+  `Shift+Enter` adds a line, IME composition is respected. **Send** is
+  disabled for an empty draft; the draft stays editable while an answer
+  streams and survives closing the panel or reloading the page.
+- **Answers and bubbles.** Answers render Markdown (lists, bold, code,
+  tables) built without `innerHTML`; links stay text, never clickable URLs. Your messages are on the right,
+  the agent's on the left, each captioned "You" / "Agent".
+- **Screenshots.** Paste an image into the composer, drop it on the panel, or
+  use the image button: up to 4 per message, larger captures downscaled to a
+  2048 px long side. They go to the agent with the message (`images` in the
+  chat request; PNG, JPEG, WebP or GIF, checked by magic bytes, 6 MB each).
+- **Dictation.** The microphone button records a message, **Stop** (click the
+  microphone again) transcribes it into the draft for editing; **Cancel**
+  discards the recording. With **Send after dictation** checked (remembered per
+  report) the dictated message is sent right away. Uses
+  `POST /api/agent/stt` (same 25 MB cap and STT provider as `/api/stt`, but it
+  never advances the manual-frame conversation chain). Without a microphone,
+  permission, browser support, or the local server, the panel says why.
+- **Size.** Drag the bottom-left grip, use arrow keys on it (`Shift` for
+  larger steps, `Home`/`End` for smallest/largest), or cycle compact /
+  standard / large with the header button. The size is remembered per report
+  and is always kept inside the viewport and off the video player.
+
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `SCREENSCRIBE_AGENT_EGRESS` | `deny` | `deny` skips providers whose trust is `external`. `allow` sends the loaded report (and therefore the recording's contents) to those hosts. Analysis hosts (`processor`) are always kept. |
-| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from host and report receipt | `local` / `internal` / `processor` / `external`. localhost is `local`; `api.libraxis.cloud` is `internal`; a recorded successful semantic LLM host is `processor`. Set `external` to exclude that host under `deny`. |
+| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from host and report receipt | `local` / `internal` / `processor` / `external`. Strict loopback is `local`; only the canonical `api.libraxis.cloud` is implicitly `internal`, not other subdomains; a recorded successful semantic LLM host is `processor`. Set `external` to exclude that host under `deny`. An explicit trust override never bypasses transport validation. |
 
 Optional Anthropic fallback (skipped when unset): `ANTHROPIC_API_KEY` or `SCREENSCRIBE_AGENT_FALLBACK_API_KEY`. Install the extra with `pip install 'screenscribe[anthropic]'`.
 
-SSE events: `token`, `tool_call`, `tool_result`, `done`, `error`. Text uses
-round-buffered delivery: the backend sends it after each provider round
-completes, then emits tool events. It does not deliver individual tokens as
-the provider generates them. Unexpected provider/tool failures return a
+SSE events: `token`, `tool_call`, `tool_result`, `done`, `error`. `token`
+frames carry provider text deltas as they are generated, so the first words of
+an answer appear before the turn ends; a turn has many `token` frames. While a
+provider round produces no output (reasoning, slow first token) the stream
+sends SSE comment frames (`: keepalive`, every ~10 s); clients treat 60 s
+without any byte as a dead connection. Closing the HTTP stream (the panel's
+Stop) cancels the provider request. Unexpected provider/tool failures return a
 generic error to the browser and model; exception details remain in server
 logs. Explicit configuration and tool-input validation messages remain
 available. Requests

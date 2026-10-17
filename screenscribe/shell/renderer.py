@@ -18,6 +18,7 @@ from ..html_pro.assets import (
     load_css_analyze_dashboard,
     load_css_screenscribe_theme,
     load_css_screenscribe_theme_polish,
+    load_css_selection_toolbar,
     load_favicon_data_uri,
     load_js_agent_panel,
     load_js_analyze_dashboard,
@@ -28,6 +29,7 @@ from ..html_pro.assets import (
     load_js_lib_stt_transport,
     load_js_lib_tab_keyboard,
     load_js_review_app,
+    load_js_selection_toolbar,
     load_js_video_player,
 )
 from .surface import HeaderCellConfig, SurfaceConfig, TabConfig
@@ -178,6 +180,7 @@ _SERVER_I18N: dict[str, dict[str, dict[str, str]]] = {
 _STYLE_LOADERS: Mapping[str, Callable[[], str]] = {
     "analyze_dashboard": load_css_analyze_dashboard,
     "agent_panel": load_css_agent_panel,
+    "selection_toolbar": load_css_selection_toolbar,
 }
 _SCRIPT_LOADERS: Mapping[str, Callable[[], str]] = {
     "i18n": load_js_i18n_runtime,
@@ -189,6 +192,7 @@ _SCRIPT_LOADERS: Mapping[str, Callable[[], str]] = {
     "video_player": load_js_video_player,
     "review_app": load_js_review_app,
     "agent_panel": load_js_agent_panel,
+    "selection_toolbar": load_js_selection_toolbar,
 }
 
 
@@ -562,3 +566,44 @@ def render_surface(config: SurfaceConfig, context: Mapping[str, Any]) -> str:
     # text (STT transcript / LLM summary / error message) is preserved as text
     # instead of exploding the render or being clobbered by a later slot.
     return _SLOT_MARKER_RE.sub(_fill_slot, rendered)
+
+
+# Scripts a served report swaps for the installed version, so a report generated
+# by an older screenscribe still gets the current agent panel when opened through
+# ``screenscribe serve``. The on-disk file is left as generated.
+_LIVE_SCRIPTS = ("i18n", "agent_panel")
+_LIVE_STYLES = ("agent_panel",)
+
+
+def refresh_live_assets(document: str) -> str:
+    """Return ``document`` with the live-refreshable assets set to this version.
+
+    Each script is found by the first line of its current source inside a
+    ``<script>`` block and replaced whole; a script that is missing or appears
+    more than once is left alone. Styles share one ``<style>`` block, so the
+    current stylesheet is appended before ``</head>`` and overrides older rules.
+    """
+    for name in _LIVE_SCRIPTS:
+        current = _SCRIPT_LOADERS[name]()
+        marker = current.split("\n", 1)[0].strip()
+        if not marker:
+            continue
+        opening = "<script>\n" + marker
+        start = document.find(opening)
+        if start < 0 or document.find(opening, start + 1) >= 0:
+            continue
+        end = document.find("\n</script>", start)
+        if end < 0:
+            continue
+        document = document[:start] + "<script>\n" + current + document[end:]
+    head_end = document.find("</head>")
+    if head_end >= 0:
+        styles = "\n".join(_STYLE_LOADERS[name]() for name in _LIVE_STYLES)
+        document = (
+            document[:head_end]
+            + '<style id="ss-live-assets">\n'
+            + styles
+            + "\n</style>\n"
+            + document[head_end:]
+        )
+    return document

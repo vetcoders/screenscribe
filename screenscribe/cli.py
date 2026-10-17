@@ -108,6 +108,7 @@ from .keywords import (
     save_default_keywords,
 )
 from .preprocess import write_preprocess_bundle
+from .proofs import run_proof
 
 # xAI text-to-speech and the live STT websocket clients. Re-exported under the
 # cli namespace so tests patch screenscribe.cli.<name> like the other transports.
@@ -156,15 +157,27 @@ console = Console()
 BOOTSTRAP_BANNER_SHOWN_ENV = "SCREENSCRIBE_BOOTSTRAP_BANNER_SHOWN"
 
 
+def _baked_provenance() -> str | None:
+    """Commit provenance baked into the wheel at build time, if present."""
+    from ._commit import COMMIT, DIRTY
+
+    if not COMMIT:
+        return None
+    return f"g{COMMIT}{'-dirty' if DIRTY else ''}"
+
+
 def _version_string() -> str:
     """Version string for explicit --version / version queries.
 
-    Appends short git provenance (``+g<sha>``, plus ``-dirty`` for an unclean
-    tree) when the package runs from a source / editable checkout, so a dev
-    build is never mistaken for a release. A wheel / PyPI install has no git
-    work tree, so it shows the clean ``v<version>``.
+    Always carries short git provenance (``+g<sha>``, plus ``-dirty`` for an
+    unclean tree): installed wheels bake it at build time (``hatch_build.py``
+    -> ``_commit.py``), source / editable checkouts probe the live work tree.
+    Only a provenance-less build without git shows the bare ``v<version>``.
     """
     base = f"v{__version__}"
+    baked = _baked_provenance()
+    if baked is not None:
+        return f"{base}+{baked}"
     git = shutil.which("git")
     if git is None:
         return base
@@ -218,6 +231,7 @@ def _auto_review_if_video() -> None:
         # Skip if it's already a command or flag
         if first_arg in (
             "review",
+            "serve",
             "analyze",
             "transcribe",
             "preprocess",
@@ -903,6 +917,92 @@ def review(
 
 
 @app.command()
+def serve(
+    output_dir: Annotated[
+        Path,
+        typer.Argument(
+            help="Existing review directory containing <video>_report.html",
+        ),
+    ],
+    video: Annotated[
+        Path | None,
+        typer.Option(
+            "--video",
+            help=(
+                "Source recording for this report. Required when that file is not "
+                "already inside the review directory."
+            ),
+            exists=True,
+            dir_okay=False,
+        ),
+    ] = None,
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port",
+            "-p",
+            help="Port for the HTTP server (default: 8765)",
+        ),
+    ] = 8765,
+) -> None:
+    """Start the review server for an existing report directory.
+
+    Same local server as review --serve (127.0.0.1, session token, browser)
+    without re-running the pipeline. This is the command the offline report
+    tells you to run.
+    """
+    from .cli_serve import ReviewDirError, serve_existing_review
+
+    try:
+        serve_existing_review(output_dir, video, port)
+    except ReviewDirError as exc:
+        console.print(f"[red]Error:[/] {exc}")
+        raise typer.Exit(1) from None
+
+
+@app.command()
+def doctor(
+    out: Annotated[
+        Path,
+        typer.Option(
+            "--out",
+            "-o",
+            help="Directory for receipt artifacts (default: ./proofs)",
+        ),
+    ] = Path("./proofs"),
+    json_mode: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Emit summary.json alongside receipts and matrix.",
+        ),
+    ] = False,
+) -> None:
+    """Diagnose every outbound provider path and agent tool with a stamped roundtrip proof.
+
+    Writes one receipt per element plus a MATRIX.md summary. Provider probes use
+    the configured API keys and stamp NOT-PROVEN when a key is missing or the
+    provider returns an error. Tool probes run locally against a fixture built
+    from examples/example_report.json and examples/example_transcript.vtt.
+    """
+    try:
+        receipts = run_proof(out, json_mode=json_mode)
+    except Exception as exc:
+        console.print(f"[red]Doctor run failed:[/] {exc}")
+        raise typer.Exit(1) from None
+
+    proven = sum(1 for r in receipts if r.verdict == "PROVEN")
+    not_proven = sum(1 for r in receipts if r.verdict == "NOT-PROVEN")
+    console.print(
+        f"[bold]Doctor complete:[/] {len(receipts)} elements — "
+        f"[green]{proven} PROVEN[/], [yellow]{not_proven} NOT-PROVEN[/]"
+    )
+    console.print(f"[dim]Artifacts:[/] {out.resolve()}")
+    if not_proven:
+        raise typer.Exit(2)
+
+
+@app.command()
 def analyze(
     video: Annotated[
         Path,
@@ -1568,6 +1668,7 @@ def preprocess(
         stt_endpoint=config.stt_endpoint,
         stt_model=config.stt_model,
         resume_hint=True,
+        output_dir=output_dir,
     )
 
     # Drop no-speech hallucinations before the transcript-first bundle is written
@@ -1823,6 +1924,69 @@ def config_setup() -> None:
         f"[green]Provider setup saved atomically to:[/] [link=file://{path}]{path}[/link]"
     )
     console.print(f"[green]Status:[/] {preset.configuration_status()}")
+
+
+@config_app.command("auth")
+def config_auth(
+    provider: Annotated[str, typer.Argument(help="Provider: libraxis | openai | xai")],
+    login: Annotated[
+        bool, typer.Option("--login", help="Sign in via the OAuth device flow")
+    ] = False,
+    key: Annotated[bool, typer.Option("--key", help="Paste an API key (hidden prompt)")] = False,
+) -> None:
+    """Select a provider and set up its credentials in one gesture.
+
+    The selection is sovereign: endpoints and models are written as one
+    coherent preset (LLM and Vision travel together; STT follows the same
+    provider by default). ``--login`` stores an account token that serves as
+    the credential fallback; ``--key`` writes an explicit API key.
+    """
+    from .cli_auth import auth_login
+
+    provider = provider.lower().strip()
+    if provider not in {"libraxis", "openai", "xai"}:
+        console.print("[red]Error:[/] provider must be one of: libraxis, openai, xai")
+        raise typer.Exit(1)
+    if login == key:
+        console.print("[red]Error:[/] pass exactly one of --login or --key.")
+        raise typer.Exit(1)
+
+    api_key = ""
+    if login:
+        auth_login(provider, no_browser=False)
+        from .account_auth import account_status
+
+        status = account_status(provider)
+        if not status.api_bearer_usable:
+            console.print(
+                f"[yellow]The {provider} account token cannot serve REST calls;[/] "
+                "rerun with --key to set an API key instead."
+            )
+            raise typer.Exit(1)
+    else:
+        api_key = typer.prompt("API key", hide_input=True).strip()
+        if not api_key:
+            console.print("[red]Error:[/] API key cannot be empty.")
+            raise typer.Exit(1)
+
+    try:
+        preset = ScreenScribeConfig.provider_preset(provider, api_key)
+    except ValueError as error:
+        console.print(f"[red]Error:[/] {error}")
+        raise typer.Exit(1) from None
+
+    config_path = Path.home() / ".config" / "screenscribe" / "config.env"
+    if config_path.exists() and not typer.confirm(
+        f"Write the {provider} selection (endpoints+models) to {config_path}?",
+        default=True,
+    ):
+        console.print("[dim]Selection unchanged; credentials kept.[/]")
+        return
+
+    path = preset.save_default_config()
+    console.print(f"[green]Selection saved:[/] {provider} → [link=file://{path}]{path}[/link]")
+    console.print(f"[green]Status:[/] {preset.configuration_status()}")
+    console.print("[dim]Verify the whole setup:[/] screenscribe doctor")
 
 
 # ---------------------------------------------------------------------------

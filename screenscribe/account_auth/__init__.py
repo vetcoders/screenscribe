@@ -29,6 +29,8 @@ from urllib.parse import quote
 
 import httpx
 
+from ..api_utils import UnsafeEndpointError, validate_provider_endpoint
+
 __all__ = [
     "ACCOUNTS_FILE_NAME",
     "OPENAI_CODEX_CLI_CLIENT_ID",
@@ -150,10 +152,22 @@ def _non_empty(value: str | None) -> str | None:
 
 
 def issuer_for(provider: str) -> str:
-    """Issuer base URL: env override (trailing slash stripped) else the row default."""
+    """Resolve a TLS-only issuer, including explicitly configured overrides."""
     row = provider_oauth_config(provider)
     override = _non_empty(os.environ.get(row.issuer_env))
-    return override.rstrip("/") if override else row.default_issuer
+    issuer = override.rstrip("/") if override else row.default_issuer
+    _validate_oauth_endpoint(issuer)
+    return issuer
+
+
+def _validate_oauth_endpoint(endpoint: str) -> None:
+    """OAuth credentials never use plaintext, including on loopback."""
+    try:
+        validate_provider_endpoint(endpoint)
+        if httpx.URL(endpoint).scheme != "https":
+            raise UnsafeEndpointError("OAuth requires HTTPS")
+    except UnsafeEndpointError:
+        raise AccountAuthError("http", "OAuth endpoints require a valid HTTPS URL.") from None
 
 
 def client_id_for(provider: str) -> str:
@@ -412,7 +426,8 @@ def refresh_tokens(
     http = client or httpx.Client(timeout=30.0)
     try:
         try:
-            response = http.post(endpoint, content=body, headers=headers)
+            _validate_oauth_endpoint(endpoint)
+            response = http.post(endpoint, content=body, headers=headers, follow_redirects=False)
         except httpx.HTTPError as error:
             raise AccountAuthError(
                 "http", f"refresh request failed: {error.__class__.__name__}"
@@ -420,7 +435,7 @@ def refresh_tokens(
     finally:
         if own_client:
             http.close()
-    if response.status_code >= 400:
+    if response.status_code >= 300:
         raise AccountAuthError("oauth", f"refresh endpoint returned status {response.status_code}")
     try:
         payload = response.json()

@@ -140,7 +140,13 @@ def _llm_processing_receipt(config: ScreenScribeConfig) -> dict[str, str] | None
     }
 
 
-def _prompt_rerun_action(base_output: Path, console: Any, *, allow_resume: bool) -> str:
+def _prompt_rerun_action(
+    base_output: Path,
+    console: Any,
+    *,
+    allow_resume: bool,
+    new_output_name: str | None = None,
+) -> str:
     """Ask the user how to handle an existing review bundle (interactive only).
 
     Re-reviewing the same video currently auto-bumps the output directory to
@@ -162,28 +168,41 @@ def _prompt_rerun_action(base_output: Path, console: Any, *, allow_resume: bool)
     Callers gate this on ``sys.stdin.isatty()``; under a pipe/CI the auto-bump
     default is used without prompting so behaviour stays deterministic.
     """
-    resume_line = (
-        "[bold]R[/]esume — continue from the saved checkpoint (retry failed items)\n"
-        if allow_resume
-        else ""
-    )
+    # The old "[o/n] (n)" read as yes/no, so "n" looked like "don't do it".
+    # Each option now says what happens to which folder, and the answer can be
+    # the letter or the word.
+    new_target = escape(new_output_name) if new_output_name else "a new numbered folder"
+    lines = [
+        f"[yellow]This recording already has a review:[/] {escape(base_output.name)}\n",
+        f"  [bold]N[/]  New copy — keep that review, write this run to {new_target} "
+        "[dim](default)[/]",
+        f"  [bold]O[/]  Overwrite — replace {escape(base_output.name)} with this run",
+    ]
+    if allow_resume:
+        lines.append(
+            "  [bold]R[/]  Resume — continue the interrupted run in "
+            f"{escape(base_output.name)} (retries failed items)"
+        )
     console.print(
         Panel(
-            f"[yellow]A previous review already exists at:[/] {base_output.name}\n\n"
-            "[bold]O[/]verwrite — replace the existing review in place\n"
-            f"{resume_line}"
-            "[bold]N[/]ew — keep the old review, create a new versioned copy",
+            "\n".join(lines),
             title="[bold]Existing Review Found[/]",
             border_style="yellow",
         )
     )
-    choices = ["o", "r", "n"] if allow_resume else ["o", "n"]
+    letters = "N, O or R" if allow_resume else "N or O"
+    words = {"n": "n", "new": "n", "o": "o", "overwrite": "o"}
+    if allow_resume:
+        words.update({"r": "r", "resume": "r"})
     choice = Prompt.ask(
-        "How would you like to proceed?",
-        choices=choices,
+        f"Type {letters} (Enter = N, new copy)",
+        choices=sorted(words) + [w.upper() for w in sorted(words)],
         default="n",
+        show_choices=False,
+        show_default=False,
         console=console,
     ).lower()
+    choice = words.get(choice, "n")
     # ``.get(..., "new")`` keeps a defensive default: even if a "resume" answer
     # arrives when no checkpoint exists, we never fall through to a silent
     # overwrite — the call site treats it as the safe version-bump path.
@@ -423,7 +442,12 @@ def run_review(
             elif version and _stdin_is_tty():
                 # RERUN-UX: a prior bundle exists and we are on a real terminal,
                 # so let the operator choose instead of silently auto-bumping.
-                action = _prompt_rerun_action(base_output, console, allow_resume=checkpoint_present)
+                action = _prompt_rerun_action(
+                    base_output,
+                    console,
+                    allow_resume=checkpoint_present,
+                    new_output_name=video_output.name,
+                )
                 if action == "overwrite":
                     video_output = base_output
                 elif action == "resume" and checkpoint_present:
@@ -636,6 +660,7 @@ def run_review(
                         api_key=config.get_stt_api_key(),
                         stt_endpoint=config.stt_endpoint,
                         stt_model=config.stt_model,
+                        output_dir=video_output,
                     )
                 except (
                     httpx.HTTPStatusError,
@@ -668,6 +693,7 @@ def run_review(
                                 api_key=config.get_stt_fallback_api_key(),
                                 stt_endpoint=config.stt_fallback_endpoint,
                                 stt_model=config.get_stt_fallback_model(),
+                                output_dir=video_output,
                             )
                         except (
                             httpx.HTTPStatusError,
@@ -1113,6 +1139,7 @@ def run_review(
                         residual_screenshots,
                         config,
                         previous_response_id=batch_context_response_id,
+                        output_dir=video_output,
                     )
                     # Merge restored successes with the newly-retried ones.
                     unified_findings = prior_unified_findings + new_unified_findings

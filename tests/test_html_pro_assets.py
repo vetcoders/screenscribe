@@ -603,3 +603,84 @@ def test_focus_visible_rings_are_served_presence_smoke() -> None:
     # Dashboard: rings on tabs, mark-frame, export buttons, resizer.
     assert ".sidebar-resizer:focus-visible" in dashboard_css
     assert ".mark-frame-btn:focus-visible" in dashboard_css
+
+
+# Finding prose the renderer actually emits. The older finding-* names above
+# them in the whitelist are not this cut's contract.
+_SELECTABLE_FINDING_PROSE = (
+    ".finding-summary",
+    ".finding-transcript",
+    ".finding-details",
+    ".finding-content",
+    ".finding-meta",
+    ".merged-frame-transcript",
+)
+
+# Exact sidebar-resize suppression. !important must keep beating the whitelist.
+_RESIZE_SELECTION_SUPPRESSION = (
+    "body.is-resizing,\n"
+    "body.is-resizing * {\n"
+    "    cursor: col-resize !important;\n"
+    "    user-select: none !important;\n"
+    "}"
+)
+
+
+def _narrative_select_whitelist(css: str) -> set[str]:
+    """Selectors of the single narrative `user-select: text` rule."""
+    match = re.search(
+        r"/\* Narrative/text surfaces where reviewers expect to select \+ copy\. \*/\s*"
+        r"(?P<selectors>.*?)\s*\{(?P<body>[^{}]*)\}",
+        css,
+        flags=re.DOTALL,
+    )
+    assert match, "narrative user-select whitelist missing from report CSS"
+    body = match.group("body")
+    assert "user-select: text" in body
+    assert "-webkit-user-select: text" in body
+    assert "!important" not in body
+    return {part.strip() for part in match.group("selectors").split(",") if part.strip()}
+
+
+def test_finding_prose_is_selectable_and_resize_suppression_wins() -> None:
+    """AI finding prose is on the copy whitelist; drag-resize still locks selection.
+
+    The whitelist must name the classes `_render_finding` emits. Review radios,
+    the severity select, and the notes textarea stay in the renderer markup —
+    they are form controls and this cut does not restyle or rewrite them.
+    """
+    css = load_css()
+    whitelist = _narrative_select_whitelist(css)
+    missing = [name for name in _SELECTABLE_FINDING_PROSE if name not in whitelist]
+    assert not missing, "finding prose missing from user-select: text whitelist: " + ", ".join(
+        missing
+    )
+    # Form controls that already opted in must stay opted in.
+    assert "input" in whitelist
+    assert "textarea" in whitelist
+    assert _RESIZE_SELECTION_SUPPRESSION in css
+
+    renderer = Path("screenscribe/html_pro/renderer.py").read_text(encoding="utf-8")
+    assert 'class="human-review"' in renderer
+    assert 'type="radio" name="verdict-{finding_id_attr}" value="accepted"' in renderer
+    assert 'type="radio" name="verdict-{finding_id_attr}" value="rejected"' in renderer
+    assert 'class="severity-select"' in renderer
+    assert "<textarea " in renderer
+
+
+def test_correction_overlay_covers_merged_frame_transcripts() -> None:
+    """R2-03: the overlay selector must include merged-frame narration.
+
+    A phrase corrected in the main card used to stay wrong inside the merged
+    frames of the same finding, because the overlay only queried
+    ``.subtitle-item .text`` and ``.finding-transcript``.
+    """
+    assets_dir = Path(assets.__file__).resolve().parent.parent / "html_pro_assets"
+    js = (assets_dir / "scripts" / "review_app.js").read_text(encoding="utf-8")
+    selector_lines = [
+        line
+        for line in js.splitlines()
+        if "querySelectorAll" in line and "finding-transcript" in line
+    ]
+    assert selector_lines, "overlay selector not found"
+    assert all(".merged-frame-transcript" in line for line in selector_lines)
