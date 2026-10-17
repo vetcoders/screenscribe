@@ -72,7 +72,9 @@ def test_tts_writes_audio_file_via_xai(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert seen["api_key"] == secret
     assert seen["endpoint"] == "https://api.x.ai/v1/tts"
     assert secret not in result.output
-    assert "Audio saved" in result.output and "hello.mp3" in result.output
+    assert "Audio saved" in result.output
+    # Rich may wrap the filename when pytest's temporary directory path is long.
+    assert "hello.mp3" in "".join(result.output.splitlines())
 
 
 def test_tts_defaults_voice_and_language_from_config(
