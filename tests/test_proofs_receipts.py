@@ -164,7 +164,7 @@ def test_run_proof_writes_all_artifacts(tmp_path: Path, monkeypatch: pytest.Monk
     assert summary["proven"] == 2
 
 
-def test_matrix_and_summary_are_owner_only(tmp_path: Path) -> None:
+def test_matrix_and_summary_are_owner_only(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Doctor artifacts may quote provider errors, so nothing is world-readable."""
     import os
     import stat
@@ -172,7 +172,8 @@ def test_matrix_and_summary_are_owner_only(tmp_path: Path) -> None:
 
     if sys.platform == "win32":
         pytest.skip("POSIX permissions only")
-    os.umask(0o022)
+    previous_umask = os.umask(0o022)
+    request.addfinalizer(lambda: os.umask(previous_umask))
     receipt = ProofReceipt(
         element="demo:element",
         kind="provider",

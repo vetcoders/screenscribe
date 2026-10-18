@@ -116,6 +116,7 @@ def test_public_demo_embeds_the_current_panel_assets() -> None:
     """
     from screenscribe.html_pro.assets import load_js_agent_panel, load_js_i18n_runtime
 
-    demo = Path("site/demo/report.html").read_text(encoding="utf-8")
+    repo_root = Path(__file__).resolve().parents[1]
+    demo = (repo_root / "site" / "demo" / "report.html").read_text(encoding="utf-8")
     assert load_js_agent_panel() in demo
     assert load_js_i18n_runtime() in demo

@@ -143,7 +143,7 @@ def _run_js(assertions: str) -> None:
             const THEME_DEFAULT = '{default_color}';
             function assertTrue(cond, msg) {{ if (!cond) throw new Error(msg); }}
             function assertNear(actual, expected, eps, msg) {{
-                if (Math.abs(actual - expected) > eps) throw new Error(msg + ' actual=' + actual + ' expected=' + expected);
+                if (!Number.isFinite(actual) || Math.abs(actual - expected) > eps) throw new Error(msg + ' actual=' + actual + ' expected=' + expected);
             }}
             function classListToArray(el) {{
                 const out = [];

@@ -1227,6 +1227,25 @@ class TestLibraxisKeyStaysOnLibraxisHosts:
     an explicit SCREENSCRIBE_*_API_KEY instead.
     """
 
+    @pytest.mark.parametrize("ambient", ["opaque-ambient-fixture", "vista-fixture"])
+    def test_xai_stt_uses_account_bearer_when_llm_uses_ambient_libraxis_key(
+        self, clean_env: pytest.MonkeyPatch, ambient: str
+    ) -> None:
+        from screenscribe.account_auth import BearerResolution
+
+        clean_env.setenv("LIBRAXIS_API_KEY", ambient)
+        clean_env.setenv("SCREENSCRIBE_STT_ENDPOINT", "https://api.x.ai/v1/stt")
+        clean_env.setattr(
+            "screenscribe.account_auth.resolve_bearer",
+            lambda _provider, _explicit: BearerResolution("account-fixture", "account"),
+        )
+        config = ScreenScribeConfig()
+        config._load_from_env()
+        assert config.get_stt_api_key() == "account-fixture"
+        assert config.get_llm_api_key() == ambient
+        config.stt_api_key = "explicit-stt-fixture"
+        assert config.get_stt_api_key() == "explicit-stt-fixture"
+
     def test_libraxis_key_never_reaches_an_unknown_custom_host(
         self, clean_env: pytest.MonkeyPatch
     ) -> None:

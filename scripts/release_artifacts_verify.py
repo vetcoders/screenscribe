@@ -122,7 +122,7 @@ def verify_install(
         ).strip()
         if f"v{version}" not in version_out:
             raise RuntimeError(f"{label} --version says {version_out!r}, expected v{version}")
-        if expect_commit and f"+g{expect_commit}" not in version_out:
+        if expect_commit and not re.search(rf"\+g{re.escape(expect_commit)}(?:\s|$)", version_out):
             raise RuntimeError(
                 f"{label} --version says {version_out!r}, expected commit +g{expect_commit}"
             )

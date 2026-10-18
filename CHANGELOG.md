@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- **Fixed: responsive agent tools and accurate dictation feedback.** Tool calls
+  run off the server event loop with SSE keepalives; screenshot extraction has
+  a 60-second timeout. Dictation retained during an active turn is labeled as
+  inserted, not sent. Declining a provider-key selection reports that nothing
+  was written.
+- **Fixed: release and review validation.** Release verification rejects dirty
+  or mismatched wheel provenance. Tests isolate user glossaries, process umask,
+  working-directory paths and baked/live version metadata. Global glossary
+  hints affect subsequent analysis, not existing report overlays.
+
 - **Security: direct loopback and OAuth transport.** Plaintext local HTTP/WS
   cannot be routed through environment proxies, including Anthropic SDK proxy
   mounts. OAuth issuer overrides, device/code exchanges, and token refreshes

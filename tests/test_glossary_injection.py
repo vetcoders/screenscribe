@@ -360,12 +360,15 @@ def test_xai_stt_path_does_not_force_prompt_injection(
     assert "prompt" not in calls[0]
 
 
-def test_one_oversized_entry_does_not_empty_the_glossary(tmp_path: Path) -> None:
+def test_one_oversized_entry_does_not_empty_the_glossary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """R2-05: an oversized newest entry is skipped, not a hard stop.
 
     The byte-cap loop walks newest-first and used to ``break`` on the first
     entry that did not fit, dropping every older (and shorter) entry with it.
     """
+    monkeypatch.setattr(corrections, "default_glossary_dir", lambda: tmp_path / "noglossary")
     output_dir = tmp_path / "out"
     output_dir.mkdir()
     short = _correction("zeto", "ZETO")
