@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -424,6 +425,112 @@ def test_stream_agent_chat_runs_tool_loop(monkeypatch: pytest.MonkeyPatch) -> No
     assert "event: token" in body
     assert "Podsumowanie gotowe." in body
     assert '"response_id": null' in body
+
+
+def test_slow_tool_keeps_event_loop_and_stream_responsive(monkeypatch: pytest.MonkeyPatch) -> None:
+    rounds = iter(
+        [
+            ProviderRound(
+                text="",
+                response_id="tool-round",
+                function_calls=[
+                    FunctionCall(name="get_report_summary", call_id="slow-tool", arguments={})
+                ],
+            ),
+            ProviderRound(text="Finished.", response_id="final-round", function_calls=[]),
+        ]
+    )
+
+    async def fake_round(_provider: AgentProvider, _payload: dict[str, Any]) -> ProviderRound:
+        return next(rounds)
+
+    release = threading.Event()
+    loop_thread = threading.get_ident()
+    worker_threads: list[int] = []
+
+    def slow_execute(self: ReportToolbelt, name: str, arguments: dict[str, Any]) -> str:
+        worker_threads.append(threading.get_ident())
+        assert release.wait(5), "event loop did not emit a keepalive while the tool was running"
+        return '{"ok":true}'
+
+    monkeypatch.setattr(agent_chat, "round_tripper", fake_round)
+    monkeypatch.setattr(agent_chat, "_KEEPALIVE_SECONDS", 0.01)
+    monkeypatch.setattr(ReportToolbelt, "execute", slow_execute)
+    _drop_agent_env(monkeypatch)
+    report = _with_xai_processing_receipt(_load_fixture())
+
+    async def collect() -> str:
+        frames = []
+        try:
+            async for frame in stream_agent_chat(
+                config=_xai_config(),
+                report=report,
+                tools=ReportToolbelt(report),
+                message="Summarize.",
+            ):
+                frames.append(frame)
+                if frame == agent_chat.KEEPALIVE_FRAME:
+                    release.set()
+        finally:
+            release.set()
+        return "".join(frames)
+
+    body = asyncio.run(collect())
+    assert worker_threads and all(worker != loop_thread for worker in worker_threads)
+    assert agent_chat.KEEPALIVE_FRAME in body
+    assert "event: tool_result" in body and "Finished." in body
+
+
+def test_stop_during_tool_does_not_start_the_next_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    release = threading.Event()
+    executed: list[str] = []
+    _drop_agent_env(monkeypatch)
+
+    async def fake_round(_provider: AgentProvider, _payload: dict[str, Any]) -> ProviderRound:
+        return ProviderRound(
+            text="",
+            response_id="tools",
+            function_calls=[
+                FunctionCall(name="get_report_summary", call_id="first", arguments={}),
+                FunctionCall(name="list_findings", call_id="second", arguments={}),
+            ],
+        )
+
+    monkeypatch.setattr(agent_chat, "round_tripper", fake_round)
+    report = _with_xai_processing_receipt(_load_fixture())
+
+    async def scenario() -> None:
+        started = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def slow_execute(self: ReportToolbelt, name: str, arguments: dict[str, Any]) -> str:
+            executed.append(name)
+            loop.call_soon_threadsafe(started.set)
+            assert release.wait(5)
+            return '{"ok":true}'
+
+        monkeypatch.setattr(ReportToolbelt, "execute", slow_execute)
+
+        async def consume() -> None:
+            async for _frame in stream_agent_chat(
+                config=_xai_config(),
+                report=report,
+                tools=ReportToolbelt(report),
+                message="Summarize.",
+            ):
+                pass
+
+        task = asyncio.create_task(consume())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=1)
+        finally:
+            release.set()
+
+    asyncio.run(scenario())
+    assert executed == ["get_report_summary"]
 
 
 def test_collect_agent_chat_raises_when_egress_denies_all(

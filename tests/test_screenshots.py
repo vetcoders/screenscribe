@@ -1,5 +1,6 @@
 """Tests for screenscribe.screenshots — frame extraction command + path/error logic."""
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -128,6 +129,17 @@ def test_extract_screenshot_captures_output(mock_run):
     kwargs = mock_run.call_args.kwargs
     assert kwargs["capture_output"] is True
     assert kwargs["text"] is True
+    assert kwargs["timeout"] == 60.0
+
+
+@patch("screenscribe.screenshots.subprocess.run")
+def test_extract_screenshot_timeout_is_a_bounded_runtime_error(mock_run):
+    mock_run.side_effect = subprocess.TimeoutExpired(
+        "ffmpeg", 60, stderr="synthetic private diagnostic"
+    )
+    with pytest.raises(RuntimeError, match="timed out after 60 seconds") as failure:
+        extract_screenshot(Path("in.mp4"), 1.0, Path("o.jpg"))
+    assert "synthetic private diagnostic" not in str(failure.value)
 
 
 @patch("screenscribe.screenshots.subprocess.run")

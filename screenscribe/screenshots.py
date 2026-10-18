@@ -12,6 +12,7 @@ console = Console()
 # Seconds to back off below an EOF/segment-end bound so ``ffmpeg -ss`` lands on a
 # real frame instead of seeking exactly to EOF (which yields no frame).
 _TAIL_FRAME_MARGIN = 0.1
+_FRAME_TIMEOUT_SECONDS = 60.0
 
 
 def _select_capture_timestamp(
@@ -76,7 +77,10 @@ def extract_screenshot(video_path: Path, timestamp: float, output_path: Path) ->
         str(output_path),
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=_FRAME_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("FFmpeg screenshot timed out after 60 seconds.") from exc
 
     if result.returncode != 0:
         raise RuntimeError(f"FFmpeg screenshot failed: {result.stderr}")

@@ -553,7 +553,20 @@ async def _run_provider(
         round_images: list[dict[str, str]] = []
         for call in round_result.function_calls:
             yield format_sse("tool_call", {"name": call.name, "input": call.arguments})
-            result_json = tools.execute(call.name, call.arguments)
+            tool_task = asyncio.create_task(
+                asyncio.to_thread(tools.execute, call.name, call.arguments)
+            )
+            try:
+                while not tool_task.done():
+                    done, _ = await asyncio.wait({tool_task}, timeout=_KEEPALIVE_SECONDS)
+                    if not done:
+                        yield KEEPALIVE_FRAME
+                result_json = tool_task.result()
+            finally:
+                if not tool_task.done():
+                    tool_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await tool_task
             images = _drain_tool_images(tools)
             try:
                 result_obj: Any = json.loads(result_json)
