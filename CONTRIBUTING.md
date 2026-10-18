@@ -30,6 +30,17 @@ We use `uv` for dependency management and Python environment handling.
 - **Tests**: We use `pytest`. Run `make test` for unit tests. Integration tests (`make test-integration`) require a `LIBRAXIS_API_KEY`. There is also an optional end-to-end suite (`make e2e-review`) that drives a real report in headless Chromium via Playwright — it needs the `playwright` dev dependency and a cached Chromium, and is deliberately kept out of `make verify` so the gate stays fast and browserless.
 - **Architecture**: New to the codebase? [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) maps the pipeline, servers, report layer, CLI, and the hub modules to respect before editing.
 
+The live `make e2e-review` gate requires FFmpeg, an English speech synthesizer
+(`say` with Samantha on macOS, or `espeak-ng`/`espeak` on Linux), configured
+STT/LLM/VLM providers, and Chromium. It generates a synthetic narrated dashboard
+bug and requires a meaningful transcript, completed detection/screenshot/visual
+analysis stages, and a non-degraded finding before starting report-backed browser
+tests. Empty transcripts, tone-only substitutes, missing screenshots and degraded
+provider responses fail this gate. Pipeline generation has a 15-minute timeout;
+its diagnostic `pipeline.log` is stored with owner-only permissions in the test
+temporary directory, including on timeout. The separate keyless browser smoke checks UI
+rendering; it does not prove that the provider pipeline works.
+
 ## Pull Request Process
 
 1.  Create a new branch for your feature or bugfix: `git checkout -b feat/your-feature-name`.

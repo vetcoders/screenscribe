@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- **Fixed: live E2E cannot pass on an empty pipeline report.** The synthetic
+  screencast uses explicit English speech describing a visible dashboard bug,
+  including on Linux. Report-backed browser tests require recovered narration,
+  completed STT/LLM/VLM evidence and screenshot artifacts; missing speech tools
+  fail instead of substituting a tone.
+
 - **Fixed: responsive agent tools and accurate dictation feedback.** Tool calls
   run off the server event loop with SSE keepalives; screenshot extraction has
   a 60-second timeout. Dictation retained during an active turn is labeled as
