@@ -2353,8 +2353,8 @@
             },
             onTranscript: function (text) {
                 if (insertDictation(text)) {
-                    setMicState('idle', tx(state.autosend ? 'review.agentMicSent' : 'review.agentMicInserted'));
-                    autosendDictation();
+                    var sent = autosendDictation();
+                    setMicState('idle', tx(sent ? 'review.agentMicSent' : 'review.agentMicInserted'));
                 } else {
                     setMicState('idle', tx('review.agentMicNoSpeech'));
                 }

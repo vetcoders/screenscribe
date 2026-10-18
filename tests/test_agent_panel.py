@@ -1520,6 +1520,46 @@ def test_autosend_submits_dictation_only_when_enabled() -> None:
     assert "autosend:ok" in output
 
 
+def test_dictation_status_reflects_whether_autosend_actually_runs() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent("""
+        const api = screenscribeAgentPanel;
+        let callbacks;
+        const sent = [];
+        window.navigator = { mediaDevices: { getUserMedia: async () => ({}) } };
+        window.MediaRecorder = function () {};
+        window.ScreenScribeLib = Object.assign(window.ScreenScribeLib || {}, {
+            createSttTransport(options) { callbacks = options; return { start: async () => true }; }
+        });
+        fetch = async (url, opts) => {
+            if (url === api.STREAM_URL) sent.push(JSON.parse(opts.body));
+            return { ok: true, text: async () => 'event: done\\ndata: {}\\n\\n' };
+        };
+        window.fetch = fetch;
+        api.init();
+        await api.startMic();
+        if (!callbacks) throw new Error('microphone callback missing');
+        callbacks.onTranscript('first phrase');
+        const inserted = api.getState().mic.message;
+        api.setAutosend(true);
+        api.getState().streaming = true;
+        callbacks.onTranscript('second phrase');
+        if (api.getState().mic.message !== inserted) throw new Error('unsent dictation marked sent');
+        if (!document.getElementById('ss-agent-input').value.includes('second phrase')) {
+            throw new Error('dictation lost from draft');
+        }
+        if (sent.length) throw new Error('dictation sent while streaming');
+        api.getState().streaming = false;
+        callbacks.onTranscript('third phrase');
+        if (api.getState().mic.message === inserted) throw new Error('sent dictation marked inserted');
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        if (sent.length !== 1) throw new Error('expected one autosend');
+        process.stdout.write('dictation-status:ok');
+    """)
+    )
+    assert "dictation-status:ok" in output
+
+
 def test_request_history_is_capped_to_the_api_contract() -> None:
     """R3-02: the 27th turn must not 422 on history length.
 

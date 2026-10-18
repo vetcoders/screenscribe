@@ -668,7 +668,8 @@ keep, or a recording without narration minute by minute.
 - **Dictation.** The microphone button records a message, **Stop** (click the
   microphone again) transcribes it into the draft for editing; **Cancel**
   discards the recording. With **Send after dictation** checked (remembered per
-  report) the dictated message is sent right away. Uses
+  report) the dictated message is sent right away when no turn is streaming;
+  otherwise it remains in the draft and is labeled as inserted, not sent. Uses
   `POST /api/agent/stt` (same 25 MB cap and STT provider as `/api/stt`, but it
   never advances the manual-frame conversation chain). Without a microphone,
   permission, browser support, or the local server, the panel says why.
@@ -690,7 +691,10 @@ an answer appear before the turn ends; a turn has many `token` frames. While a
 provider round produces no output (reasoning, slow first token) the stream
 sends SSE comment frames (`: keepalive`, every ~10 s); clients treat 60 s
 without any byte as a dead connection. Closing the HTTP stream (the panel's
-Stop) cancels the provider request. Unexpected provider/tool failures return a
+Stop) cancels the provider request. Tool calls run sequentially off the server
+event loop, with keepalives while waiting. A screenshot extraction has a 60-second
+timeout. Stop stops waiting and prevents further tool calls; a synchronous tool
+already running may finish its current operation. Unexpected provider/tool failures return a
 generic error to the browser and model; exception details remain in server
 logs. Explicit configuration and tool-input validation messages remain
 available. Requests
@@ -705,6 +709,14 @@ evidence, not a shared conversation head.
 The xAI agent uses stateless full history: each round includes trusted
 instructions, the report seed, prior output items and tool results. It sends
 no `previous_response_id` and returns `done.response_id=null`.
+
+#### Transcript correction scope
+
+An existing report displays only corrections saved in that report's ledger.
+The original transcript files stay unchanged. Global corrections also become
+glossary hints for subsequent transcription and analysis requests; they do not
+retroactively replace text in other saved reports. Re-running analysis produces
+a new result using the current glossary.
 
 ### xAI, TTS and live STT
 

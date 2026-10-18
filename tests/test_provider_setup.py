@@ -66,6 +66,20 @@ def test_xai_setup_can_choose_an_api_key_over_a_signed_in_account(
     assert config.get_llm_api_key() == "xai-fixture-key"
 
 
+def test_declined_key_selection_keeps_file_and_reports_no_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _config_path(monkeypatch, tmp_path)
+    path.parent.mkdir(parents=True)
+    before = b"# existing neutral configuration\nSCREENSCRIBE_PROVIDER=libraxis\n"
+    path.write_bytes(before)
+    result = runner.invoke(app, ["config", "auth", "xai", "--key"], input="synthetic-key\nn\n")
+    assert result.exit_code == 0, result.output
+    assert path.read_bytes() == before
+    assert "nothing was written" in result.output
+    assert "synthetic-key" not in result.output
+
+
 def test_libraxis_preset_is_coherent() -> None:
     config = ScreenScribeConfig.provider_preset("libraxis", "lx-test-key")
 

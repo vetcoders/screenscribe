@@ -1980,7 +1980,7 @@ def config_auth(
         f"Write the {provider} selection (endpoints+models) to {config_path}?",
         default=True,
     ):
-        console.print("[dim]Selection unchanged; credentials kept.[/]")
+        console.print("[dim]Selection unchanged; nothing was written.[/]")
         return
 
     path = preset.save_default_config()

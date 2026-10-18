@@ -959,6 +959,25 @@ def test_review_server_error_does_not_leak_paths(
     assert ".json" not in body
 
 
+def test_review_save_internal_error_does_not_expose_exception_details(
+    review_workspace: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import screenscribe.review_server as server
+
+    output_dir, report_file, video_path = review_workspace
+    _write_min_report(output_dir)
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+
+    def fail_replace(*args: object) -> None:
+        raise OSError("synthetic-private-diagnostic")
+
+    monkeypatch.setattr(server.os, "replace", fail_replace)
+    response = TestClient(app).post("/api/save")
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Failed to save review state."}
+    assert "synthetic-private-diagnostic" not in response.text
+
+
 def test_review_server_save_merges_human_review(
     review_workspace: tuple[Path, Path, Path],
 ) -> None:
@@ -2862,6 +2881,37 @@ def test_review_state_carries_saved_corrections(
     )
     assert literal.status_code == 200
     assert literal.json()["entry"]["match"] == "c.oud"
+
+
+def test_global_glossary_does_not_retroactively_change_report_overlay(
+    review_workspace: tuple[Path, Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import screenscribe.agent.corrections as corrections
+
+    output_dir, report_file, video_path = review_workspace
+    _write_min_report(output_dir)
+    glossary_dir = tmp_path / "global-glossary"
+    monkeypatch.setattr(corrections, "default_glossary_dir", lambda: glossary_dir)
+    corrections.append_correction(
+        tmp_path / "another-report",
+        match="old wording",
+        replacement="global wording",
+        scope="global",
+        glossary_dir=glossary_dir,
+    )
+    client = TestClient(create_review_app(output_dir, report_file.name, video_path, _config()))
+    assert client.get("/api/review-state").json()["corrections"] == []
+    saved = client.post(
+        "/api/corrections",
+        json={"match": "local wording", "replacement": "report wording", "scope": "report"},
+    )
+    assert saved.status_code == 200
+    assert [item["match"] for item in saved.json()["corrections"]] == ["local wording"]
+    assert client.get("/api/review-state").json()["corrections"] == saved.json()["corrections"]
+    effective = corrections.corrections_summary(output_dir, limit=None)
+    assert {item["match"] for item in effective["entries"]} == {"old wording", "local wording"}
 
 
 def test_malformed_corrections_ledger_degrades_without_500(
