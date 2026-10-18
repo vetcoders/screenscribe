@@ -4,7 +4,8 @@ Covers the four reviewer-facing promises end to end: the answer streams in
 before the turn finishes, Stop keeps the partial answer, the panel resizes
 within bounds and remembers it, and dictation fills an editable draft without
 sending it. Chromium runs with a fake microphone fed by a synthesized speech
-file, so the STT round-trip is real.
+file, so the STT round-trip is real. Stop has separate cases for a pending
+analysis and an answer that has already started streaming.
 
 Falsification: buffer the provider round server-side again (one ``token`` frame
 at the end) and ``test_answer_streams_before_the_turn_finishes`` fails because no
@@ -109,10 +110,12 @@ def test_answer_streams_before_the_turn_finishes(mic_page: Any) -> None:
 
 
 def test_stop_keeps_the_partial_answer(mic_page: Any) -> None:
+    # Isolate cancellation of streamed text from multi-round frame inspection.
+    # The detailed recording request is covered by the pending-analysis case.
     page = mic_page
     page.fill(
         "#ss-agent-input",
-        "Write a long, detailed, point-by-point walkthrough of every finding and frame.",
+        "Count from 1 to 300, one number per line. Start immediately; do not use tools.",
     )
     page.keyboard.press("Enter")
     page.wait_for_function(
@@ -128,6 +131,23 @@ def test_stop_keeps_the_partial_answer(mic_page: Any) -> None:
     assert "ss-agent-msg-interrupted" in stopped["cls"]
     assert stopped["badge"]
     assert stopped["len"] > 20
+    assert page.locator(".ss-agent-msg-error").count() == 0
+
+
+def test_stop_during_pending_analysis_reenables_input(mic_page: Any) -> None:
+    """Stop also works while a detailed analysis has not produced an answer yet."""
+    page = mic_page
+    page.fill(
+        "#ss-agent-input",
+        "Write a long, detailed, point-by-point walkthrough of every finding and frame.",
+    )
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#ss-agent-activity:not([hidden])", timeout=10_000)
+    page.click("#ss-agent-stop")
+    page.wait_for_selector("#ss-agent-activity[hidden]", state="attached", timeout=15_000)
+    assert page.is_enabled("#ss-agent-input")
+    page.fill("#ss-agent-input", "A new question after stopping the pending turn.")
+    assert page.is_enabled("#ss-agent-send")
     assert page.locator(".ss-agent-msg-error").count() == 0
 
 

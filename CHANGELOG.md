@@ -7,6 +7,9 @@
   including on Linux. Report-backed browser tests require recovered narration,
   completed STT/LLM/VLM evidence and screenshot artifacts; missing speech tools
   fail instead of substituting a tone.
+- **Tests: separate Stop while waiting from Stop during streaming.** A pending
+  recording analysis must be cancellable; an interrupted text response must
+  retain its partial content and interruption marker.
 
 - **Fixed: responsive agent tools and accurate dictation feedback.** Tool calls
   run off the server event loop with SSE keepalives; screenshot extraction has

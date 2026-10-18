@@ -41,6 +41,11 @@ its diagnostic `pipeline.log` is stored with owner-only permissions in the test
 temporary directory, including on timeout. The separate keyless browser smoke checks UI
 rendering; it does not prove that the provider pipeline works.
 
+Conversation E2E covers Stop both during a pending recording analysis and after
+text starts streaming. The latter uses a long counting response to isolate
+partial-answer preservation from the latency of multi-round frame inspection.
+Both cases must restore the input controls without an error bubble.
+
 ## Pull Request Process
 
 1.  Create a new branch for your feature or bugfix: `git checkout -b feat/your-feature-name`.
