@@ -1243,7 +1243,7 @@ class TestLibraxisKeyStaysOnLibraxisHosts:
         config._load_from_env()
         assert config.get_stt_api_key() == "account-fixture"
         assert config.get_llm_api_key() == ambient
-        config.stt_api_key = "explicit-stt-fixture"
+        config.stt_api_key = "explicit-stt-fixture"  # pragma: allowlist secret
         assert config.get_stt_api_key() == "explicit-stt-fixture"
 
     def test_libraxis_key_never_reaches_an_unknown_custom_host(
