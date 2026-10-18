@@ -79,3 +79,19 @@ def test_doctor_exits_one_on_harness_failure(
     result = runner.invoke(app, ["doctor", "--out", str(tmp_path)])
     assert result.exit_code == 1
     assert "Doctor run failed" in result.output
+
+
+def test_doctor_harness_failure_does_not_echo_private_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(out: Path, *, json_mode: bool) -> list[ProofReceipt]:
+        raise RuntimeError(
+            "synthetic-account-token https://user:password@example.test?private"  # pragma: allowlist secret
+        )
+
+    monkeypatch.setattr(cli, "run_proof", fail)
+    result = runner.invoke(app, ["doctor", "--out", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "RuntimeError" in result.output
+    for private in ("synthetic-account-token", "password", "private"):
+        assert private not in result.output

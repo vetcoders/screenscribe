@@ -7,6 +7,7 @@ import io
 import re
 import time
 import wave
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -15,12 +16,16 @@ from urllib.parse import urlsplit
 import httpx
 
 from ..agent.chat import AgentProvider, _dispatch_round
+from ..api_utils import console as retry_console
 from ..config import ScreenScribeConfig
 from ..detect import Detection
+from ..frame_ocr import console as ocr_console
 from ..frame_ocr import ocr_frame
 from ..providers.xai import transcribe_file_xai
 from ..transcribe import _is_xai_endpoint, transcribe_audio_bytes
+from ..transcribe import console as stt_console
 from ..transcribe_types import Segment
+from ..unified._console import console as unified_console
 from ..unified.analyze_one import analyze_finding_unified
 from .receipts import VERDICT_NOT_PROVEN, VERDICT_PROVEN, ProofReceipt
 
@@ -53,25 +58,41 @@ def _key_state(present: bool) -> str:
 
 
 def _safe_url(url: str) -> str:
-    """Endpoint identity for receipts: scheme://host/path, no query/fragment.
+    """Endpoint identity: scheme://host/path, without credentials or query.
 
     A query string can carry credentials (signed URLs, gateway tokens), and
     receipts land in on-disk diagnostics that people share.
     """
     try:
         parts = urlsplit(url)
+        host, port = parts.hostname, parts.port
     except ValueError:
         return "<unparseable url>"
-    if not parts.scheme or not parts.netloc:
-        return url
-    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+    if parts.scheme not in {"http", "https", "ws", "wss"} or not host:
+        return "<unparseable url>"
+    authority = f"[{host}]" if ":" in host else host
+    if port is not None:
+        authority += f":{port}"
+    return f"{parts.scheme}://{authority}{parts.path}"
 
 
-_URL_RE = re.compile(r"\b(?:https?|wss?)://\S+")
+_URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
+
+
+def _failure_reason(exc: Exception) -> str:
+    """Keep diagnostic structure, never provider prose or truncated tokens.
+
+    An effective OAuth bearer need not be in config fields, and upstream
+    transports may already have truncated an echoed token. Exact-value
+    replacement cannot make those arbitrary error messages safe to share.
+    """
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+        return f"HTTP {exc.response.status_code} ({type(exc).__name__}; details omitted)"
+    return f"{type(exc).__name__} (details omitted)"
 
 
 def _secret_values(config: ScreenScribeConfig) -> tuple[str, ...]:
-    """Every configured credential value worth scrubbing from diagnostics."""
+    """Explicit credentials only; do not resolve/refresh accounts for scrubbing."""
     import os
 
     values = {
@@ -85,14 +106,14 @@ def _secret_values(config: ScreenScribeConfig) -> tuple[str, ...]:
         os.environ.get("SCREENSCRIBE_AGENT_FALLBACK_API_KEY", ""),
     }
     values.update(config._libraxis_key_values)
-    return tuple(v for v in values if v)
+    return tuple(sorted((v for v in values if v), key=len, reverse=True))
 
 
 def _scrub_receipt(receipt: ProofReceipt, secrets: tuple[str, ...]) -> ProofReceipt:
-    """Drop URL queries and mask configured secrets in one receipt.
+    """Scrub endpoint identities and configured secrets in one receipt.
 
-    Provider error bodies and endpoint URLs end up verbatim in receipt JSON
-    and MATRIX.md; neither may carry a credential out of the process.
+    Provider prose is omitted at the probe boundary. This is a second layer
+    for request metadata copied into receipt JSON and MATRIX.md.
     """
 
     def clean(text: str) -> str:
@@ -154,7 +175,7 @@ def _run_stt_openai(ctx: _ProbeContext) -> ProofReceipt:
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {ctx.config.stt_endpoint} model={ctx.config.stt_model}",
+            request_essence=f"POST {_safe_url(ctx.config.stt_endpoint)} model={ctx.config.stt_model}",
             response_essence=f"{len(result.segments)} segment(s), text_len={len(result.text)}",
             duration_ms=duration_ms,
             verdict=VERDICT_PROVEN,
@@ -162,14 +183,11 @@ def _run_stt_openai(ctx: _ProbeContext) -> ProofReceipt:
         )
     except Exception as exc:
         duration_ms = int((time.perf_counter() - start) * 1000)
-        reason = f"{type(exc).__name__}: {exc}"
-        if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-            body = exc.response.text[:200]
-            reason = f"HTTP {exc.response.status_code}: {body or reason}"
+        reason = _failure_reason(exc)
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {ctx.config.stt_endpoint} model={ctx.config.stt_model}",
+            request_essence=f"POST {_safe_url(ctx.config.stt_endpoint)} model={ctx.config.stt_model}",
             response_essence="request failed",
             duration_ms=duration_ms,
             verdict=VERDICT_NOT_PROVEN,
@@ -220,7 +238,7 @@ def _run_stt_xai(ctx: _ProbeContext) -> ProofReceipt:
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {ctx.config.stt_endpoint}",
+            request_essence=f"POST {_safe_url(ctx.config.stt_endpoint)}",
             response_essence=f"{len(result.segments)} segment(s), text_len={len(result.text)}",
             duration_ms=duration_ms,
             verdict=VERDICT_PROVEN,
@@ -228,14 +246,11 @@ def _run_stt_xai(ctx: _ProbeContext) -> ProofReceipt:
         )
     except Exception as exc:
         duration_ms = int((time.perf_counter() - start) * 1000)
-        reason = f"{type(exc).__name__}: {exc}"
-        if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-            body = exc.response.text[:200]
-            reason = f"HTTP {exc.response.status_code}: {body or reason}"
+        reason = _failure_reason(exc)
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {ctx.config.stt_endpoint}",
+            request_essence=f"POST {_safe_url(ctx.config.stt_endpoint)}",
             response_essence="request failed",
             duration_ms=duration_ms,
             verdict=VERDICT_NOT_PROVEN,
@@ -272,7 +287,7 @@ def _run_agent_responses(ctx: _ProbeContext) -> ProofReceipt:
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {ctx.config.llm_endpoint} (responses ping)",
+            request_essence=f"POST {_safe_url(ctx.config.llm_endpoint)} (responses ping)",
             response_essence="no request sent",
             duration_ms=0,
             verdict=VERDICT_NOT_PROVEN,
@@ -300,11 +315,11 @@ def _run_agent_responses(ctx: _ProbeContext) -> ProofReceipt:
             return ProofReceipt(
                 element=element,
                 kind="provider",
-                request_essence=f"POST {ctx.config.llm_endpoint} (responses ping)",
+                request_essence=f"POST {_safe_url(ctx.config.llm_endpoint)} (responses ping)",
                 response_essence="provider error event",
                 duration_ms=duration_ms,
                 verdict=VERDICT_NOT_PROVEN,
-                reason=round_result.error,
+                reason="Provider returned an error event (details omitted)",
                 key_state="present",
             )
         essence = (
@@ -317,7 +332,7 @@ def _run_agent_responses(ctx: _ProbeContext) -> ProofReceipt:
             return ProofReceipt(
                 element=element,
                 kind="provider",
-                request_essence=f"POST {ctx.config.llm_endpoint} (responses ping)",
+                request_essence=f"POST {_safe_url(ctx.config.llm_endpoint)} (responses ping)",
                 response_essence=essence,
                 duration_ms=duration_ms,
                 verdict=VERDICT_NOT_PROVEN,
@@ -327,7 +342,7 @@ def _run_agent_responses(ctx: _ProbeContext) -> ProofReceipt:
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {ctx.config.llm_endpoint} (responses ping)",
+            request_essence=f"POST {_safe_url(ctx.config.llm_endpoint)} (responses ping)",
             response_essence=essence,
             duration_ms=duration_ms,
             verdict=VERDICT_PROVEN,
@@ -335,14 +350,11 @@ def _run_agent_responses(ctx: _ProbeContext) -> ProofReceipt:
         )
     except Exception as exc:
         duration_ms = int((time.perf_counter() - start) * 1000)
-        reason = f"{type(exc).__name__}: {exc}"
-        if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-            body = exc.response.text[:200]
-            reason = f"HTTP {exc.response.status_code}: {body or reason}"
+        reason = _failure_reason(exc)
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {ctx.config.llm_endpoint} (responses ping)",
+            request_essence=f"POST {_safe_url(ctx.config.llm_endpoint)} (responses ping)",
             response_essence="request failed",
             duration_ms=duration_ms,
             verdict=VERDICT_NOT_PROVEN,
@@ -382,7 +394,7 @@ def _run_agent_anthropic(ctx: _ProbeContext) -> ProofReceipt:
             response_essence="no request sent",
             duration_ms=0,
             verdict=VERDICT_NOT_PROVEN,
-            reason=f"{type(exc).__name__}: {exc}",
+            reason=_failure_reason(exc),
             key_state="present",
         )
 
@@ -414,11 +426,11 @@ def _run_agent_anthropic(ctx: _ProbeContext) -> ProofReceipt:
             return ProofReceipt(
                 element=element,
                 kind="provider",
-                request_essence=f"POST {url} (anthropic ping)",
+                request_essence=f"POST {_safe_url(url)} (anthropic ping)",
                 response_essence="provider error event",
                 duration_ms=duration_ms,
                 verdict=VERDICT_NOT_PROVEN,
-                reason=round_result.error,
+                reason="Provider returned an error event (details omitted)",
                 key_state="present",
             )
         essence = (
@@ -429,7 +441,7 @@ def _run_agent_anthropic(ctx: _ProbeContext) -> ProofReceipt:
             return ProofReceipt(
                 element=element,
                 kind="provider",
-                request_essence=f"POST {url} (anthropic ping)",
+                request_essence=f"POST {_safe_url(url)} (anthropic ping)",
                 response_essence=essence,
                 duration_ms=duration_ms,
                 verdict=VERDICT_NOT_PROVEN,
@@ -439,7 +451,7 @@ def _run_agent_anthropic(ctx: _ProbeContext) -> ProofReceipt:
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {url} (anthropic ping)",
+            request_essence=f"POST {_safe_url(url)} (anthropic ping)",
             response_essence=essence,
             duration_ms=duration_ms,
             verdict=VERDICT_PROVEN,
@@ -447,14 +459,11 @@ def _run_agent_anthropic(ctx: _ProbeContext) -> ProofReceipt:
         )
     except Exception as exc:
         duration_ms = int((time.perf_counter() - start) * 1000)
-        reason = f"{type(exc).__name__}: {exc}"
-        if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-            body = exc.response.text[:200]
-            reason = f"HTTP {exc.response.status_code}: {body or reason}"
+        reason = _failure_reason(exc)
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {url} (anthropic ping)",
+            request_essence=f"POST {_safe_url(url)} (anthropic ping)",
             response_essence="request failed",
             duration_ms=duration_ms,
             verdict=VERDICT_NOT_PROVEN,
@@ -471,7 +480,7 @@ def _run_unified_analysis(ctx: _ProbeContext) -> ProofReceipt:
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {ctx.config.llm_endpoint} (text-only unified ping)",
+            request_essence=f"POST {_safe_url(ctx.config.llm_endpoint)} (text-only unified ping)",
             response_essence="no request sent",
             duration_ms=0,
             verdict=VERDICT_NOT_PROVEN,
@@ -500,7 +509,7 @@ def _run_unified_analysis(ctx: _ProbeContext) -> ProofReceipt:
             return ProofReceipt(
                 element=element,
                 kind="provider",
-                request_essence=f"POST {ctx.config.llm_endpoint} (text-only unified ping)",
+                request_essence=f"POST {_safe_url(ctx.config.llm_endpoint)} (text-only unified ping)",
                 response_essence="no finding returned",
                 duration_ms=duration_ms,
                 verdict=VERDICT_NOT_PROVEN,
@@ -510,7 +519,7 @@ def _run_unified_analysis(ctx: _ProbeContext) -> ProofReceipt:
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {ctx.config.llm_endpoint} (text-only unified ping)",
+            request_essence=f"POST {_safe_url(ctx.config.llm_endpoint)} (text-only unified ping)",
             response_essence=f"response_id_present={bool(getattr(finding, 'response_id', ''))}",
             duration_ms=duration_ms,
             verdict=VERDICT_PROVEN,
@@ -518,14 +527,11 @@ def _run_unified_analysis(ctx: _ProbeContext) -> ProofReceipt:
         )
     except Exception as exc:
         duration_ms = int((time.perf_counter() - start) * 1000)
-        reason = f"{type(exc).__name__}: {exc}"
-        if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-            body = exc.response.text[:200]
-            reason = f"HTTP {exc.response.status_code}: {body or reason}"
+        reason = _failure_reason(exc)
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {ctx.config.llm_endpoint} (text-only unified ping)",
+            request_essence=f"POST {_safe_url(ctx.config.llm_endpoint)} (text-only unified ping)",
             response_essence="request failed",
             duration_ms=duration_ms,
             verdict=VERDICT_NOT_PROVEN,
@@ -542,7 +548,7 @@ def _run_frame_ocr(ctx: _ProbeContext) -> ProofReceipt:
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {ctx.config.vision_endpoint} (OCR ping)",
+            request_essence=f"POST {_safe_url(ctx.config.vision_endpoint)} (OCR ping)",
             response_essence="no request sent",
             duration_ms=0,
             verdict=VERDICT_NOT_PROVEN,
@@ -577,7 +583,7 @@ def _run_frame_ocr(ctx: _ProbeContext) -> ProofReceipt:
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {ctx.config.vision_endpoint} (OCR ping)",
+            request_essence=f"POST {_safe_url(ctx.config.vision_endpoint)} (OCR ping)",
             response_essence=f"text_len={len(text)}, response_id_present={bool(response_id)}",
             duration_ms=duration_ms,
             verdict=VERDICT_PROVEN if proven else VERDICT_NOT_PROVEN,
@@ -586,14 +592,11 @@ def _run_frame_ocr(ctx: _ProbeContext) -> ProofReceipt:
         )
     except Exception as exc:
         duration_ms = int((time.perf_counter() - start) * 1000)
-        reason = f"{type(exc).__name__}: {exc}"
-        if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-            body = exc.response.text[:200]
-            reason = f"HTTP {exc.response.status_code}: {body or reason}"
+        reason = _failure_reason(exc)
         return ProofReceipt(
             element=element,
             kind="provider",
-            request_essence=f"POST {ctx.config.vision_endpoint} (OCR ping)",
+            request_essence=f"POST {_safe_url(ctx.config.vision_endpoint)} (OCR ping)",
             response_essence="request failed",
             duration_ms=duration_ms,
             verdict=VERDICT_NOT_PROVEN,
@@ -611,17 +614,24 @@ def run_provider_probes() -> list[ProofReceipt]:
     try:
         ctx = _ProbeContext(config=config, tiny_wav=_make_tiny_wav(), tmp_dir=tmp_dir)
         secrets = _secret_values(config)
-        return [
-            _scrub_receipt(receipt, secrets)
-            for receipt in (
-                _run_stt_openai(ctx),
-                _run_stt_xai(ctx),
-                _run_agent_responses(ctx),
-                _run_agent_anthropic(ctx),
-                _run_unified_analysis(ctx),
-                _run_frame_ocr(ctx),
-            )
-        ]
+        # These shared transport consoles can print provider-controlled text
+        # before a receipt exists (retry errors, response IDs, invalid JSON).
+        # Rich capture is thread-local and restored even when a probe fails;
+        # discard the buffers rather than persisting raw diagnostic content.
+        with ExitStack() as stack:
+            for console in (retry_console, stt_console, unified_console, ocr_console):
+                stack.enter_context(console.capture())
+            return [
+                _scrub_receipt(receipt, secrets)
+                for receipt in (
+                    _run_stt_openai(ctx),
+                    _run_stt_xai(ctx),
+                    _run_agent_responses(ctx),
+                    _run_agent_anthropic(ctx),
+                    _run_unified_analysis(ctx),
+                    _run_frame_ocr(ctx),
+                )
+            ]
     finally:
         import shutil
 

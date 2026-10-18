@@ -479,6 +479,30 @@ For a one-off run with a different keywords file, pass `--keywords-file /path` t
 
 ---
 
+### `screenscribe doctor`
+
+```bash
+screenscribe doctor --out ./proofs --json
+```
+
+Runs small live provider probes with the configured credentials and local tool
+checks. Provider calls can consume API quota. The output contains per-element
+receipt JSON, `MATRIX.md`, and, with `--json`, `summary.json`. Files are owner-only
+(`0600`, directory `0700`, where supported). Exit codes: `0` means all elements
+are proven, `2` means at least one is not proven, and `1` means the harness failed.
+
+Provider diagnostics retain endpoint scheme/host/port/path and locally generated
+status information. URL userinfo, query strings and fragments are removed;
+malformed or unsupported endpoint URLs become placeholders. HTTP exceptions
+retain their status code and exception type. Arbitrary provider error messages,
+response bodies and internal console output are omitted, because they may echo
+account tokens or truncated credentials. Redaction does not resolve or refresh
+an account; the live probes still use the normal credential resolution flow.
+Custom SDK/debug logging is outside this artifact policy. Review endpoint paths
+and other configuration metadata before sharing diagnostics.
+
+---
+
 ### `screenscribe version`
 
 ```bash

@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- **Security: doctor omits unsafe provider diagnostics.** Endpoint receipts
+  remove URL userinfo as well as queries/fragments, and invalid endpoints use
+  placeholders. Provider errors retain their local type and HTTP status instead
+  of arbitrary prose that can echo OAuth tokens or truncated credentials.
+  Internal probe console output and raw harness failures are also omitted;
+  redaction does not trigger additional account-token resolution or refresh.
+
 - **Fixed: live E2E cannot pass on an empty pipeline report.** The synthetic
   screencast uses explicit English speech describing a visible dashboard bug,
   including on Linux. Report-backed browser tests require recovered narration,

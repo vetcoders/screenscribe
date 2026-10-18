@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -150,7 +151,7 @@ def test_stt_openai_probe_proven_on_mocked_response(
 def test_stt_openai_probe_not_proven_on_http_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """OpenAI-compatible STT path stamps NOT-PROVEN with the verbatim HTTP error."""
+    """OpenAI-compatible STT keeps the HTTP status without the provider body."""
     config = ScreenScribeConfig()
     config.stt_api_key = "sk-test"  # pragma: allowlist secret
     config.llm_api_key = "sk-test"  # pragma: allowlist secret
@@ -373,3 +374,179 @@ def test_receipts_never_carry_secrets_or_url_queries(
     assert "sk-proof-secret-123" not in joined  # pragma: allowlist secret
     assert "tok-in-url" not in joined
     assert "https://stt.libraxis.cloud/v1/audio/transcriptions" in stt.request_essence
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected"),
+    [
+        (
+            "https://alice:private-pass@example.test:8443/v1?token=private#fragment",  # pragma: allowlist secret
+            "https://example.test:8443/v1",
+        ),
+        (
+            "HTTPS://alice:p%40ss@[::1]:8443/v1?private#fragment",  # pragma: allowlist secret
+            "https://[::1]:8443/v1",
+        ),
+        (
+            "wss://alice:pass@example.test/live?private",  # pragma: allowlist secret
+            "wss://example.test/live",
+        ),
+        ("alice:private-pass@example.test", "<unparseable url>"),  # pragma: allowlist secret
+        ("https://alice:pass@example.test:bad/v1", "<unparseable url>"),  # pragma: allowlist secret
+        ("https://alice:pass@[broken/v1", "<unparseable url>"),  # pragma: allowlist secret
+        (
+            "ftp://alice:pass@example.test/v1?private",  # pragma: allowlist secret
+            "<unparseable url>",
+        ),
+    ],
+)
+def test_doctor_endpoint_identity_never_keeps_userinfo(endpoint: str, expected: str) -> None:
+    from screenscribe.proofs.providers import _safe_url
+
+    assert _safe_url(endpoint) == expected
+
+
+@pytest.mark.parametrize("failure", ["http", "retry", "stream", "parse"])
+def test_doctor_account_errors_are_private_in_cli_and_all_artifacts(
+    failure: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise real probe/CLI/writer paths with synthetic, rotating OAuth bearers."""
+    from typer.testing import CliRunner
+
+    from screenscribe.account_auth import BearerResolution
+    from screenscribe.cli import app
+    from screenscribe.unified.response_parsing import parse_json_response
+
+    config = ScreenScribeConfig()
+    config.stt_endpoint = "https://api.x.ai/v1/stt"
+    config.llm_endpoint = "https://api.x.ai/v1/responses"
+    config.vision_endpoint = "https://api.x.ai/v1/responses"
+    monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
+    monkeypatch.setattr("screenscribe.proofs.tools.run_tool_probes", lambda: [])
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("SCREENSCRIBE_AGENT_FALLBACK_API_KEY", raising=False)
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda _: None)
+    parsed: list[str] = []
+
+    def parse(text: str) -> dict[str, Any]:
+        parsed.append(text)
+        return parse_json_response(text)
+
+    monkeypatch.setattr("screenscribe.unified.analyze_one.parse_json_response", parse)
+    tokens: list[str] = []
+
+    def resolve(provider: str, explicit_key: str = "") -> BearerResolution:
+        assert provider == "xai"
+        token = f"synthetic-account-{len(tokens)}-" + "z" * 450
+        tokens.append(token)
+        return BearerResolution(bearer=token, source="account")
+
+    monkeypatch.setattr("screenscribe.account_auth.resolve_bearer", resolve)
+    sent: list[str] = []
+
+    def post(self: httpx.Client, url: str, **kwargs: Any) -> httpx.Response:
+        bearer = kwargs["headers"]["Authorization"].removeprefix("Bearer ")
+        sent.append(bearer)
+        if failure in {"http", "retry"}:
+            return httpx.Response(
+                401 if failure == "http" else 503,
+                text="rejected " + bearer,
+                request=httpx.Request("POST", url),
+            )
+        if failure == "stream":
+            body = {"error": {"message": "rejected " + bearer}}
+        else:
+            body = {
+                "id": "resp_safe",
+                "text": "not JSON " + bearer,
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {"type": "output_text", "text": "not JSON " + bearer},
+                        ],
+                    }
+                ],
+            }
+        return httpx.Response(200, json=body, request=httpx.Request("POST", url))
+
+    class AccountStream(_MockAsyncStream):
+        async def aread(self) -> bytes:
+            return ("rejected " + tokens[-1]).encode()
+
+    class AccountClient(_MockAsyncClient):
+        def stream(self, *args: object, **kwargs: Any) -> _MockAsyncStream:
+            bearer = kwargs["headers"]["Authorization"].removeprefix("Bearer ")
+            sent.append(bearer)
+            return AccountStream(
+                status_code=401 if failure == "http" else 200,
+                lines=["data: " + json.dumps({"type": "error", "message": bearer})],
+            )
+
+    monkeypatch.setattr(httpx.Client, "post", post)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **kw: AccountClient(_MockAsyncStream()))
+    result = CliRunner().invoke(app, ["doctor", "--json", "--out", str(tmp_path)])
+    assert result.exit_code == 2, result.output
+    assert "Doctor complete" in result.output
+    outputs = [result.output, *(p.read_text() for p in tmp_path.iterdir() if p.is_file())]
+    assert (tmp_path / "summary.json").exists()
+    assert (tmp_path / "MATRIX.md").exists()
+    assert len(list(tmp_path.glob("*.receipt.json"))) == 6
+    assert len(tokens) == 7  # Existing probe routing only; no extra OAuth lookup for redaction.
+    assert sent and all(token in tokens for token in sent)
+    for text in outputs:
+        assert "synthetic-account-" not in text  # Even a truncated prefix must not escape.
+    summary = json.loads((tmp_path / "summary.json").read_text())
+    assert summary["total"] == 6
+    if failure == "http":
+        stt = next(r for r in summary["receipts"] if r["element"].endswith(":stt_xai"))
+        assert "401" in stt["reason"]
+    if failure == "parse":
+        assert parsed and "synthetic-account-" in parsed[0]
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "HTTPS://synthetic-user:synthetic-password@example.test/v1?synthetic-query#fragment",  # pragma: allowlist secret
+        "ftp://synthetic-user:synthetic-password@example.test/v1?synthetic-query",  # pragma: allowlist secret
+        "synthetic-user:synthetic-password@example.test",  # pragma: allowlist secret
+    ],
+)
+def test_doctor_scrubs_configured_endpoints_before_artifacts(
+    endpoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = ScreenScribeConfig()
+    config.stt_endpoint = config.llm_endpoint = config.vision_endpoint = endpoint
+    config.api_key = "synthetic-explicit-credential"  # pragma: allowlist secret
+    monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("SCREENSCRIBE_AGENT_FALLBACK_API_KEY", raising=False)
+    monkeypatch.setattr("screenscribe.api_utils.time.sleep", lambda _: None)
+    text = json.dumps([r.to_dict() for r in run_provider_probes()])
+    for private in ("synthetic-user", "synthetic-password", "synthetic-query"):
+        assert private not in text
+
+
+def test_doctor_restores_transport_console_on_probe_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from screenscribe.api_utils import console
+
+    monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", ScreenScribeConfig)
+
+    def fail(ctx: object) -> None:
+        console.print("synthetic-private-console-content")
+        raise RuntimeError("probe interrupted")
+
+    monkeypatch.setattr("screenscribe.proofs.providers._run_stt_openai", fail)
+    with pytest.raises(RuntimeError, match="probe interrupted"):
+        run_provider_probes()
+    console.print("ordinary-console-output")
+    captured = capsys.readouterr()
+    assert "synthetic-private-console-content" not in captured.out
+    assert "ordinary-console-output" in captured.out

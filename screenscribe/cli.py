@@ -988,7 +988,9 @@ def doctor(
     try:
         receipts = run_proof(out, json_mode=json_mode)
     except Exception as exc:
-        console.print(f"[red]Doctor run failed:[/] {exc}")
+        # Configuration/provider exceptions can contain credentials, including
+        # account tokens that are absent from the explicit config fields.
+        console.print(f"[red]Doctor run failed:[/] {type(exc).__name__} (details omitted)")
         raise typer.Exit(1) from None
 
     proven = sum(1 for r in receipts if r.verdict == "PROVEN")
