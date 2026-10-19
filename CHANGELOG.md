@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-10-19
+
 - **Security: a global transcript correction needs panel approval.** The agent's
   `correct_transcript` used to write the report ledger and the user glossary the
   moment the model called it, with no Apply/Cancel card, so one tool call could
@@ -100,8 +102,6 @@
   are not followed. Automatic provider identity now requires an exact API
   hostname, and unlisted LibraxisAI subdomains no longer inherit internal trust
   or ambient provider credentials. Custom HTTPS gateways remain supported.
-
-## [0.1.20] - 2026-10-15
 
 - **Security: API keys stay with their provider.** `screenscribe doctor` no
   longer sends the configured STT key to xAI when STT routes elsewhere; the
