@@ -85,7 +85,7 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 | `--prompt`, `-P` | none | Append custom instructions to the semantic, semantic-prefilter, and vision prompts. |
 | `--lang`, `-l` | `en` | Language code for transcription. |
 | `--local` | off | Use a local STT server instead of the cloud provider. |
-| `--transcript-source` | `auto` | Where transcript segments come from: `auto` (audio STT when an audio track exists, frame OCR otherwise), `audio` (STT; fails fast on silent recordings), `ocr` (VLM OCR of frames, no audio needed). |
+| `--transcript-source` | `auto` | Where transcript segments come from: `auto` (audio STT when the file has an audio stream, switching to frame OCR when that stream carries no speech), `audio` (STT; fails fast on silent recordings), `ocr` (VLM OCR of frames, no audio needed). |
 | `--no-audio` | off | Alias for `--transcript-source ocr`: skip audio/STT entirely and build the transcript from OCR'd frames. Conflicts with `--transcript-source audio`. |
 | `--frame-interval` | `5.0` | Seconds between frames for the OCR transcript source (minimum 0.5). |
 | `--vision` / `--no-vision` (alias `--no-vlm`) | on | Skip visual/screenshot analysis. Semantic LLM detection still runs. |
@@ -134,10 +134,16 @@ The transcript is an abstraction over where timestamped segments come from:
   (semantic pre-filter, screenshots, unified VLM analysis, reports, response
   chaining) works unchanged. OCR uses the vision credentials/endpoint, so it
   also works under `--no-vision` (which only skips VLM *analysis*).
-- `auto` (default) — `audio` when the recording has an audio track, `ocr`
-  otherwise. A recording without an audio track reaches semantic analysis instead
-  of failing at the audio gate. `--no-audio` is a shortcut for
-  `--transcript-source ocr`.
+- `auto` (default) — picks `audio` when the file has an audio stream and
+  switches to OCR when that stream carries no speech. A recording with no audio
+  track, and one whose track turns out to be speechless (STT returns a generic
+  silence hallucination, or near-certain no-speech on a very short transcript),
+  both reach semantic analysis instead of failing at the audio gate. The switch
+  is announced on the console and recorded in the checkpoint, so `--resume`
+  continues as an OCR run instead of paying for the STT round again. Empty or
+  corrupt audio still stops the run — that is a broken input, not a silent one —
+  and an explicit `--transcript-source audio` keeps the stop in every case.
+  `--no-audio` is a shortcut for `--transcript-source ocr`.
 
 `--prompt` instructions reach the OCR stage and all analysis stages either
 way. Private OCR cache entries bind frame content, model, endpoint and the
@@ -1135,7 +1141,9 @@ answer, set `SCREENSCRIBE_LLM_REASONING_EFFORT=low` (default: `low` on xAI,
 `review` handles silent recordings out of the box: the default `auto`
 transcript source routes them to frame OCR (`--transcript-source ocr`, alias
 `--no-audio`), reading frames every `--frame-interval` seconds with the vision
-model. Only an explicit `--transcript-source audio` (and `transcribe`, which
+model. This covers both a missing audio track and a track that carries no
+speech — `auto` switches to OCR after STT comes back speechless, rather than
+stopping at "Audio Quality Issue". Only an explicit `--transcript-source audio` (and `transcribe`, which
 is STT-only) fails fast on a missing audio track, with a clear message that
 suggests the vision-only path:
 

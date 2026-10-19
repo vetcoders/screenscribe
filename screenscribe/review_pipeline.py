@@ -81,7 +81,7 @@ from .transcribe import (
     transcript_last_segment_end,
     validate_audio_quality,
 )
-from .transcript_sources import response_id_can_chain
+from .transcript_sources import audio_quality_allows_ocr_fallback, response_id_can_chain
 from .unified_analysis import (
     UnifiedFinding,
     analyze_all_findings_unified,
@@ -243,6 +243,46 @@ def _read_video_duration(cli: Any, console: Any, video: Path) -> float:
         return 0.0
     console.print(f"[blue]Duration:[/] {format_timestamp(duration)}\n")
     return duration
+
+
+def _transcribe_ocr_or_report(
+    cli: Any,
+    console: Any,
+    video: Path,
+    config: ScreenScribeConfig,
+    *,
+    frame_interval: float,
+) -> Any | None:
+    """Run frame OCR, or print an actionable panel and return ``None``.
+
+    Shared by Step 2's OCR branch and the ``auto`` no-speech fallback so both
+    entry points mirror the STT failure path: actionable panel, keep the
+    checkpoint, skip the video -- never crash the batch.
+    """
+    try:
+        return cli.transcribe_video_ocr(video, config, frame_interval=frame_interval)
+    except (
+        httpx.HTTPStatusError,
+        httpx.RequestError,
+        APIError,
+        ValueError,
+        RuntimeError,
+    ) as exc:
+        console.print()
+        console.print(
+            Panel(
+                "Frame OCR transcription failed: "
+                f"{escape(redact_error_message(exc))}\n\n"
+                "The OCR transcript source reads frames with the vision "
+                "model. Check the vision credentials/endpoint "
+                "(SCREENSCRIBE_VISION_API_KEY / SCREENSCRIBE_VISION_ENDPOINT), "
+                "then re-run with --resume to retry.",
+                title="[bold red]Transcription Failed[/]",
+                border_style="red",
+            )
+        )
+        console.print("[yellow]Skipping this video.[/] Re-run with [bold]--resume[/] to retry.")
+        return None
 
 
 def _announce_new_version(console: Any, base_name: str, new_name: str) -> None:
@@ -508,16 +548,21 @@ def run_review(
         source = cli.resolve_transcript_source(
             transcript_source, video, has_audio=cli.has_audio_stream
         )
-        analysis_inputs: dict[str, Any] = {
-            "transcript_source": source,
-            "frame_interval": frame_interval if source == "ocr" else None,
-            "preset": preset.name if preset is not None else "programming",
-            "categories": list(active_categories),
-            "keywords": {
-                category: keywords.get_keywords(category) for category in keywords.active_categories
-            },
-            "analysis_prompt_override": config.analysis_prompt_override,
-        }
+
+        def _analysis_inputs_for(resolved_source: str) -> dict[str, Any]:
+            return {
+                "transcript_source": resolved_source,
+                "frame_interval": frame_interval if resolved_source == "ocr" else None,
+                "preset": preset.name if preset is not None else "programming",
+                "categories": list(active_categories),
+                "keywords": {
+                    category: keywords.get_keywords(category)
+                    for category in keywords.active_categories
+                },
+                "analysis_prompt_override": config.analysis_prompt_override,
+            }
+
+        analysis_inputs: dict[str, Any] = _analysis_inputs_for(source)
 
         # Handle --force: delete existing checkpoint
         if force:
@@ -537,13 +582,32 @@ def run_review(
         checkpoint: PipelineCheckpoint | None = None
         if effective_resume and not force:
             checkpoint = load_checkpoint(video_output)
+            # An `auto` run can switch to OCR mid-flight when the audio stream
+            # turns out to carry no speech (see Step 2's audio-quality branch).
+            # Re-resolution above only sees the audio *stream* and says "audio"
+            # again, which would discard that run's work. Adopt the OCR contract
+            # the earlier auto-fallback persisted instead; a frame_interval or
+            # preset mismatch still invalidates it, and a rejected checkpoint
+            # leaves the freshly resolved source untouched.
+            candidate_source = source
+            candidate_inputs = analysis_inputs
+            if (
+                checkpoint is not None
+                and transcript_source == "auto"
+                and source == "audio"
+                and checkpoint.analysis_inputs.get("transcript_source") == "ocr"
+            ):
+                candidate_source = "ocr"
+                candidate_inputs = _analysis_inputs_for("ocr")
             if checkpoint and checkpoint_valid_for_video(
                 checkpoint,
                 video,
                 video_output,
                 language,
-                analysis_inputs=analysis_inputs,
+                analysis_inputs=candidate_inputs,
             ):
+                source = candidate_source
+                analysis_inputs = candidate_inputs
                 console.print(
                     f"[green]Resuming from checkpoint:[/] "
                     f"{len(checkpoint.completed_stages)} stages complete"
@@ -612,37 +676,14 @@ def run_review(
         if not checkpoint.is_stage_complete("transcription"):
             if source == "ocr":
                 console.rule("[bold]Step 2: Transcription (frame OCR)[/]")
-                try:
-                    transcription = cli.transcribe_video_ocr(
-                        video,
-                        config,
-                        frame_interval=frame_interval,
-                    )
-                except (
-                    httpx.HTTPStatusError,
-                    httpx.RequestError,
-                    APIError,
-                    ValueError,
-                    RuntimeError,
-                ) as exc:
-                    # Mirror the STT failure path: actionable panel, keep the
-                    # checkpoint, skip the video -- never crash the batch.
-                    console.print()
-                    console.print(
-                        Panel(
-                            "Frame OCR transcription failed: "
-                            f"{escape(redact_error_message(exc))}\n\n"
-                            "The OCR transcript source reads frames with the vision "
-                            "model. Check the vision credentials/endpoint "
-                            "(SCREENSCRIBE_VISION_API_KEY / SCREENSCRIBE_VISION_ENDPOINT), "
-                            "then re-run with --resume to retry.",
-                            title="[bold red]Transcription Failed[/]",
-                            border_style="red",
-                        )
-                    )
-                    console.print(
-                        "[yellow]Skipping this video.[/] Re-run with [bold]--resume[/] to retry."
-                    )
+                transcription = _transcribe_ocr_or_report(
+                    cli,
+                    console,
+                    video,
+                    config,
+                    frame_interval=frame_interval,
+                )
+                if transcription is None:
                     continue  # Skip to next video in batch
                 checkpoint.transcription = serialize_transcription(transcription)
                 checkpoint.mark_stage_complete("transcription")
@@ -765,6 +806,48 @@ def run_review(
                         )
                     )
                     console.print()
+                elif (
+                    not is_valid
+                    and transcript_source == "auto"
+                    and (audio_quality_allows_ocr_fallback(transcription))
+                ):
+                    # `auto` only promised the best available source, and an
+                    # audio *stream* is not proof of speech: the stream decoded
+                    # fine but carries no narration. Stopping here would abandon
+                    # a recording whose content is on screen, so switch to frame
+                    # OCR instead. Explicit --transcript-source audio keeps the
+                    # stop below; empty/corrupt audio does too.
+                    console.print(
+                        Panel(
+                            validation_message,
+                            title="[bold yellow]No Speech in Audio[/]",
+                            border_style="yellow",
+                        )
+                    )
+                    console.print()
+                    console.print(
+                        "[yellow]auto:[/] audio stream carries no speech, switching to frame OCR"
+                    )
+                    console.rule("[bold]Step 2: Transcription (frame OCR)[/]")
+                    ocr_transcription = _transcribe_ocr_or_report(
+                        cli,
+                        console,
+                        video,
+                        config,
+                        frame_interval=frame_interval,
+                    )
+                    if ocr_transcription is None:
+                        continue  # Skip to next video in batch
+                    transcription = ocr_transcription
+                    # The switch is part of the resumable contract: the stored
+                    # artifacts now belong to the OCR source, and a resumed
+                    # `auto` run adopts this contract instead of re-running STT.
+                    source = "ocr"
+                    analysis_inputs = _analysis_inputs_for("ocr")
+                    checkpoint.analysis_inputs = dict(analysis_inputs)
+                    checkpoint.transcription = serialize_transcription(transcription)
+                    checkpoint.mark_stage_complete("transcription")
+                    save_checkpoint(checkpoint, video_output)
                 elif not is_valid:
                     console.print(
                         Panel(
@@ -783,6 +866,11 @@ def run_review(
                     delete_checkpoint(video_output)
                     continue  # Skip to next video in batch
 
+        # Re-checked after the audio-quality branch: an `auto` run may have just
+        # switched to frame OCR, and the STT timeline guard probes the audio tail.
+        if source == "audio":
+            if audio_path is None:
+                raise RuntimeError("Audio transcript source has no extracted audio path")
             coverage = calculate_transcript_timeline_coverage(transcription, duration)
             if (
                 duration > MIN_TIMELINE_GUARD_VIDEO_SECONDS

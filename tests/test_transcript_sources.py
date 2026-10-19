@@ -10,19 +10,22 @@ from typer.testing import CliRunner
 
 import screenscribe.cli as cli_module
 from screenscribe.audio import MissingAudioStreamError
+from screenscribe.checkpoint import load_checkpoint
 from screenscribe.config import ScreenScribeConfig
 from screenscribe.review_pipeline import _transcription_context_id
-from screenscribe.semantic_filter import SemanticFilterResult
+from screenscribe.semantic_filter import PointOfInterest, SemanticFilterResult
 from screenscribe.transcribe_types import Segment, TranscriptionResult
 from screenscribe.transcript_sources import (
     AudioTranscriptSource,
     OcrTranscriptSource,
     TranscriptSource,
+    audio_quality_allows_ocr_fallback,
     get_transcript_source,
     normalize_transcript_source,
     resolve_transcript_source,
     response_id_can_chain,
 )
+from screenscribe.unified_analysis import UnifiedFinding
 
 # --- pure routing logic ----------------------------------------------------
 
@@ -298,6 +301,295 @@ def test_complete_ocr_run_adds_no_coverage_notice(
     assert "OCR Coverage Warning" not in " ".join(result.output.split())
     report = json.loads((output_dir / "silent_report.json").read_text(encoding="utf-8"))
     assert report["errors"] == []
+
+
+def _speechless_stt_transcription() -> TranscriptionResult:
+    """STT output ``validate_audio_quality`` rejects as a silence hallucination."""
+    return TranscriptionResult(
+        text="Thank you for watching",
+        segments=[
+            Segment(id=0, start=0.0, end=2.0, text="Thank you for watching", no_speech_prob=0.4),
+        ],
+        language="en",
+        response_id="stt-resp-1",
+    )
+
+
+def _patch_audio_stream(monkeypatch: pytest.MonkeyPatch, audio_path: Path) -> None:
+    """Route the pipeline down the audio source: a real stream, extractable."""
+    monkeypatch.setattr("screenscribe.cli.has_audio_stream", lambda _p: True)
+    monkeypatch.setattr("screenscribe.cli.require_audio_stream", lambda _p: None)
+    monkeypatch.setattr("screenscribe.cli.extract_audio", lambda _p: audio_path)
+
+
+def test_auto_falls_back_to_ocr_when_the_audio_carries_no_speech(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """B/P2: an audio stream is not proof of speech.
+
+    Falsification: keep the old unconditional stop and the run dies with
+    "Processing stopped" instead of reviewing a recording whose content is
+    entirely on screen.
+    """
+    _patch_common(monkeypatch)
+    runner = CliRunner()
+    video = tmp_path / "screencast.mov"
+    video.write_bytes(b"video")
+    audio = tmp_path / "audio.mp3"
+    audio.write_bytes(b"audio")
+    output_dir = tmp_path / "screencast_review"
+    _patch_audio_stream(monkeypatch, audio)
+
+    monkeypatch.setattr(
+        "screenscribe.cli.transcribe_audio_chunked",
+        lambda *a, **kw: _speechless_stt_transcription(),
+    )
+    ocr_called: list[Path] = []
+    monkeypatch.setattr(
+        "screenscribe.cli.transcribe_video_ocr",
+        lambda video_path, config, **kwargs: ocr_called.append(video_path) or _ocr_transcription(),
+    )
+    seen: dict[str, object] = {}
+
+    def fake_prefilter(transcription, config, **kwargs):
+        seen["transcription"] = transcription
+        return SemanticFilterResult(pois=[])
+
+    monkeypatch.setattr("screenscribe.cli.semantic_prefilter", fake_prefilter)
+
+    result = runner.invoke(
+        cli_module.app,
+        ["review", str(video), "-o", str(output_dir), "--no-serve"],
+    )
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 0, result.output
+    assert "Processing stopped" not in normalized
+    assert "audio stream carries no speech, switching to frame OCR" in normalized
+    assert ocr_called == [video]
+    # Downstream analysis consumed the OCR segments, not the hallucination.
+    assert [s.text for s in seen["transcription"].segments] == ["Przycisk Zapisz nie reaguje"]
+    report = json.loads((output_dir / "screencast_report.json").read_text(encoding="utf-8"))
+    assert report["transcript_source"] == "ocr"
+
+
+def test_explicit_audio_source_still_stops_on_speechless_audio(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """--transcript-source audio is a decision, not a preference: keep stopping."""
+    _patch_common(monkeypatch)
+    runner = CliRunner()
+    video = tmp_path / "screencast.mov"
+    video.write_bytes(b"video")
+    audio = tmp_path / "audio.mp3"
+    audio.write_bytes(b"audio")
+    _patch_audio_stream(monkeypatch, audio)
+
+    monkeypatch.setattr(
+        "screenscribe.cli.transcribe_audio_chunked",
+        lambda *a, **kw: _speechless_stt_transcription(),
+    )
+
+    def fail_ocr(*args: object, **kwargs: object) -> None:
+        raise AssertionError("explicit audio source must not fall back to OCR")
+
+    monkeypatch.setattr("screenscribe.cli.transcribe_video_ocr", fail_ocr)
+
+    result = runner.invoke(
+        cli_module.app,
+        [
+            "review",
+            str(video),
+            "-o",
+            str(tmp_path / "screencast_review"),
+            "--no-serve",
+            "--transcript-source",
+            "audio",
+        ],
+    )
+    normalized = " ".join(result.output.split())
+
+    assert "Audio Quality Issue" in normalized
+    assert "Processing stopped" in normalized
+
+
+def test_auto_does_not_fall_back_for_empty_or_corrupt_audio(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No segments at all is a broken input, not a speechless stream: stop."""
+    _patch_common(monkeypatch)
+    runner = CliRunner()
+    video = tmp_path / "screencast.mov"
+    video.write_bytes(b"video")
+    audio = tmp_path / "audio.mp3"
+    audio.write_bytes(b"audio")
+    _patch_audio_stream(monkeypatch, audio)
+
+    monkeypatch.setattr(
+        "screenscribe.cli.transcribe_audio_chunked",
+        lambda *a, **kw: TranscriptionResult(text="", segments=[], language="en"),
+    )
+
+    def fail_ocr(*args: object, **kwargs: object) -> None:
+        raise AssertionError("corrupt audio must not be papered over with OCR")
+
+    monkeypatch.setattr("screenscribe.cli.transcribe_video_ocr", fail_ocr)
+
+    result = runner.invoke(
+        cli_module.app,
+        ["review", str(video), "-o", str(tmp_path / "screencast_review"), "--no-serve"],
+    )
+    normalized = " ".join(result.output.split())
+
+    assert "Audio Quality Issue" in normalized
+    assert "Processing stopped" in normalized
+
+
+def _two_segment_ocr_transcription() -> TranscriptionResult:
+    return TranscriptionResult(
+        text="Przycisk Zapisz nie reaguje\nBlad: quota",
+        segments=[
+            Segment(id=0, start=0.0, end=5.0, text="Przycisk Zapisz nie reaguje"),
+            Segment(id=1, start=5.0, end=10.0, text="Blad: quota"),
+        ],
+        language="pl",
+        response_id="ocr-resp-1",
+    )
+
+
+def _unified_finding_for(detection: object) -> UnifiedFinding:
+    segment = detection.segment  # type: ignore[attr-defined]
+    return UnifiedFinding(
+        detection_id=segment.id,
+        screenshot_path=None,
+        timestamp=segment.start,
+        category="bug",
+        is_issue=True,
+        sentiment="problem",
+        severity="high",
+        summary=f"issue {segment.id} on screen",
+        action_items=[],
+        affected_components=[],
+        suggested_fix="",
+        ui_elements=[],
+        issues_detected=[],
+        accessibility_notes=[],
+        design_feedback="",
+        technical_observations="",
+        response_id="resp",
+        merged_from_ids=[],
+    )
+
+
+def test_auto_ocr_fallback_survives_resume_without_rerunning_stt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The mid-run switch is part of the resumable contract.
+
+    Re-resolution on the next run only sees the audio *stream* and says
+    "audio" again. Without adopting the persisted OCR contract the checkpoint
+    is thrown away and the whole speechless STT round is paid for twice.
+    """
+    _patch_common(monkeypatch)
+    runner = CliRunner()
+    video = tmp_path / "screencast.mov"
+    video.write_bytes(b"video")
+    audio = tmp_path / "audio.mp3"
+    audio.write_bytes(b"audio")
+    output_dir = tmp_path / "screencast_review"
+    _patch_audio_stream(monkeypatch, audio)
+
+    stt_calls: list[int] = []
+
+    def counted_stt(*_a: object, **_kw: object) -> TranscriptionResult:
+        stt_calls.append(1)
+        return _speechless_stt_transcription()
+
+    monkeypatch.setattr("screenscribe.cli.transcribe_audio_chunked", counted_stt)
+    ocr_calls: list[int] = []
+
+    def counted_ocr(video_path: Path, config: ScreenScribeConfig, **_kw: object):
+        ocr_calls.append(1)
+        return _two_segment_ocr_transcription()
+
+    monkeypatch.setattr("screenscribe.cli.transcribe_video_ocr", counted_ocr)
+    monkeypatch.setattr(
+        "screenscribe.cli.semantic_prefilter",
+        lambda *a, **kw: SemanticFilterResult(
+            pois=[
+                PointOfInterest(
+                    timestamp_start=float(index * 5),
+                    timestamp_end=float(index * 5 + 5),
+                    category="bug",
+                    confidence=0.9,
+                    reasoning=f"issue {index}",
+                    transcript_excerpt=f"issue {index}",
+                    segment_ids=[index],
+                )
+                for index in range(2)
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "screenscribe.review_pipeline.extract_screenshots_for_detections",
+        lambda _video, detections, _dir: [
+            (d, tmp_path / f"shot-{d.segment.id}.jpg") for d in detections
+        ],
+    )
+    monkeypatch.setattr(
+        "screenscribe.review_pipeline.generate_unified_summary", lambda *a, **kw: "summary"
+    )
+    monkeypatch.setattr(
+        "screenscribe.review_pipeline.generate_visual_summary_unified", lambda *a, **kw: "visual"
+    )
+    unified_batch_sizes: list[int] = []
+
+    def partial_then_complete(screenshots: list[object], *a: object, **kw: object) -> list[object]:
+        unified_batch_sizes.append(len(screenshots))
+        if len(unified_batch_sizes) == 1:
+            return [_unified_finding_for(d) for (d, _p) in screenshots[:-1]]
+        return [_unified_finding_for(d) for (d, _p) in screenshots]
+
+    monkeypatch.setattr(
+        "screenscribe.review_pipeline.analyze_all_findings_unified", partial_then_complete
+    )
+
+    first = runner.invoke(
+        cli_module.app,
+        ["review", str(video), "-o", str(output_dir), "--no-serve"],
+    )
+    assert first.exit_code == 0, first.output
+    assert "switching to frame OCR" in " ".join(first.output.split())
+    checkpoint = load_checkpoint(output_dir)
+    assert checkpoint is not None, "a partial run must keep the checkpoint"
+    # The switch is persisted, so the resumed run knows which source produced it.
+    assert checkpoint.analysis_inputs["transcript_source"] == "ocr"
+    assert checkpoint.analysis_inputs["frame_interval"] == 5.0
+    assert checkpoint.is_stage_complete("transcription")
+
+    second = runner.invoke(
+        cli_module.app,
+        ["review", str(video), "-o", str(output_dir), "--no-serve", "--resume"],
+    )
+    normalized = " ".join(second.output.split())
+
+    assert second.exit_code == 0, second.output
+    assert "Resuming from checkpoint" in normalized
+    assert "No valid checkpoint found" not in normalized
+    # Neither transcription stage ran again; only the residual VLM item did.
+    assert stt_calls == [1]
+    assert ocr_calls == [1]
+    assert unified_batch_sizes == [2, 1]
+    report = json.loads((output_dir / "screencast_report.json").read_text(encoding="utf-8"))
+    assert report["transcript_source"] == "ocr"
+
+
+def test_audio_quality_fallback_classifier_separates_silence_from_corruption() -> None:
+    assert audio_quality_allows_ocr_fallback(_speechless_stt_transcription()) is True
+    assert (
+        audio_quality_allows_ocr_fallback(TranscriptionResult(text="", segments=[], language="en"))
+        is False
+    )
 
 
 def test_transcript_source_audio_keeps_readable_error(

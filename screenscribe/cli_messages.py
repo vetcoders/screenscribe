@@ -17,6 +17,12 @@ transcript source per video (``transcript_sources.resolve_transcript_source``)
 and only calls this guard for videos routed to the ``audio`` source, so an
 explicit ``--transcript-source audio`` keeps the historical readable error
 while ``auto``/``ocr`` route silent recordings to frame OCR instead.
+
+A present audio stream is not proof of speech, so ``auto`` re-decides after
+STT: when ``validate_audio_quality`` rejects the transcript as speechless, the
+pipeline switches to frame OCR rather than stopping (see
+``transcript_sources.audio_quality_allows_ocr_fallback``). Empty/corrupt audio
+and an explicit ``--transcript-source audio`` keep the stop.
 """
 
 import errno

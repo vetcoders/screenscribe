@@ -31,6 +31,15 @@
   key now uses only the path part of the src, keeping two reports on one URL
   apart without binding the thread to one process.
 
+- **Fixed: `auto` transcript source detects actual silence, not just a missing
+  track.** A recording whose audio stream carries no speech used to stop the
+  review at "Audio Quality Issue" even though its content was on screen. With
+  the requested source `auto`, a speechless STT result now switches to frame
+  OCR, announces the switch, and records it in the checkpoint so `--resume`
+  continues as an OCR run instead of repeating the STT round. Empty or corrupt
+  audio still stops (a broken input, not a silent one), and an explicit
+  `--transcript-source audio` keeps today's behavior unchanged.
+
 - **Fixed: frame OCR no longer hides the parts it could not read.** Frames lost
   to failed extraction or a failed OCR call are recorded as structured coverage
   gaps on the transcript, merged into the fewest ranges, and persisted in the

@@ -495,9 +495,10 @@ def review(
         typer.Option(
             "--transcript-source",
             help=(
-                "Where transcript segments come from: 'auto' (audio STT when an "
-                "audio track exists, frame OCR otherwise), 'audio' (STT, requires "
-                "an audio track), 'ocr' (VLM OCR of frames, no audio needed)"
+                "Where transcript segments come from: 'auto' (audio STT when the "
+                "file has an audio stream, switching to frame OCR when that "
+                "stream carries no speech), 'audio' (STT, requires an audio "
+                "track), 'ocr' (VLM OCR of frames, no audio needed)"
             ),
         ),
     ] = "auto",
