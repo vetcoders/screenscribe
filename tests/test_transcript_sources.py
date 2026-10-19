@@ -227,6 +227,79 @@ def test_auto_without_audio_routes_to_ocr(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert ocr_called == [video]
 
 
+def test_ocr_coverage_gaps_warn_on_console_and_in_the_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A/P2: ranges frame OCR never read must be visible, not silently missing.
+
+    Falsification: drop the pipeline notice and the report's ``errors`` channel
+    stays empty while the review claims to cover the whole recording.
+    """
+    _patch_common(monkeypatch)
+    runner = CliRunner()
+    video = tmp_path / "silent.mov"
+    video.write_bytes(b"video")
+    output_dir = tmp_path / "silent_review"
+
+    monkeypatch.setattr("screenscribe.cli.has_audio_stream", lambda _p: False)
+    gapped = _ocr_transcription()
+    gapped.coverage_gaps = [(65.0, 70.0), (125.0, 130.0)]
+    monkeypatch.setattr(
+        "screenscribe.cli.transcribe_video_ocr",
+        lambda video_path, config, **kwargs: gapped,
+    )
+    monkeypatch.setattr(
+        "screenscribe.cli.semantic_prefilter",
+        lambda *a, **kw: SemanticFilterResult(pois=[]),
+    )
+
+    result = runner.invoke(
+        cli_module.app,
+        ["review", str(video), "-o", str(output_dir), "--no-serve", "--no-audio"],
+    )
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 0, result.output
+    assert "OCR Coverage Warning" in normalized
+    assert "01:05-01:10" in normalized
+
+    report = json.loads((output_dir / "silent_report.json").read_text(encoding="utf-8"))
+    (gap_error,) = [e for e in report["errors"] if e["stage"] == "transcription"]
+    assert "01:05-01:10" in gap_error["message"]
+    assert "02:05-02:10" in gap_error["message"]
+    assert "incomplete" in gap_error["message"]
+
+
+def test_complete_ocr_run_adds_no_coverage_notice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_common(monkeypatch)
+    runner = CliRunner()
+    video = tmp_path / "silent.mov"
+    video.write_bytes(b"video")
+    output_dir = tmp_path / "silent_review"
+
+    monkeypatch.setattr("screenscribe.cli.has_audio_stream", lambda _p: False)
+    monkeypatch.setattr(
+        "screenscribe.cli.transcribe_video_ocr",
+        lambda video_path, config, **kwargs: _ocr_transcription(),
+    )
+    monkeypatch.setattr(
+        "screenscribe.cli.semantic_prefilter",
+        lambda *a, **kw: SemanticFilterResult(pois=[]),
+    )
+
+    result = runner.invoke(
+        cli_module.app,
+        ["review", str(video), "-o", str(output_dir), "--no-serve", "--no-audio"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "OCR Coverage Warning" not in " ".join(result.output.split())
+    report = json.loads((output_dir / "silent_report.json").read_text(encoding="utf-8"))
+    assert report["errors"] == []
+
+
 def test_transcript_source_audio_keeps_readable_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

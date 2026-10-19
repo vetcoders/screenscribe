@@ -307,6 +307,7 @@ def test_transcribe_video_ocr_cleans_owned_work_dir(
         *,
         duration: float | None = None,
         on_frame: Any = None,
+        on_failure: Any = None,
     ) -> list[tuple[float, Path]]:
         seen["work_dir"] = output_dir
         assert output_dir.exists()
@@ -415,6 +416,125 @@ def test_one_malformed_provider_payload_is_a_gap_not_a_lost_run(
         tmp_path / "clip.mov", ScreenScribeConfig(), work_dir=tmp_path / "frames"
     )
     assert [segment.start for segment in result.segments] == [0.0, 10.0]
+
+
+def test_coverage_gaps_record_a_failed_frame_extraction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A/P2: a frame ffmpeg could not extract becomes a declared coverage gap.
+
+    Falsification: drop the ``on_failure`` reporting and the 5s-10s range
+    disappears, leaving a report that looks complete for a range nothing read.
+    """
+    monkeypatch.setattr(frame_ocr, "get_video_duration", lambda _p: 15.0)
+
+    def flaky_extract(_video: Path, timestamp: float, out: Path) -> Path:
+        if timestamp == 5.0:
+            raise RuntimeError("ffmpeg seek failed")
+        out.write_bytes(f"jpeg-{timestamp}".encode())
+        return out
+
+    monkeypatch.setattr(frame_ocr, "extract_screenshot", flaky_extract)
+    monkeypatch.setattr(frame_ocr, "_frame_probe_hash", lambda p: p.name)
+    monkeypatch.setattr(
+        frame_ocr,
+        "ocr_frame",
+        lambda frame_path, config, *, cache_dir=None: ("frame text", "resp-x"),
+    )
+
+    result = frame_ocr.transcribe_video_ocr(
+        tmp_path / "clip.mov", ScreenScribeConfig(), work_dir=tmp_path / "frames"
+    )
+
+    assert result.coverage_gaps == [(5.0, 10.0)]
+    assert [segment.start for segment in result.segments] == [0.0, 10.0]
+
+
+def test_coverage_gaps_record_a_failed_ocr_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A kept frame whose OCR call failed is the same kind of gap."""
+    monkeypatch.setattr(frame_ocr, "get_video_duration", lambda _p: 15.0)
+    monkeypatch.setattr(
+        frame_ocr,
+        "extract_screenshot",
+        lambda _video, timestamp, out: out.write_bytes(f"jpeg-{timestamp}".encode()),
+    )
+    monkeypatch.setattr(frame_ocr, "_frame_probe_hash", lambda p: p.name)
+
+    def flaky_ocr(frame_path: Path, config: ScreenScribeConfig, *, cache_dir: Path | None = None):
+        timestamp = float(frame_path.stem.split("_")[-1].removesuffix("s"))
+        if timestamp == 10.0:
+            raise RuntimeError("upstream 502")
+        return f"text at {timestamp:g}", f"resp-{timestamp:g}"
+
+    monkeypatch.setattr(frame_ocr, "ocr_frame", flaky_ocr)
+
+    result = frame_ocr.transcribe_video_ocr(
+        tmp_path / "clip.mov", ScreenScribeConfig(), work_dir=tmp_path / "frames"
+    )
+
+    # End clamped to the real duration, exactly like a segment's end.
+    assert result.coverage_gaps == [(10.0, 15.0)]
+
+
+def test_coverage_gaps_empty_when_every_frame_is_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(frame_ocr, "get_video_duration", lambda _p: 10.0)
+    monkeypatch.setattr(
+        frame_ocr,
+        "extract_screenshot",
+        lambda _video, timestamp, out: out.write_bytes(f"jpeg-{timestamp}".encode()),
+    )
+    # Both frames are identical, so one is deduplicated away: dedupe is NOT a
+    # coverage gap (the kept frame carries the same content).
+    monkeypatch.setattr(frame_ocr, "_frame_probe_hash", lambda _p: "same")
+    monkeypatch.setattr(
+        frame_ocr,
+        "ocr_frame",
+        lambda frame_path, config, *, cache_dir=None: ("text", "resp-x"),
+    )
+
+    result = frame_ocr.transcribe_video_ocr(
+        tmp_path / "clip.mov", ScreenScribeConfig(), work_dir=tmp_path / "frames"
+    )
+
+    assert result.coverage_gaps == []
+
+
+def test_consecutive_failed_frames_merge_into_one_gap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A run of failures is one gap in the recording, not N adjacent ones."""
+    monkeypatch.setattr(frame_ocr, "get_video_duration", lambda _p: 25.0)
+
+    def flaky_extract(_video: Path, timestamp: float, out: Path) -> Path:
+        if timestamp in (5.0, 10.0):
+            raise RuntimeError("ffmpeg seek failed")
+        out.write_bytes(f"jpeg-{timestamp}".encode())
+        return out
+
+    monkeypatch.setattr(frame_ocr, "extract_screenshot", flaky_extract)
+    monkeypatch.setattr(frame_ocr, "_frame_probe_hash", lambda p: p.name)
+    monkeypatch.setattr(
+        frame_ocr,
+        "ocr_frame",
+        lambda frame_path, config, *, cache_dir=None: ("text", "resp-x"),
+    )
+
+    result = frame_ocr.transcribe_video_ocr(
+        tmp_path / "clip.mov", ScreenScribeConfig(), work_dir=tmp_path / "frames"
+    )
+
+    assert result.coverage_gaps == [(5.0, 15.0)]
+
+
+def test_merge_time_ranges_collapses_overlaps_and_keeps_distinct_spans() -> None:
+    assert frame_ocr.merge_time_ranges([(10.0, 15.0), (0.0, 5.0), (12.0, 20.0)]) == [
+        (0.0, 5.0),
+        (10.0, 20.0),
+    ]
 
 
 def test_missing_vision_key_still_fails_the_whole_run(

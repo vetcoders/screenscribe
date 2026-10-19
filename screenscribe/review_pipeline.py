@@ -48,6 +48,7 @@ from .checkpoint import (
 from .cli_messages import (
     _build_cache_clear_error_message,
     _build_force_foreign_message,
+    _build_ocr_coverage_gap_message,
     _build_output_dir_error_message,
     _build_output_slot_error_message,
     _build_versions_exhausted_message,
@@ -815,6 +816,38 @@ def run_review(
                         )
                     )
                 console.print()
+
+        # Frame OCR skips a frame it could not extract or read. Without this the
+        # report looks complete while whole time ranges were never analyzed, so
+        # the gaps are stated on the console AND carried into the report through
+        # the shared pipeline-errors channel (JSON/HTML/Markdown all render it).
+        if source == "ocr" and transcription.coverage_gaps:
+            gap_message = _build_ocr_coverage_gap_message(transcription.coverage_gaps)
+            console.print()
+            console.print(
+                Panel(
+                    gap_message,
+                    title="[bold yellow]OCR Coverage Warning[/]",
+                    border_style="yellow",
+                )
+            )
+            console.print()
+            pipeline_errors.append(
+                {
+                    "stage": "transcription",
+                    "message": (
+                        "Frame OCR left "
+                        f"{sum(end - start for start, end in transcription.coverage_gaps):.0f}s "
+                        f"of the recording unanalyzed across "
+                        f"{len(transcription.coverage_gaps)} range(s): "
+                        + ", ".join(
+                            f"{format_timestamp(start)}-{format_timestamp(end)}"
+                            for start, end in transcription.coverage_gaps
+                        )
+                        + ". The transcript and findings are incomplete for those ranges."
+                    ),
+                }
+            )
 
         # Step 3: Issue Detection -- ALWAYS the LLM semantic prefilter.
         # Active keywords are injected into the prefilter prompt as vocabulary

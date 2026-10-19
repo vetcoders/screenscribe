@@ -85,6 +85,36 @@ def _build_transcript_timeline_coverage_message(
     )
 
 
+# How many individual gap ranges the console warning spells out before it
+# switches to a "+N more" tail. Enough to recognize the pattern, short enough
+# to stay a panel and not a wall of timestamps.
+OCR_COVERAGE_GAP_PREVIEW = 5
+
+
+def _format_ocr_coverage_gaps(gaps: list[tuple[float, float]]) -> str:
+    """Render coverage-gap ranges as ``mm:ss-mm:ss`` lines with a bounded preview."""
+    preview = gaps[:OCR_COVERAGE_GAP_PREVIEW]
+    lines = [f"  • {format_timestamp(start)}-{format_timestamp(end)}" for start, end in preview]
+    remaining = len(gaps) - len(preview)
+    if remaining > 0:
+        lines.append(f"  • … +{remaining} more range(s)")
+    return "\n".join(lines)
+
+
+def _build_ocr_coverage_gap_message(gaps: list[tuple[float, float]]) -> str:
+    """Build the user-facing warning for time ranges frame OCR never read."""
+    total_seconds = sum(end - start for start, end in gaps)
+    return (
+        "Frame OCR could not read every frame, so the transcript and the report "
+        "are INCOMPLETE for the ranges below.\n"
+        f"Uncovered: {total_seconds:.0f}s across {len(gaps)} range(s).\n"
+        f"{_format_ocr_coverage_gaps(gaps)}\n\n"
+        "Findings cannot exist for a range that was never analyzed.\n"
+        "Re-run with --resume to retry only the failed frames (every frame that "
+        "was read is cached)."
+    )
+
+
 def _describe_output_os_error(path: Path, exc: OSError) -> tuple[str, str]:
     """``(reason, where)`` for an OSError hit while creating/writing output."""
     blocked = Path(exc.filename) if exc.filename else path

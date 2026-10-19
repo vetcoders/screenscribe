@@ -144,6 +144,15 @@ way. Private OCR cache entries bind frame content, model, endpoint and the
 effective prompt. Matching re-runs reuse them; changing those inputs triggers
 fresh OCR. Checkpoints also bind the source/interval, preset and vocabulary.
 
+**OCR coverage gaps.** A frame that cannot be extracted or read is skipped, so
+the transcript (and therefore the report) says nothing about that slice of the
+recording. Those ranges are not silent: they are recorded on the transcript as
+coverage gaps, printed as an `OCR Coverage Warning` panel with `mm:ss` ranges,
+and carried into the JSON/HTML/Markdown report through the report's errors
+channel. A re-run with `--resume` retries only the failed frames — every frame
+that was read is cached. Deduplicated frames are *not* gaps: their content is
+identical to the kept frame before them.
+
 ```bash
 uv run screenscribe review silent-demo.mov --no-audio --prompt "No audio; the explanations are written on screen"
 uv run screenscribe review silent-demo.mov --transcript-source ocr --frame-interval 2.5

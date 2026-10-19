@@ -9,7 +9,7 @@ Intentionally import-light: no ``httpx``, no HTTP, and nothing from
 ``transcribe`` re-exports every name here for back-compat.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Timeline-coverage guard thresholds. A long recording whose STT timestamps stop
 # well before the real duration signals a compressed/drifted transcript timeline;
@@ -51,6 +51,12 @@ class TranscriptionResult:
     # the pipeline tell a genuinely no-speech recording (music/landscape) apart
     # from empty/corrupt audio, so it reports "no speech" instead of an error.
     hallucinations_filtered: bool = False
+    # Time ranges ``(start, end)`` in seconds that this transcript provably does
+    # NOT cover: frame OCR records every timestamp whose frame extraction or OCR
+    # failed, so a complete-looking report can still state which parts of the
+    # recording were never analyzed. Empty means full coverage; STT transcripts
+    # never populate it (they have no per-frame grid to lose).
+    coverage_gaps: list[tuple[float, float]] = field(default_factory=list)
 
 
 def transcript_last_segment_end(result: TranscriptionResult) -> float | None:

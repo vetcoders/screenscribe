@@ -31,6 +31,14 @@
   key now uses only the path part of the src, keeping two reports on one URL
   apart without binding the thread to one process.
 
+- **Fixed: frame OCR no longer hides the parts it could not read.** Frames lost
+  to failed extraction or a failed OCR call are recorded as structured coverage
+  gaps on the transcript, merged into the fewest ranges, and persisted in the
+  checkpoint. The review prints an `OCR Coverage Warning` with `mm:ss` ranges
+  and total uncovered seconds, and the same notice reaches the JSON, HTML and
+  Markdown report, so a report is never read as complete for time ranges that
+  were never analyzed. `--resume` retries only the failed frames.
+
 - **Security: doctor omits unsafe provider diagnostics.** Endpoint receipts
   remove URL userinfo as well as queries/fragments, and invalid endpoints use
   placeholders. Provider errors retain their local type and HTTP status instead

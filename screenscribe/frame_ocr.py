@@ -59,6 +59,11 @@ DEFAULT_FRAME_INTERVAL_SECONDS = 5.0
 # request at a time left the terminal silent for tens of minutes.
 OCR_MAX_WORKERS = 4
 
+# Two frame-grid ranges are "adjacent" when one ends where the next begins.
+# The grid is built by repeated float addition, so compare with a tolerance
+# far below any real frame interval.
+_RANGE_ADJACENCY_TOLERANCE = 1e-6
+
 # The vision model is asked for a verbatim transcription only; analysis stays
 # with the downstream semantic/vision passes that consume the segments.
 OCR_FRAME_PROMPT = """Transcribe ALL text visible on this screen recording frame, verbatim.
@@ -86,12 +91,16 @@ def extract_interval_frames(
     *,
     duration: float | None = None,
     on_frame: Callable[[], None] | None = None,
+    on_failure: Callable[[float, Exception], None] | None = None,
 ) -> list[tuple[float, Path]]:
     """Extract one frame every ``interval_seconds`` via the shared ffmpeg helper.
 
     Returns ``(timestamp, frame_path)`` pairs. Frame extraction failures are
-    skipped (a missing frame only means a gap in OCR coverage, never a crash).
-    ``on_frame`` is called after every attempted timestamp (progress display).
+    skipped (a missing frame only means a gap in OCR coverage, never a crash),
+    but they are *reported*: ``on_failure(timestamp, error)`` is called for each
+    one so the caller can turn them into structured coverage gaps instead of a
+    console line nobody reads. ``on_frame`` is called after every attempted
+    timestamp (progress display).
     """
     if interval_seconds <= 0:
         raise ValueError("frame interval must be positive")
@@ -109,11 +118,45 @@ def extract_interval_frames(
             frames.append((timestamp, frame_path))
         except RuntimeError as e:
             console.print(f"  [red]✗[/] Frame at {timestamp:.1f}s failed: {e}")
+            if on_failure is not None:
+                on_failure(timestamp, e)
         if on_frame is not None:
             on_frame()
         timestamp += interval_seconds
         index += 1
     return frames
+
+
+def merge_time_ranges(ranges: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Collapse overlapping and adjacent ``(start, end)`` ranges into the fewest spans.
+
+    A run of consecutive failed frames is one gap in the recording, not N
+    separate ones, so the warning the operator reads stays readable.
+    """
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1] + _RANGE_ADJACENCY_TOLERANCE:
+            previous_start, previous_end = merged[-1]
+            merged[-1] = (previous_start, max(previous_end, end))
+            continue
+        merged.append((start, end))
+    return merged
+
+
+def _coverage_gaps_from_timestamps(
+    timestamps: list[float],
+    interval_seconds: float,
+    duration: float,
+) -> list[tuple[float, float]]:
+    """Turn failed frame timestamps into merged ``[t, t + interval)`` gap ranges."""
+    if not timestamps:
+        return []
+    return merge_time_ranges(
+        [
+            (timestamp, min(timestamp + interval_seconds, duration) if duration > 0 else timestamp)
+            for timestamp in timestamps
+        ]
+    )
 
 
 def _frame_probe_hash(frame_path: Path) -> str:
@@ -328,6 +371,11 @@ def transcribe_video_ocr(
     Each surviving (non-duplicate) frame with readable text becomes one
     segment spanning ``[t, t + frame_interval)`` clamped to the video
     duration, so timestamps come from the frame grid, not from the model.
+
+    Frames lost to extraction or OCR failures are recorded on the result as
+    ``coverage_gaps``: the pipeline warns on them and the report says which
+    ranges were never analyzed, instead of looking complete. A deduplicated
+    frame is NOT a gap -- its content is identical to the kept frame before it.
     """
     duration = get_video_duration(video_path)
     owned_work_dir: tempfile.TemporaryDirectory[str] | None = None
@@ -340,6 +388,7 @@ def transcribe_video_ocr(
             f"[blue]OCR transcript:[/] frames every {frame_interval:g}s over {duration:.0f}s"
         )
         expected_frames = max(1, math.ceil(duration / frame_interval)) if duration > 0 else 0
+        extraction_failures: list[float] = []
         with _ocr_progress() as progress:
             extract_task = progress.add_task("Extracting frames", total=expected_frames or None)
             frames = extract_interval_frames(
@@ -348,6 +397,7 @@ def transcribe_video_ocr(
                 work_dir,
                 duration=duration,
                 on_frame=lambda: progress.advance(extract_task),
+                on_failure=lambda timestamp, _exc: extraction_failures.append(timestamp),
             )
         kept = dedupe_frames(frames)
         if len(kept) < len(frames):
@@ -402,10 +452,18 @@ def transcribe_video_ocr(
                     text=text,
                 )
             )
-        if failures:
+        # Extraction and OCR failures are the same thing to the reader: a time
+        # range the transcript (and therefore the report) says nothing about.
+        coverage_gaps = _coverage_gaps_from_timestamps(
+            extraction_failures + [timestamp for timestamp, _exc in failures],
+            frame_interval,
+            duration,
+        )
+        if coverage_gaps:
             console.print(
-                f"[yellow]OCR transcript:[/] {len(failures)} frame(s) failed and are gaps "
-                "in the transcript; a re-run retries only those (the rest is cached)"
+                f"[yellow]OCR transcript:[/] {len(extraction_failures) + len(failures)} frame(s) "
+                f"failed and leave {len(coverage_gaps)} gap(s) in the transcript; "
+                "a re-run retries only those (the rest is cached)"
             )
 
         full_text = "\n".join(segment.text for segment in segments)
@@ -417,6 +475,7 @@ def transcribe_video_ocr(
             segments=segments,
             language=config.language,
             response_id=last_response_id,
+            coverage_gaps=coverage_gaps,
         )
     finally:
         if owned_work_dir is not None:
