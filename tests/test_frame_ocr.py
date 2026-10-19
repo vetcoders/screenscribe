@@ -530,6 +530,108 @@ def test_consecutive_failed_frames_merge_into_one_gap(
     assert result.coverage_gaps == [(5.0, 15.0)]
 
 
+def _patch_frame_grid(monkeypatch: pytest.MonkeyPatch, duration: float) -> None:
+    """Every grid timestamp extracts, and every frame is visually distinct."""
+    monkeypatch.setattr(frame_ocr, "get_video_duration", lambda _p: duration)
+    monkeypatch.setattr(
+        frame_ocr,
+        "extract_screenshot",
+        lambda _video, timestamp, out: out.write_bytes(f"jpeg-{timestamp}".encode()),
+    )
+    monkeypatch.setattr(frame_ocr, "_frame_probe_hash", lambda p: p.name)
+
+
+def test_over_budget_raises_before_any_vision_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """C/P2: the budget is a spend gate, so nothing may be billed before it.
+
+    Falsification: move the check after the OCR pool (or drop it) and the mock
+    records calls -- which in production is real money already spent.
+    """
+    _patch_frame_grid(monkeypatch, duration=30.0)  # 6 frames at 5s
+
+    def fail_if_called(*_args: Any, **_kwargs: Any) -> tuple[str, str]:
+        raise AssertionError("budget must be enforced before any OCR call")
+
+    monkeypatch.setattr(frame_ocr, "ocr_frame", fail_if_called)
+
+    with pytest.raises(frame_ocr.FrameOCRConfigError) as excinfo:
+        frame_ocr.transcribe_video_ocr(
+            tmp_path / "clip.mov",
+            _ocr_config(),
+            max_frames=3,
+            work_dir=tmp_path / "frames",
+        )
+
+    message = str(excinfo.value)
+    assert "6 vision call(s)" in message
+    assert "budget of 3 frame(s)" in message
+    # Both remedies, named with the flags the operator actually types.
+    assert "--ocr-max-frames 6" in message
+    assert "--frame-interval" in message
+
+
+def test_within_budget_proceeds_and_announces_the_call_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _patch_frame_grid(monkeypatch, duration=15.0)  # 3 frames at 5s
+    monkeypatch.setattr(
+        frame_ocr,
+        "ocr_frame",
+        lambda frame_path, config, *, cache_dir=None: ("text", "resp-x"),
+    )
+
+    result = frame_ocr.transcribe_video_ocr(
+        tmp_path / "clip.mov",
+        _ocr_config(),
+        max_frames=3,
+        work_dir=tmp_path / "frames",
+    )
+
+    assert len(result.segments) == 3
+    printed = " ".join(capsys.readouterr().out.split())
+    assert "3 unique frame(s) → up to 3 vision call(s) (budget 3)" in printed
+
+
+def test_budget_counts_frames_kept_after_dedup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Deduplicated frames are never billed, so they must not consume budget."""
+    monkeypatch.setattr(frame_ocr, "get_video_duration", lambda _p: 30.0)
+    monkeypatch.setattr(
+        frame_ocr,
+        "extract_screenshot",
+        lambda _video, timestamp, out: out.write_bytes(f"jpeg-{timestamp}".encode()),
+    )
+    monkeypatch.setattr(frame_ocr, "_frame_probe_hash", lambda _p: "static-screen")
+    monkeypatch.setattr(
+        frame_ocr,
+        "ocr_frame",
+        lambda frame_path, config, *, cache_dir=None: ("text", "resp-x"),
+    )
+
+    # 6 grid frames collapse to 1 kept frame, which fits a budget of 1.
+    result = frame_ocr.transcribe_video_ocr(
+        tmp_path / "clip.mov",
+        _ocr_config(),
+        max_frames=1,
+        work_dir=tmp_path / "frames",
+    )
+
+    assert len(result.segments) == 1
+
+
+def test_default_budget_is_one_hour_at_the_default_interval() -> None:
+    assert frame_ocr.DEFAULT_OCR_MAX_FRAMES == 720
+    assert frame_ocr.DEFAULT_OCR_MAX_FRAMES * frame_ocr.DEFAULT_FRAME_INTERVAL_SECONDS == 3600
+
+
+def test_nonpositive_budget_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="budget must be at least 1"):
+        frame_ocr.transcribe_video_ocr(tmp_path / "clip.mov", _ocr_config(), max_frames=0)
+
+
 def test_merge_time_ranges_collapses_overlaps_and_keeps_distinct_spans() -> None:
     assert frame_ocr.merge_time_ranges([(10.0, 15.0), (0.0, 5.0), (12.0, 20.0)]) == [
         (0.0, 5.0),

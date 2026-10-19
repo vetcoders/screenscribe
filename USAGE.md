@@ -88,6 +88,7 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 | `--transcript-source` | `auto` | Where transcript segments come from: `auto` (audio STT when the file has an audio stream, switching to frame OCR when that stream carries no speech), `audio` (STT; fails fast on silent recordings), `ocr` (VLM OCR of frames, no audio needed). |
 | `--no-audio` | off | Alias for `--transcript-source ocr`: skip audio/STT entirely and build the transcript from OCR'd frames. Conflicts with `--transcript-source audio`. |
 | `--frame-interval` | `5.0` | Seconds between frames for the OCR transcript source (minimum 0.5). |
+| `--ocr-max-frames` | `720` | Maximum billable vision calls per video for the OCR transcript source (minimum 1). Checked after frame dedup, before the first paid call; over budget stops the video with both remedies. |
 | `--vision` / `--no-vision` (alias `--no-vlm`) | on | Skip visual/screenshot analysis. Semantic LLM detection still runs. |
 | `--json` / `--no-json` | on | Save the JSON report. |
 | `--markdown` / `--no-markdown` (`--md`) | on | Save the Markdown report. |
@@ -149,6 +150,19 @@ The transcript is an abstraction over where timestamped segments come from:
 way. Private OCR cache entries bind frame content, model, endpoint and the
 effective prompt. Matching re-runs reuse them; changing those inputs triggers
 fresh OCR. Checkpoints also bind the source/interval, preset and vocabulary.
+
+**OCR frame budget.** Every surviving frame is a paid vision call, and a small
+`--frame-interval` multiplies fast: half-second sampling over an hour of
+dynamic footage is up to 7200 calls. `--ocr-max-frames` (default `720`, one
+hour at the default 5 s grid) caps that. The count is checked once, after
+dedup and before the first request, so an over-budget run costs nothing: the
+video stops with the kept-frame count, the budget and both remedies (raise
+`--ocr-max-frames` or increase `--frame-interval`). Every run also prints the
+planned spend before the paid stage:
+
+```
+OCR: 138 unique frame(s) → up to 138 vision call(s) (budget 720)
+```
 
 **OCR coverage gaps.** A frame that cannot be extracted or read is skipped, so
 the transcript (and therefore the report) says nothing about that slice of the

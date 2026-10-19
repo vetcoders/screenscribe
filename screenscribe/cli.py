@@ -100,6 +100,7 @@ from .cli_serve import (
     _serve_report as _serve_report,
 )
 from .config import ScreenScribeConfig
+from .frame_ocr import DEFAULT_OCR_MAX_FRAMES as DEFAULT_OCR_MAX_FRAMES
 from .frame_ocr import transcribe_video_ocr as transcribe_video_ocr
 from .keywords import (
     CATEGORIES,
@@ -520,6 +521,17 @@ def review(
             help="Seconds between frames for the OCR transcript source",
         ),
     ] = 5.0,
+    ocr_max_frames: Annotated[
+        int,
+        typer.Option(
+            "--ocr-max-frames",
+            min=1,
+            help=(
+                "Maximum billable vision calls per video for the OCR transcript "
+                "source. Checked after frame dedup, before the first paid call"
+            ),
+        ),
+    ] = DEFAULT_OCR_MAX_FRAMES,
     vision: Annotated[
         bool,
         typer.Option(
@@ -743,8 +755,8 @@ def review(
                 _require_audio_or_exit(video)
             else:
                 console.print(
-                    f"[blue]Transcript source:[/] OCR (frames every {frame_interval:g}s) "
-                    f"for {video.name}"
+                    f"[blue]Transcript source:[/] OCR (frames every {frame_interval:g}s, "
+                    f"budget {ocr_max_frames} frame(s)) for {video.name}"
                 )
 
     # --embed-video inlines the clip as base64, but the HTML renderer silently
@@ -913,6 +925,7 @@ def review(
         port=port,
         transcript_source=requested_source,
         frame_interval=frame_interval,
+        ocr_max_frames=ocr_max_frames,
         preset=active_preset,
     )
 

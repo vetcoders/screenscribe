@@ -55,6 +55,12 @@ console = Console()
 
 DEFAULT_FRAME_INTERVAL_SECONDS = 5.0
 
+# Hard ceiling on billable vision calls for one OCR transcript: one hour of
+# footage at the default 5 s grid. Without it, --frame-interval 0.5 on an hour
+# of dynamic footage silently queues up to 7200 paid frames. Raise it with
+# --ocr-max-frames when that is genuinely what you want.
+DEFAULT_OCR_MAX_FRAMES = 720
+
 # Concurrent OCR requests. A 12-minute recording at 5 s is ~140 frames; one
 # request at a time left the terminal silent for tens of minutes.
 OCR_MAX_WORKERS = 4
@@ -363,6 +369,7 @@ def transcribe_video_ocr(
     config: ScreenScribeConfig,
     *,
     frame_interval: float = DEFAULT_FRAME_INTERVAL_SECONDS,
+    max_frames: int = DEFAULT_OCR_MAX_FRAMES,
     cache_dir: Path | None = None,
     work_dir: Path | None = None,
 ) -> TranscriptionResult:
@@ -376,7 +383,13 @@ def transcribe_video_ocr(
     ``coverage_gaps``: the pipeline warns on them and the report says which
     ranges were never analyzed, instead of looking complete. A deduplicated
     frame is NOT a gap -- its content is identical to the kept frame before it.
+
+    ``max_frames`` caps the billable vision calls. It is checked once, after
+    dedupe and before the first OCR request, so an over-budget run costs
+    nothing: it raises :class:`FrameOCRConfigError` naming both remedies.
     """
+    if max_frames < 1:
+        raise ValueError("OCR frame budget must be at least 1")
     duration = get_video_duration(video_path)
     owned_work_dir: tempfile.TemporaryDirectory[str] | None = None
     if work_dir is None:
@@ -402,6 +415,21 @@ def transcribe_video_ocr(
         kept = dedupe_frames(frames)
         if len(kept) < len(frames):
             console.print(f"[dim]  Frame dedup: {len(frames)} → {len(kept)}[/]")
+
+        # Budget gate: the very next block pays per frame, so the only honest
+        # place to stop is here -- before the first request, after dedupe has
+        # established the real call count.
+        if len(kept) > max_frames:
+            raise FrameOCRConfigError(
+                f"Frame OCR needs {len(kept)} vision call(s) for this recording, "
+                f"over the budget of {max_frames} frame(s). "
+                f"Either raise the budget (--ocr-max-frames {len(kept)}) or sample "
+                f"fewer frames (--frame-interval above {frame_interval:g}s)."
+            )
+        console.print(
+            f"[blue]OCR:[/] {len(kept)} unique frame(s) → up to {len(kept)} "
+            f"vision call(s) (budget {max_frames})"
+        )
 
         results: dict[int, tuple[str, str]] = {}
         failures: list[tuple[float, Exception]] = []

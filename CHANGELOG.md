@@ -31,6 +31,15 @@
   key now uses only the path part of the src, keeping two reports on one URL
   apart without binding the thread to one process.
 
+- **Added: `--ocr-max-frames` caps the billable frames of an OCR transcript.**
+  `--frame-interval 0.5` over an hour of dynamic footage could queue up to 7200
+  paid vision calls with no ceiling and no warning. The budget (default 720,
+  one hour at the default 5 s grid) is checked once after frame dedup and
+  before the first request, so an over-budget run costs nothing and stops with
+  the kept-frame count, the budget and both remedies. Every OCR run now also
+  prints its planned spend (`N unique frame(s) → up to N vision call(s)`)
+  before the paid stage.
+
 - **Fixed: `auto` transcript source detects actual silence, not just a missing
   track.** A recording whose audio stream carries no speech used to stop the
   review at "Audio Quality Issue" even though its content was on screen. With

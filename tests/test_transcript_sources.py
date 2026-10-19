@@ -12,6 +12,7 @@ import screenscribe.cli as cli_module
 from screenscribe.audio import MissingAudioStreamError
 from screenscribe.checkpoint import load_checkpoint
 from screenscribe.config import ScreenScribeConfig
+from screenscribe.frame_ocr import DEFAULT_OCR_MAX_FRAMES, FrameOCRConfigError
 from screenscribe.review_pipeline import _transcription_context_id
 from screenscribe.semantic_filter import PointOfInterest, SemanticFilterResult
 from screenscribe.transcribe_types import Segment, TranscriptionResult
@@ -166,7 +167,9 @@ def test_no_audio_routes_to_ocr(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
 
     monkeypatch.setattr("screenscribe.cli._require_audio_or_exit", fail_audio_gate)
 
-    def fake_ocr(video_path: Path, config: ScreenScribeConfig, *, frame_interval: float = 5.0):
+    def fake_ocr(
+        video_path: Path, config: ScreenScribeConfig, *, frame_interval: float = 5.0, **_kw: object
+    ):
         captured["ocr_video"] = video_path
         captured["frame_interval"] = frame_interval
         return _ocr_transcription()
@@ -212,7 +215,7 @@ def test_auto_without_audio_routes_to_ocr(monkeypatch: pytest.MonkeyPatch, tmp_p
     ocr_called: list[Path] = []
     monkeypatch.setattr(
         "screenscribe.cli.transcribe_video_ocr",
-        lambda video_path, config, *, frame_interval=5.0: (
+        lambda video_path, config, *, frame_interval=5.0, **_kw: (
             ocr_called.append(video_path) or _ocr_transcription()
         ),
     )
@@ -636,7 +639,9 @@ def test_prompt_override_reaches_ocr_path(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.setattr("screenscribe.cli.has_audio_stream", lambda _p: False)
     seen: dict[str, str] = {}
 
-    def fake_ocr(video_path: Path, config: ScreenScribeConfig, *, frame_interval: float = 5.0):
+    def fake_ocr(
+        video_path: Path, config: ScreenScribeConfig, *, frame_interval: float = 5.0, **_kw: object
+    ):
         seen["ocr_override"] = config.analysis_prompt_override
         return _ocr_transcription()
 
@@ -676,7 +681,9 @@ def test_frame_interval_flag_reaches_ocr(monkeypatch: pytest.MonkeyPatch, tmp_pa
     monkeypatch.setattr("screenscribe.cli.has_audio_stream", lambda _p: False)
     seen: dict[str, float] = {}
 
-    def fake_ocr(video_path: Path, config: ScreenScribeConfig, *, frame_interval: float = 5.0):
+    def fake_ocr(
+        video_path: Path, config: ScreenScribeConfig, *, frame_interval: float = 5.0, **_kw: object
+    ):
         seen["frame_interval"] = frame_interval
         return _ocr_transcription()
 
@@ -703,6 +710,123 @@ def test_frame_interval_flag_reaches_ocr(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     assert result.exit_code == 0, result.output
     assert seen["frame_interval"] == 2.5
+
+
+def test_ocr_max_frames_flag_reaches_ocr(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """C/P2: the budget must arrive at the only place that can enforce it."""
+    _patch_common(monkeypatch)
+    runner = CliRunner()
+    video = tmp_path / "silent.mov"
+    video.write_bytes(b"video")
+    output_dir = tmp_path / "silent_review"
+
+    monkeypatch.setattr("screenscribe.cli.has_audio_stream", lambda _p: False)
+    seen: dict[str, int] = {}
+
+    def fake_ocr(video_path: Path, config: ScreenScribeConfig, *, frame_interval=5.0, **kwargs):
+        seen["max_frames"] = kwargs["max_frames"]
+        return _ocr_transcription()
+
+    monkeypatch.setattr("screenscribe.cli.transcribe_video_ocr", fake_ocr)
+    monkeypatch.setattr(
+        "screenscribe.cli.semantic_prefilter",
+        lambda *a, **kw: SemanticFilterResult(pois=[]),
+    )
+
+    result = runner.invoke(
+        cli_module.app,
+        [
+            "review",
+            str(video),
+            "-o",
+            str(output_dir),
+            "--no-serve",
+            "--no-audio",
+            "--ocr-max-frames",
+            "42",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["max_frames"] == 42
+
+
+def test_ocr_max_frames_defaults_to_the_module_budget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_common(monkeypatch)
+    runner = CliRunner()
+    video = tmp_path / "silent.mov"
+    video.write_bytes(b"video")
+
+    monkeypatch.setattr("screenscribe.cli.has_audio_stream", lambda _p: False)
+    seen: dict[str, int] = {}
+
+    def fake_ocr(video_path: Path, config: ScreenScribeConfig, *, frame_interval=5.0, **kwargs):
+        seen["max_frames"] = kwargs["max_frames"]
+        return _ocr_transcription()
+
+    monkeypatch.setattr("screenscribe.cli.transcribe_video_ocr", fake_ocr)
+    monkeypatch.setattr(
+        "screenscribe.cli.semantic_prefilter",
+        lambda *a, **kw: SemanticFilterResult(pois=[]),
+    )
+
+    result = runner.invoke(
+        cli_module.app,
+        ["review", str(video), "-o", str(tmp_path / "silent_review"), "--no-serve", "--no-audio"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["max_frames"] == DEFAULT_OCR_MAX_FRAMES
+
+
+def test_ocr_max_frames_rejects_zero(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _patch_common(monkeypatch)
+    runner = CliRunner()
+    video = tmp_path / "silent.mov"
+    video.write_bytes(b"video")
+
+    result = runner.invoke(
+        cli_module.app,
+        ["review", str(video), "--no-serve", "--no-audio", "--ocr-max-frames", "0"],
+    )
+
+    assert result.exit_code == 2
+
+
+def test_over_budget_ocr_is_an_actionable_panel_not_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The budget error reaches the operator through the pipeline's own panel,
+    without the misleading "check your vision credentials" advice."""
+    _patch_common(monkeypatch)
+    runner = CliRunner()
+    video = tmp_path / "silent.mov"
+    video.write_bytes(b"video")
+
+    monkeypatch.setattr("screenscribe.cli.has_audio_stream", lambda _p: False)
+
+    def over_budget(*_a: object, **_kw: object) -> TranscriptionResult:
+        raise FrameOCRConfigError(
+            "Frame OCR needs 900 vision call(s) for this recording, over the "
+            "budget of 720 frame(s). Either raise the budget "
+            "(--ocr-max-frames 900) or sample fewer frames "
+            "(--frame-interval above 5s)."
+        )
+
+    monkeypatch.setattr("screenscribe.cli.transcribe_video_ocr", over_budget)
+
+    result = runner.invoke(
+        cli_module.app,
+        ["review", str(video), "-o", str(tmp_path / "silent_review"), "--no-serve", "--no-audio"],
+    )
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 0, result.output
+    assert "Frame OCR could not start" in normalized
+    assert "--ocr-max-frames 900" in normalized
+    assert "SCREENSCRIBE_VISION_API_KEY" not in normalized
 
 
 def test_no_audio_conflicts_with_explicit_audio_source(
@@ -744,5 +868,5 @@ def test_review_help_lists_transcript_source_flags() -> None:
     result = runner.invoke(cli_module.app, ["review", "--help"])
 
     assert result.exit_code == 0
-    for flag in ("--transcript-source", "--no-audio", "--frame-interval"):
+    for flag in ("--transcript-source", "--no-audio", "--frame-interval", "--ocr-max-frames"):
         assert flag in result.output

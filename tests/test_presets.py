@@ -557,7 +557,9 @@ def test_preset_and_no_audio_reach_run_review_together(tmp_path: Path, monkeypat
     )
     monkeypatch.setattr("screenscribe.cli.has_audio_stream", lambda _p: False)
 
-    def fake_ocr(video_path: Path, config: Any, *, frame_interval: float = 5.0) -> Any:
+    def fake_ocr(
+        video_path: Path, config: Any, *, frame_interval: float = 5.0, **_kw: object
+    ) -> Any:
         return TranscriptionResult(
             text="Pacjent kaszle.",
             segments=[Segment(id=0, start=0.0, end=5.0, text="Pacjent kaszle.")],

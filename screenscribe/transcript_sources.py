@@ -71,13 +71,20 @@ class OcrTranscriptSource:
 
     name = "ocr"
 
-    def __init__(self, frame_interval: float = 5.0) -> None:
+    def __init__(self, frame_interval: float = 5.0, max_frames: int | None = None) -> None:
         self.frame_interval = frame_interval
+        # None keeps frame_ocr's own default budget as the single source of truth.
+        self.max_frames = max_frames
 
     def transcribe(self, video_path: Path, config: ScreenScribeConfig) -> TranscriptionResult:
-        from .frame_ocr import transcribe_video_ocr
+        from .frame_ocr import DEFAULT_OCR_MAX_FRAMES, transcribe_video_ocr
 
-        return transcribe_video_ocr(video_path, config, frame_interval=self.frame_interval)
+        return transcribe_video_ocr(
+            video_path,
+            config,
+            frame_interval=self.frame_interval,
+            max_frames=DEFAULT_OCR_MAX_FRAMES if self.max_frames is None else self.max_frames,
+        )
 
 
 TRANSCRIPT_SOURCE_REGISTRY: dict[str, TranscriptSource] = {

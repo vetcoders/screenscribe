@@ -63,6 +63,7 @@ from .cli_paths import (
 )
 from .config import ScreenScribeConfig
 from .detect import format_timestamp
+from .frame_ocr import DEFAULT_OCR_MAX_FRAMES, FrameOCRConfigError
 from .keywords import KeywordsConfig
 from .presets import Preset
 from .screenshots import extract_screenshots_for_detections
@@ -252,6 +253,7 @@ def _transcribe_ocr_or_report(
     config: ScreenScribeConfig,
     *,
     frame_interval: float,
+    ocr_max_frames: int,
 ) -> Any | None:
     """Run frame OCR, or print an actionable panel and return ``None``.
 
@@ -260,7 +262,12 @@ def _transcribe_ocr_or_report(
     checkpoint, skip the video -- never crash the batch.
     """
     try:
-        return cli.transcribe_video_ocr(video, config, frame_interval=frame_interval)
+        return cli.transcribe_video_ocr(
+            video,
+            config,
+            frame_interval=frame_interval,
+            max_frames=ocr_max_frames,
+        )
     except (
         httpx.HTTPStatusError,
         httpx.RequestError,
@@ -268,15 +275,23 @@ def _transcribe_ocr_or_report(
         ValueError,
         RuntimeError,
     ) as exc:
-        console.print()
-        console.print(
-            Panel(
-                "Frame OCR transcription failed: "
-                f"{escape(redact_error_message(exc))}\n\n"
+        detail = escape(redact_error_message(exc))
+        if isinstance(exc, FrameOCRConfigError):
+            # A setup error (over budget, missing key) already states its own
+            # remedy; the generic credentials paragraph would only muddy it.
+            body = f"Frame OCR could not start: {detail}"
+        else:
+            body = (
+                f"Frame OCR transcription failed: {detail}\n\n"
                 "The OCR transcript source reads frames with the vision "
                 "model. Check the vision credentials/endpoint "
                 "(SCREENSCRIBE_VISION_API_KEY / SCREENSCRIBE_VISION_ENDPOINT), "
-                "then re-run with --resume to retry.",
+                "then re-run with --resume to retry."
+            )
+        console.print()
+        console.print(
+            Panel(
+                body,
                 title="[bold red]Transcription Failed[/]",
                 border_style="red",
             )
@@ -318,6 +333,7 @@ def run_review(
     port: int,
     transcript_source: str = "auto",
     frame_interval: float = 5.0,
+    ocr_max_frames: int = DEFAULT_OCR_MAX_FRAMES,
     preset: "Preset | None" = None,
 ) -> None:
     """Run the per-video review pipeline for one or more videos.
@@ -328,7 +344,8 @@ def run_review(
     ``transcript_source`` (``auto``|``audio``|``ocr``) is resolved per video:
     the audio source keeps the historical two-stage extract+STT path, while
     ``ocr`` skips audio extraction and builds the transcript from VLM-OCR'd
-    frames taken every ``frame_interval`` seconds.
+    frames taken every ``frame_interval`` seconds, capped at
+    ``ocr_max_frames`` billable vision calls per video.
 
     ``preset`` is the active analysis preset (``None`` = historical default).
     Its categories become the detection vocabulary and, for non-default
@@ -682,6 +699,7 @@ def run_review(
                     video,
                     config,
                     frame_interval=frame_interval,
+                    ocr_max_frames=ocr_max_frames,
                 )
                 if transcription is None:
                     continue  # Skip to next video in batch
@@ -835,6 +853,7 @@ def run_review(
                         video,
                         config,
                         frame_interval=frame_interval,
+                        ocr_max_frames=ocr_max_frames,
                     )
                     if ocr_transcription is None:
                         continue  # Skip to next video in batch

@@ -304,6 +304,10 @@ report and opens the HTML report in your browser. Key options:
   so silent recordings are analyzed instead of rejected; `--no-audio` is the
   shortcut for `ocr`, and `--frame-interval` sets the seconds between OCR'd
   frames (default 5).
+- `--ocr-max-frames` — cap the billable vision calls of one OCR transcript
+  (default 720, one hour at the default frame interval). Checked before the
+  first paid call, so a too-small `--frame-interval` cannot quietly run up a
+  bill.
 - `--no-vision` (alias `--no-vlm`) — skip the visual/screenshot (VLM) step; the
   semantic LLM detection still runs.
 - `--keywords-file` — per-run keywords file. Keywords are always-on AI hints
