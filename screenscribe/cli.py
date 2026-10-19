@@ -984,6 +984,9 @@ def doctor(
     the configured API keys and stamp NOT-PROVEN when a key is missing or the
     provider returns an error. Tool probes run locally against a fixture built
     from examples/example_report.json and examples/example_transcript.vtt.
+
+    A tool that reports itself unimplemented is stamped UNSUPPORTED: it is
+    counted and printed separately, but it does not change the exit code.
     """
     try:
         receipts = run_proof(out, json_mode=json_mode)
@@ -994,12 +997,15 @@ def doctor(
         raise typer.Exit(1) from None
 
     proven = sum(1 for r in receipts if r.verdict == "PROVEN")
+    unsupported = sum(1 for r in receipts if r.verdict == "UNSUPPORTED")
     not_proven = sum(1 for r in receipts if r.verdict == "NOT-PROVEN")
     console.print(
         f"[bold]Doctor complete:[/] {len(receipts)} elements — "
-        f"[green]{proven} PROVEN[/], [yellow]{not_proven} NOT-PROVEN[/]"
+        f"[green]{proven} PROVEN[/], [cyan]{unsupported} UNSUPPORTED[/], "
+        f"[yellow]{not_proven} NOT-PROVEN[/]"
     )
     console.print(f"[dim]Artifacts:[/] {out.resolve()}")
+    # UNSUPPORTED is a declared gap, not a broken path: only NOT-PROVEN fails.
     if not_proven:
         raise typer.Exit(2)
 

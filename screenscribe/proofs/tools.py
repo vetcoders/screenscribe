@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from ..agent.tools import TOOL_NAMES, ReportToolbelt
-from .receipts import VERDICT_NOT_PROVEN, VERDICT_PROVEN, ProofReceipt
+from .receipts import (
+    VERDICT_NOT_PROVEN,
+    VERDICT_PROVEN,
+    VERDICT_UNSUPPORTED,
+    ProofReceipt,
+)
 
 # Fixture filenames; resolved against the packaged fixtures/ dir (installed
 # wheel) first and the repo's examples/ dir (dev checkout) second.
@@ -210,6 +215,21 @@ def _probe_tool(toolbelt: ReportToolbelt, name: str) -> ProofReceipt:
         if isinstance(parsed, dict) and parsed.get("error"):
             raise RuntimeError(parsed["error"])
         duration_ms = int((time.perf_counter() - start) * 1000)
+        if isinstance(parsed, dict) and parsed.get("unsupported"):
+            # A stub that declares itself unimplemented is neither proven nor
+            # broken; stamping it PROVEN would advertise a tool the agent
+            # cannot actually call.
+            reason = str(parsed.get("reason") or "").strip() or "tool reports unsupported"
+            return ProofReceipt(
+                element=name,
+                kind="tool",
+                request_essence=f"execute {name}",
+                response_essence="unsupported",
+                duration_ms=duration_ms,
+                verdict=VERDICT_UNSUPPORTED,
+                reason=reason,
+                key_state="n/a",
+            )
         essence = "ok"
         if isinstance(parsed, dict):
             if "type" in parsed:

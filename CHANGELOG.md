@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- **Fixed: doctor no longer certifies unimplemented tools.** `merge_findings`
+  and `unmerge_finding` are client-only folds with no patch-callable API, and
+  `screenscribe doctor` used to stamp both PROVEN. They are now stamped
+  UNSUPPORTED, counted separately in MATRIX.md and `summary.json`, and printed
+  in the totals; the exit-code contract is unchanged (only NOT-PROVEN exits 2).
+
 - **Security: doctor omits unsafe provider diagnostics.** Endpoint receipts
   remove URL userinfo as well as queries/fragments, and invalid endpoints use
   placeholders. Provider errors retain their local type and HTTP status instead

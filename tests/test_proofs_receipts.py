@@ -100,7 +100,7 @@ def test_render_matrix_groups_providers_then_tools(tmp_path: Path) -> None:
     assert "p1" in data_lines[0]
     assert "p2" in data_lines[1]
     assert "t1" in data_lines[2]
-    assert "3 elements, 2 PROVEN, 1 NOT-PROVEN" in text
+    assert "3 elements, 2 PROVEN, 0 UNSUPPORTED, 1 NOT-PROVEN" in text
 
 
 def test_render_matrix_escapes_pipes(tmp_path: Path) -> None:

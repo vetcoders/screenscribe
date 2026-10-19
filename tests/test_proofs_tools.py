@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from screenscribe.agent.tools import TOOL_NAMES
-from screenscribe.proofs.receipts import VERDICT_PROVEN
+from screenscribe.proofs.receipts import VERDICT_PROVEN, VERDICT_UNSUPPORTED
 from screenscribe.proofs.tools import _build_fixture, _probe_tool, run_tool_probes
 
 
@@ -46,12 +46,29 @@ def test_probe_tool_handles_unknown_tool(tmp_path: Path) -> None:
     assert "Unknown tool" in receipt.reason
 
 
+def test_probe_tool_stamps_unsupported_for_merge_stub(tmp_path: Path) -> None:
+    """A tool that declares itself unimplemented is UNSUPPORTED, never PROVEN."""
+    _report, toolbelt = _build_fixture(tmp_path)
+    receipt = _probe_tool(toolbelt, "merge_findings")
+    assert receipt.verdict == VERDICT_UNSUPPORTED
+    assert receipt.verdict != VERDICT_PROVEN
+    assert receipt.response_essence == "unsupported"
+    assert receipt.reason.strip()
+
+
 def test_run_tool_probes_covers_all_inventoryed_tools() -> None:
-    """Every ReportToolbelt tool is probed and produces a receipt."""
+    """Every ReportToolbelt tool is probed; only the merge stubs are UNSUPPORTED.
+
+    Implementing merge/unmerge for real must flip this test — that is the
+    point: the inventory of declared gaps is pinned, not hidden behind PROVEN.
+    """
     receipts = run_tool_probes()
     elements = {r.element for r in receipts}
     assert elements == set(TOOL_NAMES)
-    assert all(r.verdict == VERDICT_PROVEN for r in receipts)
+    assert all(r.verdict in {VERDICT_PROVEN, VERDICT_UNSUPPORTED} for r in receipts)
+    assert not [r.element for r in receipts if r.verdict == "NOT-PROVEN"]
+    unsupported = {r.element for r in receipts if r.verdict == VERDICT_UNSUPPORTED}
+    assert unsupported == {"merge_findings", "unmerge_finding"}
 
 
 def test_packaged_fixtures_used_without_repo_examples(

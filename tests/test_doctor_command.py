@@ -2,7 +2,8 @@
 
 The probe logic itself is covered in ``tests/test_proofs_*.py``; these tests
 pin the command name, the ``--out`` hand-off, and the exit-code contract
-(0 = all proven, 2 = at least one NOT-PROVEN, 1 = harness failure).
+(0 = nothing NOT-PROVEN, 2 = at least one NOT-PROVEN, 1 = harness failure).
+UNSUPPORTED elements are reported in the totals but never fail the command.
 """
 
 from __future__ import annotations
@@ -67,6 +68,41 @@ def test_doctor_exits_two_when_any_element_not_proven(
     result = runner.invoke(app, ["doctor", "--out", str(tmp_path)])
     assert result.exit_code == 2
     assert "NOT-PROVEN" in result.output
+
+
+def test_doctor_reports_unsupported_without_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A declared gap is visible in the totals but keeps the exit code at 0."""
+    monkeypatch.setattr(
+        cli,
+        "run_proof",
+        lambda out, *, json_mode: [
+            _receipt("list_findings", "PROVEN"),
+            _receipt("merge_findings", "UNSUPPORTED"),
+        ],
+    )
+    result = runner.invoke(app, ["doctor", "--out", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "1 UNSUPPORTED" in result.output
+
+
+def test_doctor_still_exits_two_when_unsupported_accompanies_not_proven(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """UNSUPPORTED never masks a genuinely broken element."""
+    monkeypatch.setattr(
+        cli,
+        "run_proof",
+        lambda out, *, json_mode: [
+            _receipt("merge_findings", "UNSUPPORTED"),
+            _receipt("stt_xai", "NOT-PROVEN"),
+        ],
+    )
+    result = runner.invoke(app, ["doctor", "--out", str(tmp_path)])
+    assert result.exit_code == 2
+    assert "1 UNSUPPORTED" in result.output
+    assert "1 NOT-PROVEN" in result.output
 
 
 def test_doctor_exits_one_on_harness_failure(
