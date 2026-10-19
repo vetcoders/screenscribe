@@ -1,8 +1,9 @@
 """``screenscribe config auth <provider> --login/--key`` — selection + credentials.
 
 Pins the command surface: exactly one credential mode, a coherent provider
-preset write, and the OpenAI identity-only refusal (account tokens cannot
-serve REST, so --login there refuses instead of writing a dead selection).
+preset write, and the OpenAI account route: api.openai.com rejects ChatGPT
+account tokens, so ``openai --login`` (and ``chatgpt``) selects the ChatGPT
+Codex backend for LLM + vision and keeps the configured STT.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ def test_auth_requires_exactly_one_mode(fake_home: Path) -> None:
 def test_auth_rejects_unknown_provider(fake_home: Path) -> None:
     result = runner.invoke(app, ["config", "auth", "grok", "--key"], input="x\n")
     assert result.exit_code == 1
-    assert "libraxis, openai, xai" in result.output
+    assert "libraxis, openai, chatgpt, xai" in result.output
 
 
 def test_auth_key_writes_coherent_xai_preset(fake_home: Path) -> None:
@@ -94,24 +95,19 @@ def test_auth_login_writes_selection_with_bearer_fallback(
     assert "https://api.x.ai/v1/responses" in text
 
 
-def test_auth_login_openai_refuses_identity_only_token(
-    fake_home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _signed_in_openai(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Stub the device login and report a signed-in OpenAI account; returns login calls."""
     import screenscribe.account_auth as account_auth
     import screenscribe.cli_auth as cli_auth
     from screenscribe.account_auth.device_code import DeviceCode
 
-    monkeypatch.setattr(
-        cli_auth,
-        "request_device_code",
-        lambda provider: DeviceCode(
-            provider="xai",
-            verification_url="https://example.test/device",
-            user_code="ABCD-EFGH",
-            device_auth_id="dc",
-            interval=0,
-        ),
-    )
+    logins: list[str] = []
+
+    def request(provider: str) -> DeviceCode:
+        logins.append(provider)
+        return DeviceCode(provider, "https://example.test/device", "ABCD-EFGH", "dc", 0)
+
+    monkeypatch.setattr(cli_auth, "request_device_code", request)
     monkeypatch.setattr(cli_auth, "complete_device_code_login", lambda device: None)
     monkeypatch.setattr(cli_auth.webbrowser, "open", lambda url: True)
     monkeypatch.setattr(
@@ -122,12 +118,44 @@ def test_auth_login_openai_refuses_identity_only_token(
             signed_in=True,
             expires_at=None,
             email="u@example.test",
-            api_bearer_usable=False,
+            api_bearer_usable=True,
             has_refresh_token=True,
+            bearer_hosts=("chatgpt.com",),
         ),
     )
+    return logins
 
-    result = runner.invoke(app, ["config", "auth", "openai", "--login"], input="y\n")
+
+@pytest.mark.parametrize("argv", [["openai", "--login"], ["chatgpt"]])
+def test_auth_openai_account_selects_chatgpt_route_and_keeps_stt(
+    fake_home: Path, monkeypatch: pytest.MonkeyPatch, argv: list[str]
+) -> None:
+    config_env = fake_home / ".config" / "screenscribe" / "config.env"
+    config_env.parent.mkdir(parents=True)
+    config_env.write_text(
+        "SCREENSCRIBE_STT_ENDPOINT=https://api.x.ai/v1/stt\n"
+        "SCREENSCRIBE_STT_API_KEY=xai-stt-fixture\n"  # pragma: allowlist secret
+        "SCREENSCRIBE_LLM_ENDPOINT=https://api.x.ai/v1/responses\n"
+        "SCREENSCRIBE_VISION_ENDPOINT=https://api.x.ai/v1/responses\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("screenscribe.config.CONFIG_PATHS", [config_env])
+    logins = _signed_in_openai(monkeypatch)
+
+    result = runner.invoke(app, ["config", "auth", *argv], input="y\n")
+    assert result.exit_code == 0, result.output
+    text = config_env.read_text(encoding="utf-8")
+    assert "SCREENSCRIBE_PROVIDER=chatgpt" in text
+    assert "SCREENSCRIBE_LLM_ENDPOINT=https://chatgpt.com/backend-api/codex/responses" in text
+    assert "SCREENSCRIBE_VISION_ENDPOINT=https://chatgpt.com/backend-api/codex/responses" in text
+    assert "SCREENSCRIBE_STT_ENDPOINT=https://api.x.ai/v1/stt" in text
+    assert "xai-stt-fixture" in text
+    # One device login at most: `openai --login` signs in, `chatgpt` reuses the account.
+    assert logins == (["openai"] if argv[0] == "openai" else [])
+
+
+def test_auth_chatgpt_refuses_a_key(fake_home: Path) -> None:
+    result = runner.invoke(app, ["config", "auth", "chatgpt", "--key"], input="sk-x\n")
     assert result.exit_code == 1
-    assert "--key" in result.output
+    assert "not a key" in result.output
     assert not (fake_home / ".config" / "screenscribe" / "config.env").exists()

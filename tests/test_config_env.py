@@ -1237,7 +1237,7 @@ class TestLibraxisKeyStaysOnLibraxisHosts:
         clean_env.setenv("SCREENSCRIBE_STT_ENDPOINT", "https://api.x.ai/v1/stt")
         clean_env.setattr(
             "screenscribe.account_auth.resolve_bearer",
-            lambda _provider, _explicit: BearerResolution("account-fixture", "account"),
+            lambda _provider, _explicit, **_kwargs: BearerResolution("account-fixture", "account"),
         )
         config = ScreenScribeConfig()
         config._load_from_env()

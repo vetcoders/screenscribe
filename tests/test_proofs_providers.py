@@ -437,7 +437,7 @@ def test_doctor_account_errors_are_private_in_cli_and_all_artifacts(
     monkeypatch.setattr("screenscribe.unified.analyze_one.parse_json_response", parse)
     tokens: list[str] = []
 
-    def resolve(provider: str, explicit_key: str = "") -> BearerResolution:
+    def resolve(provider: str, explicit_key: str = "", **_kwargs: Any) -> BearerResolution:
         assert provider == "xai"
         token = f"synthetic-account-{len(tokens)}-" + "z" * 450
         tokens.append(token)

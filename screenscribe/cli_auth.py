@@ -90,11 +90,12 @@ def auth_login(
     console.print(
         f"[green]Signed in to {provider}{who}.[/] Tokens stored in {accounts_path()} (0600)."
     )
-    if not status.api_bearer_usable:
+    if provider == "openai":
         console.print(
-            "[yellow]Note:[/] OpenAI account sign-in is identity-only. api.openai.com rejects a "
-            "ChatGPT account token for REST calls (verified 2026-09-08); STT/LLM/Vision still "
-            "need an OpenAI API key."
+            "[yellow]Note:[/] this ChatGPT account serves LLM + vision through the ChatGPT route "
+            "(chatgpt.com), not api.openai.com, which stays identity-only for account tokens. "
+            "Select it with `screenscribe config auth chatgpt`; STT stays on your current "
+            "provider (ChatGPT has no speech-to-text)."
         )
 
 
@@ -112,8 +113,14 @@ def auth_status() -> None:
             console.print(f"  {name:<8} not signed in")
             continue
         who = status.email or "(no email in id_token)"
+        if status.needs_login:
+            console.print(
+                f"  {name:<8} [red]sign-in ended[/] for {who} ({status.disabled_cause}); "
+                f"run `screenscribe auth login {name}`"
+            )
+            continue
         usable = (
-            "usable as API bearer"
+            f"usable as API bearer on {', '.join(status.bearer_hosts)}"
             if status.api_bearer_usable
             else "identity-only (API key still required)"
         )

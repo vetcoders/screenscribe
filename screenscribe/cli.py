@@ -1119,6 +1119,11 @@ def analyze(
 
     # Validate API key
     if not config.get_vision_api_key():
+        if config.uses_chatgpt_account():
+            from .config import CHATGPT_SIGN_IN_HINT
+
+            console.print(f"[red]Error:[/] {CHATGPT_SIGN_IN_HINT}")
+            raise typer.Exit(1)
         console.print("[red]Error:[/] API key required for VLM analysis")
         console.print("[dim]Run `screenscribe config setup` or set SCREENSCRIBE_API_KEY.[/]")
         raise typer.Exit(1)
@@ -1818,6 +1823,7 @@ def config(
             "libraxis": "LibraxisAI",
             "openai": "OpenAI",
             "xai": "xAI",
+            "chatgpt": "ChatGPT account (LLM + vision)",
             "custom": "Custom OpenAI-compatible",
         }
         provider = cfg.recognized_provider()
@@ -1888,14 +1894,20 @@ def config_setup() -> None:
     console.print("  2. OpenAI")
     console.print("  3. Custom OpenAI-compatible provider (advanced)")
     console.print("  4. xAI (Grok: STT, TTS, live STT)")
+    console.print(
+        "  5. ChatGPT account (LLM + vision on your ChatGPT plan; STT stays as configured)"
+    )
 
     choice = typer.prompt("Provider", type=str).strip()
-    provider_by_choice = {"1": "libraxis", "2": "openai", "3": "custom", "4": "xai"}
+    provider_by_choice = {"1": "libraxis", "2": "openai", "3": "custom", "4": "xai", "5": "chatgpt"}
     if choice not in provider_by_choice:
-        console.print("[red]Error:[/] Choose 1, 2, 3, or 4.")
+        console.print("[red]Error:[/] Choose 1, 2, 3, 4, or 5.")
         raise typer.Exit(1)
 
     provider = provider_by_choice[choice]
+    if provider == "chatgpt":
+        _select_chatgpt_account(confirm_replace=True)
+        return
     use_account = False
     if provider == "xai":
         from .account_auth import AccountAuthError, account_status
@@ -1929,7 +1941,14 @@ def config_setup() -> None:
         }
 
     try:
-        preset = ScreenScribeConfig.provider_preset(provider, api_key, **kwargs)
+        preset = ScreenScribeConfig.provider_preset(
+            provider,
+            api_key,
+            custom_base=kwargs.get("custom_base", ""),
+            stt_model=kwargs.get("stt_model", ""),
+            llm_model=kwargs.get("llm_model", ""),
+            vision_model=kwargs.get("vision_model", ""),
+        )
     except ValueError as error:
         console.print(f"[red]Error:[/] {error}")
         raise typer.Exit(1) from None
@@ -1948,9 +1967,49 @@ def config_setup() -> None:
     console.print(f"[green]Status:[/] {preset.configuration_status()}")
 
 
+def _select_chatgpt_account(*, confirm_replace: bool) -> None:
+    """Sign in to ChatGPT when needed, then save the ChatGPT LLM/vision selection.
+
+    The current STT side (endpoint, model, key) is kept: the ChatGPT backend
+    has no speech-to-text.
+    """
+    from .account_auth import AccountAuthError, account_status
+    from .cli_auth import auth_login
+
+    try:
+        status = account_status("openai")
+    except AccountAuthError as error:
+        console.print(f"[red]Error:[/] account store unavailable ({error.kind}): {error}")
+        raise typer.Exit(1) from None
+    if not status.signed_in or status.needs_login:
+        auth_login("openai", no_browser=False)
+
+    # The saved file only: env-only keys and one-off overrides are never written.
+    preset = ScreenScribeConfig.provider_preset(
+        "chatgpt", "", stt_from=ScreenScribeConfig.load_saved()
+    )
+    config_path = Path.home() / ".config" / "screenscribe" / "config.env"
+    if (
+        confirm_replace
+        and config_path.exists()
+        and not typer.confirm(
+            "Switch LLM + vision to your ChatGPT account (STT unchanged)?", default=True
+        )
+    ):
+        console.print("[dim]Selection unchanged; nothing was written.[/]")
+        return
+    path = preset.save_default_config()
+    console.print(
+        f"[green]Selection saved:[/] LLM + vision → ChatGPT account ({preset.llm_model}); "
+        f"STT unchanged → [link=file://{path}]{path}[/link]"
+    )
+    # Status of what will actually run: the saved file plus the environment.
+    console.print(f"[green]Status:[/] {ScreenScribeConfig.load().configuration_status()}")
+
+
 @config_app.command("auth")
 def config_auth(
-    provider: Annotated[str, typer.Argument(help="Provider: libraxis | openai | xai")],
+    provider: Annotated[str, typer.Argument(help="Provider: libraxis | openai | chatgpt | xai")],
     login: Annotated[
         bool, typer.Option("--login", help="Sign in via the OAuth device flow")
     ] = False,
@@ -1962,13 +2021,25 @@ def config_auth(
     coherent preset (LLM and Vision travel together; STT follows the same
     provider by default). ``--login`` stores an account token that serves as
     the credential fallback; ``--key`` writes an explicit API key.
+
+    An OpenAI account works through ChatGPT only: ``openai --login`` (or
+    ``chatgpt``) selects the ChatGPT route for LLM + vision and keeps the
+    current STT, because api.openai.com rejects ChatGPT account tokens.
     """
     from .cli_auth import auth_login
 
     provider = provider.lower().strip()
-    if provider not in {"libraxis", "openai", "xai"}:
-        console.print("[red]Error:[/] provider must be one of: libraxis, openai, xai")
+    if provider not in {"libraxis", "openai", "chatgpt", "xai"}:
+        console.print("[red]Error:[/] provider must be one of: libraxis, openai, chatgpt, xai")
         raise typer.Exit(1)
+    if provider == "chatgpt" and key:
+        console.print("[red]Error:[/] the ChatGPT route takes your account sign-in, not a key.")
+        raise typer.Exit(1)
+    if provider == "chatgpt" or (provider == "openai" and login and not key):
+        if provider == "openai":
+            auth_login("openai", no_browser=False)
+        _select_chatgpt_account(confirm_replace=True)
+        return
     if login == key:
         console.print("[red]Error:[/] pass exactly one of --login or --key.")
         raise typer.Exit(1)
