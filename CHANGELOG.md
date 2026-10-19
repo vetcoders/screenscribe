@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+- **Added: a signed-in ChatGPT account runs LLM + vision.** After
+  `screenscribe auth login openai` (device flow),
+  `screenscribe config auth chatgpt` (or `config auth openai --login`, or
+  `config setup` option 5) routes LLM and vision through the ChatGPT Codex
+  backend (`https://chatgpt.com/backend-api/codex/responses`) on your ChatGPT
+  plan. STT stays on the previously configured provider, because ChatGPT has
+  no speech-to-text. The default model is `gpt-5.6-luna`; override it with
+  `SCREENSCRIBE_LLM_MODEL` / `SCREENSCRIBE_VISION_MODEL`. No API key is ever
+  sent to `chatgpt.com`, and `api.openai.com` still rejects ChatGPT account
+  tokens, so the OpenAI API preset keeps needing an API key. The backend keeps
+  no state (`store: false`), so neither the pipeline nor the review agent
+  chains responses there: every call carries its full context. `NOTICE`
+  discloses how screenscribe identifies itself on this route.
+
+- **Changed: account sign-in for OpenAI and xAI is durable.** Tokens refresh
+  automatically about 60 s before they expire. Refreshes are serialized across
+  parallel screenscribe processes through `accounts.json.lock` next to
+  `accounts.json`, and a token another process has just rotated is reused
+  instead of refreshed again. A revoked or expired grant shows as "sign-in
+  ended" in `screenscribe auth status` until the next
+  `screenscribe auth login <provider>`. An HTTP 401 from the ChatGPT backend
+  triggers one refresh and one retry.
+
+- **Fixed: parallel processes no longer damage the account store.** Two
+  screenscribe processes (for example `review` beside `analyze`) could drop each
+  other's entries in `accounts.json` or spend one single-use refresh token
+  twice, which ended the sign-in. Every read-modify-write and every refresh now
+  holds the store lock.
+
+- **Fixed: a transient refresh failure no longer drops a still-valid token.** A
+  network error or HTTP 429/5xx during refresh used to discard the account
+  token. The current token now stays in use while it is valid; only a
+  definitive OAuth refusal ends the sign-in.
+
 ## [0.1.20] - 2026-10-19
 
 - **Security: a global transcript correction needs panel approval.** The agent's

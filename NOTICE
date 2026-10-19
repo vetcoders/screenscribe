@@ -18,5 +18,14 @@ the Codescribe `core/llm/account_auth` module, whose OpenAI portions derive
 from openai/codex (Apache-2.0). The xAI RFC 8628 path follows the OpenCode
 `XaiAuthPlugin` shape.
 
+A signed-in ChatGPT account reaches LLM and vision through the ChatGPT Codex
+backend (`https://chatgpt.com/backend-api/codex/responses`) in
+`screenscribe/providers/chatgpt.py`. On that route screenscribe identifies
+itself with the header `originator: screenscribe` and sends the Codex client
+version `0.159.0` in the `version` header, which the backend uses to gate model
+availability. Only the account token goes to `chatgpt.com`; no API key is ever
+sent there. The route follows the public design of the oh-my-pi project
+(`can1357/oh-my-pi`).
+
 Account tokens are stored in `~/.config/screenscribe/accounts.json` (mode
 0600) and are never printed or logged.

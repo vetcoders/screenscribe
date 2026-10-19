@@ -94,6 +94,8 @@ importing from `unified/` directly in new code.
 | Module | Role |
 |--------|------|
 | `api_utils.py` | Retry/backoff and request-body building for OpenAI-compatible + chat-completions APIs. |
+| `providers/chatgpt.py` | ChatGPT account route: the Codex-backend wire contract (`chatgpt.com/backend-api/codex/responses`) and the `CodexTransport` that adapts every LLM/vision Responses call to it. |
+| `account_auth/` | Provider-account (OAuth) sign-in and the locked, auto-refreshing token store (`accounts.json`). |
 | `prompts.py` | LLM/VLM prompt templates. |
 | `text_similarity.py` | Similarity scoring used by dedup. |
 | `validation.py` | Input validation for CLI/API paths. |
@@ -124,7 +126,8 @@ but each registers its own routes.
   identity is bound to provider/protocol/host; report finding IDs do not become
   a shared conversation head.
   xAI uses stateless full history so trusted instructions can be repeated on
-  every user/tool round.
+  every user/tool round. The ChatGPT account route takes the same stateless
+  path, because its backend stores no responses (`store: false`).
   Manual captures persist their image path; cold start restores markers/results
   before the next browser save. Legacy image lookup stays within the report's
   `manual_frames/` directory and never writes the JSON during startup.
@@ -162,8 +165,15 @@ what the model originally received; no new provenance fields are introduced.
 
 Commands: `review`, `analyze`, `transcribe`, `preprocess`, `keywords`, `config`,
 `auth`, `tts`, `version`. `account_auth/` implements device-code sign-in and
-private token storage; xAI accounts can supply the API bearer, while OpenAI
-account sign-in remains identity-only. See [../USAGE.md](../USAGE.md).
+private token storage. xAI accounts can supply the API bearer on `api.x.ai`.
+An OpenAI (ChatGPT) account serves LLM + vision on the ChatGPT Codex backend
+(`providers/chatgpt.py`) and stays identity-only on `api.openai.com`;
+`config auth chatgpt` / `config setup` option 5 write that selection and keep
+the current STT. Every store write and refresh holds `accounts.json.lock`, so
+parallel processes share one token lineage; tokens refresh 60 s before expiry,
+a temporary refresh failure keeps a still-valid token, and a dead grant is
+recorded as "sign-in ended" until the next `auth login`. See
+[../USAGE.md](../USAGE.md).
 
 The report/ZIP handoff keeps source segments, source kind, reviewer notes and
 review state alongside model proposals. `source_role=screen_text` distinguishes
@@ -207,7 +217,15 @@ the byte-capable atomic replacement helper in `config.py`.
 captured endpoint used for sending. For plaintext loopback it disables
 environment proxy discovery and explicitly masks HTTP proxy mounts (required
 by the Anthropic SDK as well as ordinary HTTPX). WS disables proxy discovery;
-HTTPS/WSS retains environment proxy support. The generic `make_api_request`
+HTTPS/WSS retains environment proxy support. For a
+`chatgpt.com/backend-api/codex/` endpoint it instead mounts
+`providers.chatgpt.CodexTransport` (sync or async, a direct connection on that
+exact origin), which forces `store: false` + streaming, drops unsupported fields and
+`previous_response_id`, adds the Codex identity headers (`chatgpt-account-id`,
+`originator`, `version`) to the account bearer the config already resolved,
+aggregates the event stream for non-streaming callers, and on HTTP 401 refreshes
+the account once and retries; no LLM/vision caller needs a ChatGPT branch.
+Response-ID chaining is refused for that host. The generic `make_api_request`
 helper rejects plaintext URLs with caller-owned clients because their routing
 cannot be proven direct through its public interface.
 OAuth issuer resolution and both token POST boundaries enforce HTTPS-only and

@@ -99,6 +99,8 @@ product owners capturing feedback walkthroughs.
   The self-serve path is to bring your own key from **OpenAI** (or any other
   OpenAI-compatible provider) and point the endpoints at that provider — see
   [Providers](#providers). LibraxisAI is the built-in default endpoint.
+  A signed-in **ChatGPT account** can run LLM + vision without any key; STT
+  then stays on one of the providers above (ChatGPT has no speech-to-text).
 
 ---
 
@@ -107,8 +109,9 @@ product owners capturing feedback walkthroughs.
 ```bash
 uv tool install screenscribe
 
-# choose LibraxisAI, OpenAI, xAI, or a custom OpenAI-compatible provider;
-# keys use a hidden prompt; signed-in xAI accounts can supply the bearer
+# choose LibraxisAI, OpenAI, xAI, a custom OpenAI-compatible provider, or a
+# ChatGPT account (LLM + vision); keys use a hidden prompt; signed-in xAI
+# accounts can supply the bearer
 screenscribe config setup
 
 # FFmpeg is required before the first video run (see Requirements above)
@@ -173,9 +176,9 @@ The self-serve path is the provider setup wizard:
 screenscribe config setup
 ```
 
-Choose **LibraxisAI**, **OpenAI**, **xAI**, or a **Custom OpenAI-compatible
-provider (advanced)**. The custom path asks for a base URL and provider-specific
-STT, LLM, and vision model names, with an example beside every prompt. The xAI
+Choose **LibraxisAI**, **OpenAI**, **xAI**, a **Custom OpenAI-compatible
+provider (advanced)**, or a **ChatGPT account**. The custom path asks for a
+base URL and provider-specific STT, LLM, and vision model names, with an example beside every prompt. The xAI
 preset routes STT to `https://api.x.ai/v1/stt` (word-level timing, no model
 name), LLM/vision to `https://api.x.ai/v1/responses` (`grok-4.6`), and enables
 `screenscribe tts` and `screenscribe transcribe --live`.
@@ -183,6 +186,19 @@ For account-based xAI access, run `screenscribe auth login xai` first, then
 choose xAI in `screenscribe config setup` and accept the signed-in account.
 No API key is needed for that path. Signing in alone leaves the current
 provider configuration unchanged.
+
+A signed-in **ChatGPT account** runs LLM + vision on your ChatGPT plan through
+the ChatGPT Codex backend (`https://chatgpt.com/backend-api/codex/responses`).
+Select it with `screenscribe config auth chatgpt`,
+`screenscribe config auth openai --login`, or option 5 in
+`screenscribe config setup`; each one starts `screenscribe auth login openai`
+(device flow) first when you are not signed in.
+STT stays on the provider you had configured, because ChatGPT has no
+speech-to-text. The default model is `gpt-5.6-luna` (override with
+`SCREENSCRIBE_LLM_MODEL` / `SCREENSCRIBE_VISION_MODEL`). No API key is ever sent
+to `chatgpt.com`, and `api.openai.com` still rejects ChatGPT account tokens, so
+the **OpenAI** preset keeps needing an OpenAI API key.
+
 The wizard reads API keys through a hidden prompt when needed and atomically writes one
 coherent set of credentials, endpoints, and compatible models. A known OpenAI↔LibraxisAI
 mismatch blocks before any request is sent. Custom endpoints remain available
@@ -191,7 +207,8 @@ with a warning when provider compatibility cannot be verified.
 Remote provider endpoints require HTTPS (WSS for live STT). HTTP/WS is allowed
 only for `localhost` or a literal loopback address, including IPv6. Private LAN
 addresses still require TLS. Provider identity is restricted to the exact API
-hosts `api.libraxis.cloud`, `api.openai.com`, and `api.x.ai`; other gateways are
+hosts `api.libraxis.cloud`, `api.openai.com`, and `api.x.ai`, plus `chatgpt.com`
+for the ChatGPT account route (account token only); other gateways are
 custom providers and need explicitly configured credentials. Provider redirects
 are not followed; configure the final endpoint directly.
 Plaintext loopback HTTP/WS connects directly: environment proxy settings cannot
@@ -211,7 +228,8 @@ config replacement preserves the old config and the completed backup.
 > — LibraxisAI (the default) or OpenAI — for the STT, LLM, and vision calls each
 > run makes. There is no screenscribe account, subscription, or charge in
 > between: the tool only forwards your requests to the endpoints you configure
-> and never sees or handles payment.
+> and never sees or handles payment. On the ChatGPT account route, LLM and
+> vision calls run on your own ChatGPT plan.
 
 screenscribe transcribes the narration, finds the actionable moments, captures
 matching screenshots, confirms them with the vision model, writes the report
@@ -250,7 +268,9 @@ flowchart LR
 6. **Report** artifacts are written (and optionally served in the browser).
 
 Each stage chains a response ID into the next, so later stages reason with the
-earlier context instead of starting cold.
+earlier context instead of starting cold. The ChatGPT account route is the
+exception: its backend keeps no state (`store: false`), so nothing is chained
+there and every call carries its full context.
 
 > **Terminology — moments vs findings.** The interactive report and the
 > `analyze` dashboard call these items **moments** (the "Moments" tab, the
@@ -393,6 +413,7 @@ Manage configuration and API keys. The config file lives at
 ```bash
 uv run screenscribe config --show           # display current configuration
 uv run screenscribe config setup            # safe provider + hidden-key wizard
+uv run screenscribe config auth chatgpt     # LLM + vision on your ChatGPT account
 uv run screenscribe config --init           # create a default config file
 uv run screenscribe config --set-key KEY     # advanced compatibility; shell-history risk
 ```
@@ -490,6 +511,7 @@ export SCREENSCRIBE_LLM_REASONING_EFFORT=none  # none|low|medium|high|xhigh|max 
 
 Defaults: STT `whisper-1`, LLM and vision `programmer` (the LibraxisAI
 default — change these to your provider's model names, e.g. `gpt-4o`).
+The ChatGPT account preset sets LLM and vision to `gpt-5.6-luna`.
 Text-LLM Responses API calls (pre-filter, text-only analysis, summaries,
 merge) use a configured reasoning effort. When unset, the default is `low`
 for xAI and `none` for OpenAI/LibraxisAI; custom endpoints omit the option

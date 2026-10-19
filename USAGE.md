@@ -416,6 +416,19 @@ uv run screenscribe config [OPTIONS]
 
 With no options, `config` prints a short usage hint.
 
+**Subcommands**
+
+| Subcommand | Description |
+|------------|-------------|
+| `setup` | Provider wizard: 1 LibraxisAI, 2 OpenAI, 3 custom OpenAI-compatible, 4 xAI, 5 ChatGPT account. Keys use a hidden prompt; one coherent preset is written atomically. |
+| `auth <provider>` | Select `libraxis`, `openai`, `xai`, or `chatgpt` and set up its credentials in one step: `--key` (hidden prompt) or `--login` (account sign-in). `chatgpt` takes no flag and refuses `--key`; `openai --login` selects the ChatGPT route. |
+
+`config auth chatgpt`, `config auth openai --login`, and `config setup` option 5
+switch LLM + vision to your signed-in ChatGPT account and keep the current STT
+endpoint, model, and key (ChatGPT has no speech-to-text). Each one runs
+`screenscribe auth login openai` first when you are not signed in or your
+sign-in has ended. See [`screenscribe auth`](#screenscribe-auth).
+
 > Editing your keywords lives under `screenscribe keywords`
 > (see below), not `config`. The dictionary is global at
 > `~/.config/screenscribe/keywords.yaml`, not per-directory.
@@ -426,6 +439,9 @@ With no options, `config` prints a short usage hint.
 uv run screenscribe config --show
 uv run screenscribe config --init
 uv run screenscribe config --set-key YOUR_API_KEY
+uv run screenscribe config setup
+uv run screenscribe config auth chatgpt
+uv run screenscribe config auth xai --login
 ```
 
 `--show` lists the active config source, masked API keys, the STT/LLM/vision
@@ -441,7 +457,7 @@ with `--no-browser`), and polls until you approve (15 minute budget).
 
 ```bash
 uv run screenscribe auth login xai        # RFC 8628 device flow on auth.x.ai
-uv run screenscribe auth login openai     # Codex device flow on auth.openai.com
+uv run screenscribe auth login openai     # ChatGPT account, Codex device flow on auth.openai.com
 uv run screenscribe auth status           # never prints tokens
 uv run screenscribe auth logout xai
 ```
@@ -451,16 +467,40 @@ choose xAI, and accept the signed-in account instead of entering an API key.
 This writes a coherent xAI preset with empty key fields; requests resolve the
 stored account token. Sign-in by itself does not reroute an existing setup.
 
-Tokens are stored in `~/.config/screenscribe/accounts.json` (mode 0600) and
-refreshed automatically when a refresh token is present.
+An **OpenAI** sign-in is a ChatGPT account. It serves LLM + vision through the
+ChatGPT Codex backend (`https://chatgpt.com/backend-api/codex/responses`) once
+you select that route with `screenscribe config auth chatgpt` (or
+`config auth openai --login`, or `config setup` option 5). STT stays on the
+previously configured provider, because ChatGPT has no speech-to-text. The
+default model is `gpt-5.6-luna`; override it with `SCREENSCRIBE_LLM_MODEL` /
+`SCREENSCRIBE_VISION_MODEL`. The backend keeps no state (`store: false`), so
+responses are not chained there and every call carries its full context.
+
+**Durable sign-in.** Tokens are stored in `~/.config/screenscribe/accounts.json`
+(mode 0600) and stay usable across long and parallel runs:
+
+- An access token is refreshed automatically about 60 seconds before it
+  expires, as long as a refresh token is stored.
+- Every write and refresh holds a lock on `accounts.json.lock` next to the
+  store, so parallel screenscribe processes (for example `review` beside
+  `analyze`) never drop each other's entries or spend one refresh token twice. A
+  token another process has just rotated is reused instead of refreshed again.
+- A temporary refresh failure (network, HTTP 429/5xx) keeps using the current
+  token while it is still valid.
+- A revoked or expired grant marks the account **sign-in ended** in
+  `screenscribe auth status` until you run `screenscribe auth login <provider>`
+  again.
+- An HTTP 401 from the ChatGPT backend triggers one refresh and one retry.
 
 **Bearer resolution order** for STT/LLM/Vision requests: an explicit API key
 (`SCREENSCRIBE_*_API_KEY`, `OPENAI_API_KEY`, `SCREENSCRIBE_API_KEY`) always
 wins; without one, a signed-in **xAI** account token is used for endpoints on
-`api.x.ai`. An **OpenAI** account sign-in is identity-only: `api.openai.com`
-rejects a ChatGPT account token for REST calls (verified 2026-09-08), so
-Screenscribe prints a warning and still requires an OpenAI API key for
-requests. The shipped public client ids are disclosed in `NOTICE`.
+`api.x.ai`. `chatgpt.com` is the exception: it receives only the signed-in
+ChatGPT account token and never an API key. On `api.openai.com` an OpenAI
+account sign-in is identity-only: that host rejects a ChatGPT account token for
+REST calls (verified 2026-09-08), so screenscribe prints a warning and the
+**OpenAI** API preset still requires an OpenAI API key. The shipped public
+client ids are disclosed in `NOTICE`.
 TTS and live STT resolve account access against their own destination host;
 custom service endpoints never inherit an account token from the REST STT host.
 
@@ -566,7 +606,8 @@ token destinations are validated, and OAuth redirects are refused even for an
 injected client configured to follow redirects.
 
 Automatic provider identity uses only `api.libraxis.cloud`, `api.openai.com`,
-and `api.x.ai`, after IDNA/case/trailing-dot normalization. Parent domains and
+and `api.x.ai`, plus `chatgpt.com` for the ChatGPT account route (account token
+only), after IDNA/case/trailing-dot normalization. Parent domains and
 unlisted subdomains are custom endpoints, not proof of provider ownership.
 Custom HTTPS gateways remain available with explicitly configured keys.
 
@@ -602,7 +643,8 @@ changes.
 AI capacity: you supply your own key and you pay your provider directly —
 LibraxisAI (the default) or OpenAI — for the STT, LLM, and vision calls a run
 makes. There is no screenscribe account or charge in between; the tool only
-forwards requests to the endpoints you configure.
+forwards requests to the endpoints you configure. On the ChatGPT account route,
+LLM and vision calls run on your own ChatGPT plan.
 
 ### API keys
 
@@ -637,6 +679,8 @@ Defaults (LibraxisAI):
 The LLM and vision endpoints use the **Responses API** (`/v1/responses`), which
 enables response-ID chaining across pipeline stages. To use OpenAI, set
 `SCREENSCRIBE_API_BASE=https://api.openai.com` (or set each endpoint explicitly).
+The ChatGPT account route is the one Responses endpoint that never chains: its
+backend keeps no state (`store: false`), so every call carries its full context.
 
 #### Switching to OpenAI (BYO)
 
@@ -665,9 +709,9 @@ moving to a new provider.
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `SCREENSCRIBE_STT_MODEL` | `whisper-1` | OpenAI-Whisper-compatible. |
-| `SCREENSCRIBE_LLM_MODEL` | `programmer` | LibraxisAI default — change to your provider's model (e.g. `gpt-4o`). |
-| `SCREENSCRIBE_VISION_MODEL` | `programmer` | LibraxisAI default — change to your provider's vision model. |
-| `SCREENSCRIBE_LLM_REASONING_EFFORT` | per provider | Reasoning effort for text-LLM Responses API calls (pre-filter, text-only analysis, summaries, merge): `none`, `low`, `medium`, `high`, `xhigh`, or `max`. Not sent to Chat Completions or vision requests. When unset: `low` for xAI, `none` for LibraxisAI/OpenAI, omitted for custom providers until explicitly configured. An invalid value warns and resolves the final provider's default regardless of config key order. |
+| `SCREENSCRIBE_LLM_MODEL` | `programmer` | LibraxisAI default — change to your provider's model (e.g. `gpt-4o`). The ChatGPT account preset writes `gpt-5.6-luna`. |
+| `SCREENSCRIBE_VISION_MODEL` | `programmer` | LibraxisAI default — change to your provider's vision model. The ChatGPT account preset writes `gpt-5.6-luna`. |
+| `SCREENSCRIBE_LLM_REASONING_EFFORT` | per provider | Reasoning effort for text-LLM Responses API calls (pre-filter, text-only analysis, summaries, merge): `none`, `low`, `medium`, `high`, `xhigh`, or `max`. Not sent to Chat Completions or vision requests. When unset: `low` for xAI, `none` for LibraxisAI/OpenAI/ChatGPT account, omitted for custom providers until explicitly configured. An invalid value warns and resolves the final provider's default regardless of config key order. |
 
 ### Processing options
 
@@ -780,7 +824,9 @@ streams and identity changes clear the cursor. Finding response IDs are
 evidence, not a shared conversation head.
 The xAI agent uses stateless full history: each round includes trusted
 instructions, the report seed, prior output items and tool results. It sends
-no `previous_response_id` and returns `done.response_id=null`.
+no `previous_response_id` and returns `done.response_id=null`. The ChatGPT
+account route takes the same stateless path, because its backend stores no
+responses (`store: false`).
 
 #### Transcript correction scope
 
@@ -801,6 +847,16 @@ the chat panel; a report-scoped one is saved when the tool runs.
 | `SCREENSCRIBE_TTS_API_KEY` | TTS key (falls back to the STT key, then the generic key). |
 | `SCREENSCRIBE_TTS_VOICE` | Default voice id for `screenscribe tts`. |
 | `SCREENSCRIBE_STT_LIVE_ENDPOINT` | Websocket STT gateway for `transcribe --live` (derived: `wss://api.x.ai/v1/stt` or `wss://api.libraxis.cloud/v1/audio/transcribe`). |
+
+### ChatGPT account (LLM + vision)
+
+| Variable | Purpose |
+|----------|---------|
+| `SCREENSCRIBE_PROVIDER=chatgpt` | ChatGPT account preset (`screenscribe config auth chatgpt`, `config auth openai --login`, or `config setup` option 5): LLM/vision `https://chatgpt.com/backend-api/codex/responses`, `SCREENSCRIBE_LLM_MODEL` / `SCREENSCRIBE_VISION_MODEL` `gpt-5.6-luna`. The STT endpoint, model, key, live/TTS and fallback settings are carried over from the previous config. |
+
+The route needs a signed-in ChatGPT account (`screenscribe auth login openai`)
+and takes no API key: `chatgpt.com` only ever receives the account token. Until
+you sign in, `config --show` reports `INCOMPLETE - ChatGPT sign-in required`.
 
 ### Optional STT fallback (opt-in)
 
