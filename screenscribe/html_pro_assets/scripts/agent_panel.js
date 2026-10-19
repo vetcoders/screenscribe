@@ -423,6 +423,12 @@
         var id = op.finding_id != null ? String(op.finding_id) : '';
         if (id) return kind + ' #' + id;
         if (kind === 'add_finding') return kind + ' @' + String(op.timestamp);
+        if (kind === 'correct_transcript') {
+            // A global correction is approved here, not on the server, so the
+            // card must show WHAT would be written and in which scope.
+            return kind + ' "' + String(op.match || '') + '" → "'
+                + String(op.replacement || '') + '" (' + String(op.scope || '') + ')';
+        }
         return kind;
     }
 

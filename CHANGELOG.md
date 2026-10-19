@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- **Security: a global transcript correction needs panel approval.** The agent's
+  `correct_transcript` used to write the report ledger and the user glossary the
+  moment the model called it, with no Apply/Cancel card, so one tool call could
+  change what every future analysis reads. Scope `global` now returns a pending
+  `review_plan`; only the panel's Apply posts it. Scope `report` is unchanged.
+
 - **Fixed: doctor no longer certifies unimplemented tools.** `merge_findings`
   and `unmerge_finding` are client-only folds with no patch-callable API, and
   `screenscribe doctor` used to stamp both PROVEN. They are now stamped

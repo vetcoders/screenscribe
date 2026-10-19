@@ -223,6 +223,57 @@ def test_corrections_do_not_rewrite_transcript_bytes(tmp_path: Path) -> None:
     assert report_json.read_bytes() == report_bytes
 
 
+def test_global_correction_is_a_pending_plan_not_a_write(tmp_path: Path) -> None:
+    """A global correction edits the glossary every future analysis reads.
+
+    The agent may propose it; only the panel's Apply may save it. Report scope
+    stays an immediate ledger write.
+    """
+    from screenscribe.agent.tools import anthropic_tool_schemas, responses_tool_schemas
+
+    output_dir = tmp_path / "review"
+    output_dir.mkdir()
+    glossary = tmp_path / "glossary"
+    belt = ReportToolbelt(
+        {},
+        output_dir=output_dir,
+        report_stem="screen_report",
+        glossary_dir=glossary,
+    )
+
+    plan = belt.correct_transcript("cloud", "Claude", "global", "heard chmura")
+    assert plan["type"] == "review_plan"
+    assert plan["status"] == "pending_approval"
+    assert plan["rationale"]
+    op = plan["ops"][0]
+    assert op["op"] == "correct_transcript"
+    assert op["scope"] == "global"
+    assert op["persisted"] is False
+    assert op["requires_approval"] is True
+    assert not (output_dir / "corrections.json").exists()
+    assert not glossary.exists()
+
+    patch = belt.correct_transcript("cloud", "Claude", "report")
+    assert patch["type"] == "review_patch"
+    assert patch["ops"][0]["persisted"] is True
+    assert (output_dir / "corrections.json").exists()
+    assert not glossary.exists()
+
+    # The model must be told, or it will promise the user a save that is pending.
+    tool = next(
+        item
+        for item in responses_tool_schemas(include_repo=False)
+        if item["name"] == "correct_transcript"
+    )
+    assert "approves it in the review panel" in tool["description"]
+    anth = next(
+        item
+        for item in anthropic_tool_schemas(include_repo=False)
+        if item["name"] == "correct_transcript"
+    )
+    assert anth["description"] == tool["description"]
+
+
 def test_correct_transcript_rejects_empty_match_scope_and_regex(tmp_path: Path) -> None:
     from screenscribe.agent.corrections import apply_transcript_overlay, correction_pieces
     from screenscribe.agent.tools import anthropic_tool_schemas, responses_tool_schemas

@@ -373,8 +373,11 @@ def responses_tool_schemas(*, include_repo: bool) -> list[dict[str, Any]]:
             "correct_transcript",
             "Record a transcript-recognition correction. The original transcript "
             "file is never rewritten; the correction is a ledger overlay. match is "
-            "a literal phrase, not a regex. scope is 'report' (this review only) "
-            "or 'global' (also roll into the user glossary).",
+            "a literal phrase, not a regex. scope is 'report' (this review only, "
+            "saved immediately) or 'global' (also rolls into the user glossary that "
+            "future analyses read). A global correction is NOT saved by this call: "
+            "it comes back as a pending plan and is only written after the user "
+            "approves it in the review panel.",
             {
                 "match": {
                     "type": "string",
@@ -900,11 +903,14 @@ class ReportToolbelt:
         scope: object,
         note: object = None,
     ) -> dict[str, Any]:
-        """Validate a literal transcript correction and return a review_patch.
+        """Validate a literal transcript correction and return a patch or plan.
 
-        When this toolbelt has an output dir, the ledger entry is written
-        before the patch returns (``persisted: true``). The patch is still
-        the confirmation the panel renders. Transcript files are not modified.
+        Scope ``report`` only touches this review, so with an output dir the
+        ledger entry is written before the patch returns (``persisted: true``).
+        Scope ``global`` also rolls into the user glossary that every future
+        analysis reads, so it is never written here: it comes back as a
+        ``review_plan`` the panel renders with Apply/Cancel, and the panel's
+        Apply is what POSTs it. Transcript files are not modified either way.
         """
         try:
             phrase, repl, scope_text, note_text, _source = validate_correction_fields(
@@ -921,6 +927,18 @@ class ReportToolbelt:
             "persisted": False,
         }
         explain = f"Transcript correction: {phrase!r} → {repl!r} (scope {scope_text})."
+        if scope_text == "global":
+            op["requires_approval"] = True
+            return {
+                "type": "review_plan",
+                "instruction": explain,
+                "ops": [op],
+                "rationale": [
+                    "Global corrections change the user glossary used by future "
+                    "analyses; confirm before saving."
+                ],
+                "status": "pending_approval",
+            }
         if self.output_dir is None:
             return _review_patch([op], explain)
         try:

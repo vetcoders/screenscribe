@@ -659,6 +659,15 @@ affected finding/manual-frame notes, preserving existing notes. Read-only or
 no-op chat does not modify review data. The panel reports `review_applied:`
 only after a successful save; a failed save remains visibly unconfirmed.
 
+`correct_transcript` with `scope: "report"` writes the report's correction
+ledger straight away (it only affects this review). With `scope: "global"` it
+writes nothing: the tool returns a `review_plan` with `status:
+"pending_approval"`, the panel renders an Apply/Cancel card naming the phrase,
+the replacement and the scope, and only **Apply** posts it to
+`/api/corrections`. Cancel leaves the user glossary untouched. The glossary
+feeds every later transcription and analysis, so the agent may propose that
+change but never commit it alone.
+
 `merge_findings` / `unmerge_finding` currently return `{"unsupported": true}` — merge is a client-only fold (`mergeFindings` in the report UI) with no patch-callable API.
 
 The agent sees the evidence, not only the one-line summaries: `get_finding`
@@ -740,7 +749,9 @@ An existing report displays only corrections saved in that report's ledger.
 The original transcript files stay unchanged. Global corrections also become
 glossary hints for subsequent transcription and analysis requests; they do not
 retroactively replace text in other saved reports. Re-running analysis produces
-a new result using the current glossary.
+a new result using the current glossary. Because of that reach, a global
+correction proposed by the review agent is saved only after you approve it in
+the chat panel; a report-scoped one is saved when the tool runs.
 
 ### xAI, TTS and live STT
 

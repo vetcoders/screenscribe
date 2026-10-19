@@ -115,8 +115,11 @@ but each registers its own routes.
 - `server_security.py` — session token, authorization, and CORS for both servers.
 - `agent/` — report-seeded chat, guarded tools, provider fallback and SSE.
   The browser applies proposed edits through the existing review state/save
-  path and records the exact applied user request in reviewer notes. Cursor
-  identity is bound to provider/protocol/host; report finding IDs do not become
+  path and records the exact applied user request in reviewer notes.
+  A global transcript correction is a `review_plan` the panel must approve, not
+  a server-side write: it would change the user glossary every later analysis
+  reads.
+  Cursor identity is bound to provider/protocol/host; report finding IDs do not become
   a shared conversation head.
   xAI uses stateless full history so trusted instructions can be repeated on
   every user/tool round.

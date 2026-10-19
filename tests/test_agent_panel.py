@@ -1102,6 +1102,150 @@ def test_review_plan_card_apply_selected_ops() -> None:
     assert "plan:ok" in output
 
 
+_GLOBAL_CORRECTION_HOST = """
+            const fetches = [];
+            fetch = async (url, opts) => {
+                fetches.push({
+                    url: url,
+                    method: (opts && opts.method) || 'GET',
+                    body: opts && opts.body ? JSON.parse(opts.body) : null,
+                });
+                return {
+                    ok: true,
+                    status: 200,
+                    async json() { return { status: 'saved', entry: { id: 'e1' }, corrections: [] }; },
+                };
+            };
+            window.fetch = fetch;
+            // Stands in for review_app.js: applyReviewPatch routes a
+            // correct_transcript op that is not already persisted through
+            // applyTranscriptCorrectionOp, which POSTs /api/corrections.
+            window.__screenscribeAgentHost = {
+                async applyReviewPatch(ops) {
+                    const out = [];
+                    for (const op of ops) {
+                        if (op.op === 'correct_transcript' && !op.persisted) {
+                            await fetch('/api/corrections', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    match: op.match,
+                                    replacement: op.replacement,
+                                    scope: op.scope,
+                                    note: op.note || '',
+                                    source: 'agent',
+                                }),
+                            });
+                        }
+                        out.push({ op: op.op });
+                    }
+                    return out;
+                },
+                async saveReview() { return { ok: true, status: 200 }; },
+            };
+            const planResult = {
+                type: 'review_plan',
+                instruction: 'Transcript correction',
+                status: 'pending_approval',
+                ops: [{
+                    op: 'correct_transcript',
+                    match: 'cloud',
+                    replacement: 'Claude',
+                    scope: 'global',
+                    note: '',
+                    persisted: false,
+                    requires_approval: true,
+                }],
+                rationale: ['Global corrections change the user glossary.'],
+            };
+"""
+
+
+def test_global_correction_plan_waits_for_apply_before_posting() -> None:
+    """A global correction must not reach /api/corrections without Apply."""
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            """
+            + _GLOBAL_CORRECTION_HOST
+            + """
+            api.init();
+            await api.ingestToolResult('correct_transcript', planResult, new Set(), 'fix cloud');
+            const log = document.getElementById('ss-agent-log');
+            const card = (log.children || []).find(
+                (n) => String(n.className).includes('ss-agent-plan')
+            );
+            if (!card) throw new Error('global correction auto-applied: no approval card');
+            const caption = card.querySelector('.ss-agent-plan-caption');
+            const text = caption ? caption.textContent : '';
+            if (text.indexOf('cloud') < 0 || text.indexOf('Claude') < 0
+                || text.indexOf('global') < 0) {
+                throw new Error('card does not describe the correction: ' + text);
+            }
+            if (fetches.length !== 0) {
+                throw new Error('posted before approval: ' + JSON.stringify(fetches));
+            }
+            const apply = card.querySelector('.ss-agent-plan-apply');
+            apply.click();
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const posts = fetches.filter((f) => f.url === '/api/corrections');
+            if (posts.length !== 1) throw new Error('posts: ' + JSON.stringify(fetches));
+            if (posts[0].method !== 'POST') throw new Error('method: ' + posts[0].method);
+            if (posts[0].body.scope !== 'global') throw new Error('scope: ' + posts[0].body.scope);
+            if (posts[0].body.match !== 'cloud' || posts[0].body.replacement !== 'Claude') {
+                throw new Error('payload: ' + JSON.stringify(posts[0].body));
+            }
+            process.stdout.write('global-apply:ok');
+            """
+        )
+    )
+    assert "global-apply:ok" in output
+
+
+def test_global_correction_plan_cancel_writes_nothing() -> None:
+    """Cancel removes the card and leaves the glossary untouched."""
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            """
+            + _GLOBAL_CORRECTION_HOST
+            + """
+            api.init();
+            await api.ingestToolResult('correct_transcript', planResult, new Set(), 'fix cloud');
+            const log = document.getElementById('ss-agent-log');
+            const card = (log.children || []).find(
+                (n) => String(n.className).includes('ss-agent-plan')
+            );
+            if (!card) throw new Error('approval card missing');
+            card.querySelector('.ss-agent-plan-cancel').click();
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const stillThere = (log.children || []).find(
+                (n) => String(n.className).includes('ss-agent-plan')
+            );
+            if (stillThere) throw new Error('cancel left the card in the log');
+            if (fetches.length !== 0) {
+                throw new Error('cancel wrote something: ' + JSON.stringify(fetches));
+            }
+            process.stdout.write('global-cancel:ok');
+            """
+        )
+    )
+    assert "global-cancel:ok" in output
+
+
+def test_review_app_posts_only_unpersisted_corrections() -> None:
+    """The Apply route in review_app.js is what reaches /api/corrections."""
+    source = REVIEW_APP_JS.read_text(encoding="utf-8")
+    assert "if (kind === 'correct_transcript') return applyTranscriptCorrectionOp(op);" in source
+    route = source.split("async function applyTranscriptCorrectionOp(op) {", 1)[1]
+    route = route.split("\n}\n", 1)[0]
+    assert "op.persisted" in route
+    assert "'/api/corrections'" in route
+    assert "source: 'agent'" in route
+
+
 def test_review_plan_does_not_confirm_or_update_history_when_save_fails() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
