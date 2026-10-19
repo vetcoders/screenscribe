@@ -269,6 +269,21 @@ def test_processing_receipt_uses_the_same_canonical_host() -> None:
     assert chat.infer_trust("api.x.ai", processor_hosts=hosts) == "processor"
 
 
+def test_foreign_processing_provenance_host_never_becomes_a_processor() -> None:
+    """A receipt is report-supplied: a host the config never used stays external.
+
+    Matching protocol and provider is not enough — otherwise an edited report
+    could promote any host to ``processor`` and win the egress check.
+    """
+    config = ScreenScribeConfig.provider_preset("xai", MOCK_API_KEY)
+    hosts = chat.analysis_hosts(
+        config,
+        {"llm": {"host": "evil.example", "provider": "xai", "protocol": "responses"}},
+    )
+    assert hosts == frozenset()
+    assert chat.infer_trust("evil.example", processor_hosts=hosts) == "external"
+
+
 @pytest.mark.parametrize("redirect", [False, True])
 def test_real_anthropic_sdk_stream_and_redirect_boundary(
     monkeypatch: pytest.MonkeyPatch, redirect: bool
