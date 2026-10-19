@@ -1658,6 +1658,35 @@ def test_thread_key_follows_the_report_not_just_the_url() -> None:
     assert "thread-key:ok" in output
 
 
+def test_thread_key_survives_a_new_per_launch_video_token() -> None:
+    """The served src carries a per-launch ``st`` token; restarts must not orphan."""
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            api.init();
+            document.title = 'Screenscribe - recording_a.mov';
+            const video = document.getElementById('videoPlayer');
+            video.setAttribute('src', '/video?st=tokenA');
+            api.getState().threadFingerprint = null;
+            const keyA = api.threadKey();
+            video.setAttribute('src', '/video?st=tokenB#t=12');
+            api.getState().threadFingerprint = null;
+            const keyB = api.threadKey();
+            if (keyA !== keyB) {
+                throw new Error('serve restart orphaned the thread: ' + keyA + ' vs ' + keyB);
+            }
+            video.setAttribute('src', '/other.mov');
+            api.getState().threadFingerprint = null;
+            const keyOther = api.threadKey();
+            if (keyA === keyOther) throw new Error('different videos share a thread key');
+            process.stdout.write('thread-key-token:ok');
+            """
+        )
+    )
+    assert "thread-key-token:ok" in output
+
+
 def test_restored_chain_keeps_its_identity_after_reload() -> None:
     """R3-05: previousResponseId without its identity is dropped by send().
 

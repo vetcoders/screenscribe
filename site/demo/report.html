@@ -12639,7 +12639,17 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             var video = doc.getElementById ? doc.getElementById('videoPlayer') : null;
             if (video && typeof video.getAttribute === 'function') {
-                parts.push(String(video.getAttribute('src') || ''));
+                // The served report gets its src rewritten to /video?st=<token>,
+                // and that token is minted per `screenscribe serve` launch. The
+                // path still disambiguates two reports on one URL, but the query
+                // and fragment must stay OUT of the key or every restart orphans
+                // the saved conversation. A data: embed is truncated instead of
+                // hashing a whole base64 video.
+                var src = String(video.getAttribute('src') || '');
+                var cut = src.search(/[?#]/);
+                if (cut >= 0) src = src.slice(0, cut);
+                if (src.slice(0, 5) === 'data:') src = src.slice(0, 32);
+                parts.push(src);
             }
         } catch (_err) { /* a partial fingerprint still beats a URL-only key */ }
         state.threadFingerprint = contentHash(parts.join('|'));

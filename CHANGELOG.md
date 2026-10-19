@@ -8,6 +8,12 @@
   UNSUPPORTED, counted separately in MATRIX.md and `summary.json`, and printed
   in the totals; the exit-code contract is unchanged (only NOT-PROVEN exits 2).
 
+- **Fixed: chat thread survives a `screenscribe serve` restart.** The agent
+  panel thread key hashed the served video `src`, including the per-launch
+  signed `st` token, so restarting the server hid the saved conversation. The
+  key now uses only the path part of the src, keeping two reports on one URL
+  apart without binding the thread to one process.
+
 - **Security: doctor omits unsafe provider diagnostics.** Endpoint receipts
   remove URL userinfo as well as queries/fragments, and invalid endpoints use
   placeholders. Provider errors retain their local type and HTTP status instead
