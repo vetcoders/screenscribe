@@ -43,6 +43,7 @@ from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from ..api_utils import (
     PROVIDER_HOSTS,
+    StreamEventError,
     canonical_host,
     extract_stream_error_event,
     is_chat_completions_endpoint,
@@ -86,6 +87,26 @@ BoundedHistoryField = Annotated[str, StringConstraints(max_length=_MAX_HISTORY_F
 
 class AgentChatError(Exception):
     """Agent turn failed after every provider (or before any could run)."""
+
+
+def _provider_failure_detail(exc: BaseException) -> str:
+    """Log detail for a failed provider: structure, never provider prose.
+
+    A provider response body — and an SDK exception such as
+    ``anthropic.APIStatusError`` that embeds one — can echo an API key or a
+    prompt fragment, so it is reduced to its status the way
+    ``screenscribe.proofs.providers._failure_reason`` does. The same applies to
+    an in-stream provider error event. A transport failure carries no provider
+    body and keeps its message, which is the only diagnostic it has.
+    """
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if not isinstance(status, int):
+        status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return f"HTTP {status} ({type(exc).__name__}; details omitted)"
+    if isinstance(exc, StreamEventError):
+        return f"{type(exc).__name__} (details omitted)"
+    return redact_error_message(exc)
 
 
 class AgentImage(BaseModel):
@@ -384,7 +405,9 @@ async def stream_agent_chat(
                 yield frame
             return
         except Exception as exc:
-            logger.warning("Agent provider %s failed: %s", provider.name, redact_error_message(exc))
+            logger.warning(
+                "Agent provider %s failed: %s", provider.name, _provider_failure_detail(exc)
+            )
             last_error = (
                 "Review agent requires a Responses API endpoint; the configured "
                 "LLM endpoint uses /v1/chat/completions."
@@ -820,10 +843,11 @@ async def _responses_round(
         validate_provider_endpoint(endpoint)
         async with client.stream("POST", endpoint, headers=headers, json=payload) as resp:
             if resp.status_code >= 400:
-                body = (await resp.aread()).decode("utf-8", errors="replace")
+                # The body is never read into the message: a provider can echo
+                # an API key or a prompt fragment, and URL redaction does not
+                # make arbitrary provider prose safe to log.
                 raise AgentChatError(
-                    f"Provider {provider.name} HTTP {resp.status_code}: "
-                    f"{redact_error_message(Exception(body[:400]))}"
+                    f"Provider {provider.name} HTTP {resp.status_code} (details omitted)"
                 )
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
@@ -840,7 +864,12 @@ async def _responses_round(
                     continue
                 stream_error = extract_stream_error_event(event)
                 if stream_error is not None:
-                    raise AgentChatError(str(stream_error))
+                    # Same reason as the HTTP branch above: the event's message
+                    # and code are provider-controlled free text.
+                    raise AgentChatError(
+                        f"Provider {provider.name} reported a stream error "
+                        f"({type(stream_error).__name__}; details omitted)"
+                    )
                 event_type = str(event.get("type") or "")
                 if event_type in _TERMINAL_RESPONSE_EVENTS:
                     completed = True

@@ -8,6 +8,12 @@
   change what every future analysis reads. Scope `global` now returns a pending
   `review_plan`; only the panel's Apply posts it. Scope `report` is unchanged.
 
+- **Security: provider error bodies stay out of the logs.** A failing agent
+  provider is recorded by HTTP status only. The 4xx/5xx body is no longer read
+  into the error, an in-stream provider error event is reduced to its shape, and
+  an SDK exception carrying a response body is logged by status — a provider can
+  echo the API key it was sent or a fragment of the prompt.
+
 - **Fixed: doctor no longer certifies unimplemented tools.** `merge_findings`
   and `unmerge_finding` are client-only folds with no patch-callable API, and
   `screenscribe doctor` used to stamp both PROVEN. They are now stamped

@@ -1197,9 +1197,11 @@ def test_responses_function_events_keep_one_call_id() -> None:
     [
         ([{"type": "response.output_text.done", "text": "final-only"}], "final-only", None, []),
         (
+            # The event's message and code are provider free text: the raised
+            # error names the provider and the shape, never the prose.
             [{"type": "error", "error": {"message": "provider failed", "code": "server_error"}}],
             "",
-            "provider failed",
+            r"Provider primary reported a stream error \(.*details omitted\)",
             [],
         ),
         (
@@ -1283,6 +1285,88 @@ def test_responses_round_handles_final_text_and_stream_errors(
         result = asyncio.run(agent_chat._responses_round(provider, {}))
         assert result.text == expected_text
         assert [item["type"] for item in result.response_output_items] == expected_output_types
+
+
+def test_provider_error_body_never_reaches_the_message_or_the_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A 4xx body can echo the sent key and the prompt; it must stay unread."""
+    _drop_agent_env(monkeypatch)
+    leaked_key = "sk-test-SECRET123"  # pragma: allowlist secret
+    prompt_fragment = "the reviewer asked about the broken save button"
+    body = json.dumps(
+        {"error": {"message": f"invalid api key {leaked_key}", "echo": prompt_fragment}}
+    )
+    read_body = False
+
+    class FakeResponse:
+        status_code = 401
+
+        async def __aenter__(self) -> FakeResponse:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def aread(self) -> bytes:
+            nonlocal read_body
+            read_body = True
+            return body.encode()
+
+        async def aiter_lines(self) -> Any:  # pragma: no cover - 401 short-circuits
+            if False:
+                yield ""
+
+    class FakeClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        def stream(self, *_args: Any, **_kwargs: Any) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("screenscribe.agent.chat.httpx.AsyncClient", FakeClient)
+    provider = AgentProvider(
+        name="primary",
+        protocol="responses",
+        key="fake",
+        model="m",
+        url="https://api.x.ai/v1/responses",
+        trust="external",
+        slot="primary",
+        host="api.x.ai",
+    )
+    with pytest.raises(AgentChatError) as raised:
+        asyncio.run(agent_chat._responses_round(provider, {}))
+    assert str(raised.value) == "Provider primary HTTP 401 (details omitted)"
+    assert not read_body
+
+    async def _run() -> str:
+        return "".join(
+            [
+                frame
+                async for frame in stream_agent_chat(
+                    config=_xai_config(agent_egress="allow"),
+                    report=_load_fixture(),
+                    tools=ReportToolbelt(_load_fixture()),
+                    message="why does save fail",
+                )
+            ]
+        )
+
+    with caplog.at_level("WARNING", logger="screenscribe.agent.chat"):
+        frames = asyncio.run(_run())
+    assert "HTTP 401" in caplog.text
+    for secret in (leaked_key, prompt_fragment, "invalid api key"):
+        assert secret not in caplog.text
+        assert secret not in frames
+    assert "event: error" in frames
 
 
 def test_chat_completions_endpoint_is_rejected_before_network(

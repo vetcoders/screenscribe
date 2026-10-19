@@ -119,6 +119,7 @@ but each registers its own routes.
   A global transcript correction is a `review_plan` the panel must approve, not
   a server-side write: it would change the user glossary every later analysis
   reads.
+  Provider failures are logged by status, never by response body.
   Cursor identity is bound to provider/protocol/host; report finding IDs do not become
   a shared conversation head.
   xAI uses stateless full history so trusted instructions can be repeated on
