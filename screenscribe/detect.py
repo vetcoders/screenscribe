@@ -25,12 +25,6 @@ def get_keywords_config(keywords_file: Path | None = None) -> KeywordsConfig:
     return _keywords_config
 
 
-def reset_keywords_config() -> None:
-    """Reset keywords config (useful for testing)."""
-    global _keywords_config
-    _keywords_config = None
-
-
 # Load defaults for module-level access (backward compatibility)
 _default_config = KeywordsConfig.load()
 BUG_KEYWORDS: list[str] = _default_config.bug
