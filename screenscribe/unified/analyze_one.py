@@ -27,6 +27,7 @@ from ..config import ScreenScribeConfig
 from ..detect import Detection
 from ..keywords import format_keywords_hint
 from ..prompts import apply_analysis_prompt_override, get_unified_analysis_prompt
+from ..providers.chatgpt import is_chatgpt_codex_endpoint
 from ._console import console
 from .finding import UnifiedFinding
 from .response_parsing import (
@@ -58,7 +59,14 @@ def _may_chain_previous_response(
     chaining), while a text-only LLM-backed call must not (true cross-provider
     handoff). The previous gate (endpoints-equal only) dropped the id for EVERY
     split-provider vision request, losing screenshot-to-screenshot chaining (F).
+
+    The ChatGPT Codex backend keeps no responses (``store: false``), so nothing
+    chains there and every call carries its own full context.
     """
+    if is_chatgpt_codex_endpoint(config.vision_endpoint) or is_chatgpt_codex_endpoint(
+        config.llm_endpoint
+    ):
+        return False
     if config.vision_endpoint == config.llm_endpoint:
         return True
     return not use_text_only_backend

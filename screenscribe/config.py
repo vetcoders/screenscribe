@@ -14,6 +14,7 @@ from .api_utils import (
     redact_url,
     validate_provider_endpoint,
 )
+from .providers.chatgpt import CHATGPT_HOST, CHATGPT_RESPONSES_ENDPOINT
 
 
 def _invalid_endpoint_label(endpoint: str) -> str:
@@ -54,6 +55,15 @@ XAI_LLM_MODEL = "grok-4.6"
 XAI_VISION_MODEL = "grok-4.6"
 XAI_TTS_VOICE = "eve"
 
+# ChatGPT account (Codex backend, see screenscribe.providers.chatgpt): LLM and
+# vision on a signed-in ChatGPT plan, no API key. The backend has no STT or TTS,
+# so a ChatGPT selection keeps whatever STT the user already had.
+CHATGPT_LLM_ENDPOINT = CHATGPT_RESPONSES_ENDPOINT
+CHATGPT_VISION_ENDPOINT = CHATGPT_RESPONSES_ENDPOINT
+CHATGPT_LLM_MODEL = "gpt-5.6-luna"
+CHATGPT_VISION_MODEL = "gpt-5.6-luna"
+CHATGPT_SIGN_IN_HINT = "ChatGPT sign-in required: run `screenscribe auth login openai`"
+
 # LibraxisAI live STT gateway (stt-ws-v1; see screenscribe.stt_stream).
 LIBRAXIS_STT_LIVE_ENDPOINT = "wss://api.libraxis.cloud/v1/audio/transcribe"
 
@@ -85,6 +95,7 @@ PROVIDER_DEFAULT_REASONING_EFFORTS = {
     "libraxis": "none",
     "openai": "none",
     "xai": "low",
+    "chatgpt": "none",
     "custom": "",
 }
 
@@ -233,9 +244,18 @@ class ScreenScribeConfig:
         stt_model: str = "",
         llm_model: str = "",
         vision_model: str = "",
+        stt_from: "ScreenScribeConfig | None" = None,
     ) -> "ScreenScribeConfig":
-        """Build one coherent provider configuration for the setup wizard."""
+        """Build one coherent provider configuration for the setup wizard.
+
+        ``chatgpt`` selects LLM + vision only; its STT side (endpoint, model,
+        explicit key, live/TTS/fallback) is carried over from ``stt_from``
+        (default: the built-in LibraxisAI STT). ``api_key`` is ignored there:
+        the ChatGPT backend takes the signed-in account token and nothing else.
+        """
         normalized = provider.lower().strip()
+        if normalized == "chatgpt":
+            return cls._chatgpt_preset(stt_from or cls(), llm_model, vision_model)
         if normalized == "libraxis":
             return cls(provider="libraxis", api_key=api_key)
         if normalized == "openai":
@@ -280,6 +300,42 @@ class ScreenScribeConfig:
                 vision_model=vision_model or DEFAULT_VISION_MODEL,
             )
         raise ValueError(f"Unknown provider preset: {provider}")
+
+    @classmethod
+    def _chatgpt_preset(
+        cls, stt_from: "ScreenScribeConfig", llm_model: str, vision_model: str
+    ) -> "ScreenScribeConfig":
+        stt_key = stt_from._routed_key(
+            stt_from.stt_endpoint, stt_from.stt_api_key, stt_from.api_key
+        )
+        preset = cls(
+            provider="chatgpt",
+            api_base=stt_from.api_base,
+            stt_api_key=stt_key,
+            stt_endpoint=stt_from.stt_endpoint,
+            stt_model=stt_from.stt_model,
+            llm_endpoint=CHATGPT_LLM_ENDPOINT,
+            vision_endpoint=CHATGPT_VISION_ENDPOINT,
+            llm_model=llm_model or CHATGPT_LLM_MODEL,
+            vision_model=vision_model or CHATGPT_VISION_MODEL,
+            stt_fallback_endpoint=stt_from.stt_fallback_endpoint,
+            stt_fallback_api_key=stt_from.stt_fallback_api_key,
+            stt_fallback_model=stt_from.stt_fallback_model,
+            tts_endpoint=stt_from.tts_endpoint,
+            tts_api_key=stt_from.tts_api_key,
+            tts_voice=stt_from.tts_voice,
+            stt_live_endpoint=stt_from.stt_live_endpoint,
+            language=stt_from.language,
+            # Provider-neutral privacy choices survive the switch: vision off
+            # stays off (no screenshots to chatgpt.com), the egress policy
+            # stays. agent_primary_trust is host-specific and is not carried.
+            use_vision_analysis=stt_from.use_vision_analysis,
+            agent_egress=stt_from.agent_egress,
+        )
+        # A carried LibraxisAI key keeps its provenance, so it is saved as
+        # LIBRAXIS_API_KEY and stays fenced to LibraxisAI hosts on reload.
+        preset._libraxis_key_values = {stt_key} & stt_from._libraxis_key_values
+        return preset
 
     def get_keywords(self) -> "KeywordsConfig":
         """Return the active keyword vocabulary, lazily loading defaults if unset.
@@ -374,31 +430,40 @@ class ScreenScribeConfig:
         )
 
     # Provider whose signed-in account may back requests to a given REST host.
-    # ``openai`` is listed so the identity-only warning fires (the token itself
-    # is never returned for api.openai.com -- see ``account_auth.resolve_bearer``).
-    _ACCOUNT_HOSTS: ClassVar[dict[str, str]] = {"api.x.ai": "xai", "api.openai.com": "openai"}
+    # ``api.openai.com`` is listed so the identity-only warning fires (the token
+    # itself is never returned there -- see ``account_auth.resolve_bearer``).
+    _ACCOUNT_HOSTS: ClassVar[dict[str, str]] = {
+        "api.x.ai": "xai",
+        "api.openai.com": "openai",
+        CHATGPT_HOST: "openai",
+    }
+    # Hosts that take the account token and nothing else: an API key configured
+    # for another provider must never travel there.
+    _ACCOUNT_ONLY_HOSTS: ClassVar[frozenset[str]] = frozenset({CHATGPT_HOST})
     _account_warned: ClassVar[set[str]] = set()
 
     @classmethod
     def _key_or_account_bearer(cls, explicit_key: str, endpoint: str) -> str:
         """Explicit key wins. Without one, fall back to a signed-in account token
-        when ``endpoint`` is on a host that accepts it (``api.x.ai``). For
-        ``api.openai.com`` the account token is identity-only: warn once and
-        return the empty key so callers keep their "no key" behaviour.
+        when ``endpoint`` is on a host that accepts it (``api.x.ai``, and
+        ``chatgpt.com`` for the OpenAI account). For ``api.openai.com`` the
+        account token is identity-only: warn once and return the empty key so
+        callers keep their "no key" behaviour. ``chatgpt.com`` never receives an
+        explicit key -- only the account token.
         """
-        if explicit_key:
-            return explicit_key
         try:
-            host = (urlsplit(endpoint).hostname or "").lower()
+            host = canonical_host(urlsplit(endpoint).hostname or "")
         except ValueError:
-            return ""
+            host = ""
+        if explicit_key and host not in cls._ACCOUNT_ONLY_HOSTS:
+            return explicit_key
         provider = cls._ACCOUNT_HOSTS.get(host)
         if provider is None:
             return ""
         from .account_auth import AccountAuthError, resolve_bearer
 
         try:
-            resolution = resolve_bearer(provider, "")
+            resolution = resolve_bearer(provider, "", host=host)
         except AccountAuthError:
             return ""
         if resolution.warning and provider not in cls._account_warned:
@@ -551,10 +616,14 @@ class ScreenScribeConfig:
                 continue
             endpoint_provider = self._endpoint_provider(endpoint)
 
-            if (
-                declared_provider in {"libraxis", "openai", "xai"}
-                and endpoint_provider != declared_provider
-            ):
+            # A ChatGPT selection owns LLM + vision only; its STT is free.
+            required_provider = (
+                declared_provider
+                if declared_provider in {"libraxis", "openai", "xai"}
+                or (declared_provider == "chatgpt" and provider != "stt")
+                else None
+            )
+            if required_provider and endpoint_provider != required_provider:
                 errors.append(
                     f"{label} endpoint does not match the configured {declared_provider} preset.\n"
                     f"  Endpoint in use: {redact_url(endpoint)}\n"
@@ -586,10 +655,17 @@ class ScreenScribeConfig:
 
         return errors
 
+    def uses_chatgpt_account(self) -> bool:
+        """True when LLM or vision runs on the ChatGPT account route."""
+        return CHATGPT_HOST in {
+            canonical_host(urlsplit(endpoint).hostname or "")
+            for endpoint in (self.llm_endpoint, self.vision_endpoint)
+        }
+
     def recognized_provider(self) -> str:
         """Return the declared or consistently inferred provider identity."""
         declared = self.provider.lower().strip()
-        if declared in {"libraxis", "openai", "xai", "custom"}:
+        if declared in {"libraxis", "openai", "xai", "chatgpt", "custom"}:
             return declared
         inferred = {
             self._endpoint_provider(endpoint)
@@ -605,6 +681,11 @@ class ScreenScribeConfig:
         """Return a concise user-facing readiness status without making requests."""
         if self.validate():
             return "BLOCKED - provider preset mismatch"
+        if (
+            not (self.get_llm_api_key() and self.get_vision_api_key())
+            and self.uses_chatgpt_account()
+        ):
+            return f"INCOMPLETE - {CHATGPT_SIGN_IN_HINT}"
         if not (self.get_stt_api_key() and self.get_llm_api_key() and self.get_vision_api_key()):
             return "INCOMPLETE - API key required"
         if self.recognized_provider() == "custom":
@@ -716,15 +797,24 @@ class ScreenScribeConfig:
         return warnings
 
     @classmethod
-    def load(cls) -> "ScreenScribeConfig":
-        """Load config from environment and config files."""
-        config = cls()
+    def load_saved(cls) -> "ScreenScribeConfig":
+        """The first config file only, without environment overrides.
 
-        # Try config files first
+        The base for rewriting that file: a value that lives only in the
+        environment (a key exported from a keychain, a one-off override) must
+        never be written to disk by a selection change.
+        """
+        config = cls()
         for config_path in CONFIG_PATHS:
             if config_path.exists():
                 config._load_from_file(config_path)
                 break
+        return config
+
+    @classmethod
+    def load(cls) -> "ScreenScribeConfig":
+        """Load config from environment and config files."""
+        config = cls.load_saved()
 
         # Environment variables override config files
         config._load_from_env()

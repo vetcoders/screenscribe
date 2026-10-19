@@ -24,6 +24,7 @@ from typing import Literal, Protocol, runtime_checkable
 
 from .api_utils import is_chat_completions_endpoint
 from .config import ScreenScribeConfig
+from .providers.chatgpt import is_chatgpt_codex_endpoint
 from .transcribe_types import TranscriptionResult
 
 TranscriptSourceName = Literal["auto", "audio", "ocr"]
@@ -99,8 +100,12 @@ def get_transcript_source(name: ResolvedTranscriptSource) -> TranscriptSource:
 
 
 def response_id_can_chain(source_endpoint: str, target_endpoint: str) -> bool:
-    """Whether a provider response ID is safe to replay at ``target_endpoint``."""
-    if is_chat_completions_endpoint(target_endpoint):
+    """Whether a provider response ID is safe to replay at ``target_endpoint``.
+
+    The ChatGPT Codex backend stores nothing (``store: false`` is mandatory),
+    so none of its ids can be replayed.
+    """
+    if is_chat_completions_endpoint(target_endpoint) or is_chatgpt_codex_endpoint(target_endpoint):
         return False
     return source_endpoint.rstrip("/") == target_endpoint.rstrip("/")
 

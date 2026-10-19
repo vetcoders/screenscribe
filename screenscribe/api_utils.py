@@ -38,6 +38,8 @@ PROVIDER_HOSTS = {
     "api.libraxis.cloud": "libraxis",
     "api.openai.com": "openai",
     "api.x.ai": "xai",
+    # ChatGPT account route (Codex backend): LLM + vision, account token only.
+    "chatgpt.com": "chatgpt",
 }
 
 
@@ -90,18 +92,35 @@ def validate_provider_endpoint(endpoint: str, *, websocket: bool = False) -> Non
         )
 
 
-def provider_client_options(endpoint: str) -> dict[str, Any]:
+def provider_client_options(endpoint: str, *, asynchronous: bool = False) -> dict[str, Any]:
     """Bind HTTP client routing to a checked destination.
 
     Plain HTTP is loopback-only and must be direct even with proxy environment
     variables. Explicitly mask HTTP proxy mounts too: some SDK client wrappers
     construct these independently of HTTPX's trust_env setting. HTTPS retains
     configured proxy/CA support. Redirects cannot change the checked destination.
+
+    The ChatGPT Codex backend gets its adapting transport mounted on its exact
+    host (see ``screenscribe.providers.chatgpt``), so every LLM/vision caller
+    reaches it unchanged. The mount outranks the client's environment proxy
+    routing, so that transport re-applies ``HTTPS_PROXY``/``NO_PROXY`` itself.
+    ``asynchronous`` selects the transport flavour for ``httpx.AsyncClient``.
     """
     validate_provider_endpoint(endpoint)
     options: dict[str, Any] = {"follow_redirects": False}
     if httpx.URL(endpoint).scheme == "http":
         options.update(trust_env=False, mounts={"http://": None})
+    else:
+        from .providers.chatgpt import (
+            CHATGPT_HOST,
+            AsyncCodexTransport,
+            CodexTransport,
+            is_chatgpt_codex_endpoint,
+        )
+
+        if is_chatgpt_codex_endpoint(endpoint):
+            transport = AsyncCodexTransport() if asynchronous else CodexTransport()
+            options["mounts"] = {f"https://{CHATGPT_HOST}": transport}
     return options
 
 

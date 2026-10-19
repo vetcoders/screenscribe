@@ -54,6 +54,7 @@ from ..api_utils import (
     validate_provider_endpoint,
 )
 from ..config import ScreenScribeConfig
+from ..providers.chatgpt import CHATGPT_HOST
 from .context import PreparedTurn, prepare_turn
 from .tools import ReportToolbelt, anthropic_tool_schemas, responses_tool_schemas
 
@@ -500,9 +501,11 @@ def _supports_stateful_response_chain(provider: AgentProvider) -> bool:
 
     xAI currently rejects ``instructions`` together with
     ``previous_response_id``. The review agent must resend its trusted policy and
-    report seed, so xAI uses the stateless full-history path instead.
+    report seed, so xAI uses the stateless full-history path instead. The
+    ChatGPT Codex backend stores no responses at all (``store: false``), so it
+    takes the same stateless path.
     """
-    return provider.protocol == "responses" and provider.host != "api.x.ai"
+    return provider.protocol == "responses" and provider.host not in {"api.x.ai", CHATGPT_HOST}
 
 
 async def _run_provider(
@@ -839,7 +842,9 @@ async def _responses_round(
     # answer, and must not be presented as one.
     completed = False
     endpoint = provider.url
-    async with httpx.AsyncClient(timeout=90.0, **provider_client_options(endpoint)) as client:
+    async with httpx.AsyncClient(
+        timeout=90.0, **provider_client_options(endpoint, asynchronous=True)
+    ) as client:
         validate_provider_endpoint(endpoint)
         async with client.stream("POST", endpoint, headers=headers, json=payload) as resp:
             if resp.status_code >= 400:
@@ -1045,7 +1050,7 @@ async def _anthropic_round(
     client = AsyncAnthropic(
         api_key=provider.key,
         base_url=base_url,
-        http_client=DefaultAsyncHttpxClient(**provider_client_options(base_url)),
+        http_client=DefaultAsyncHttpxClient(**provider_client_options(base_url, asynchronous=True)),
     )
     messages = _anthropic_messages_from_input(payload.get("input") or [])
     system = str(payload.get("instructions") or "")
