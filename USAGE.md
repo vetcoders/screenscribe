@@ -668,6 +668,16 @@ the replacement and the scope, and only **Apply** posts it to
 feeds every later transcription and analysis, so the agent may propose that
 change but never commit it alone.
 
+If the server was started with a repo root, `open_repo_file` reads allowlisted
+source and documentation files. Beyond the path allowlist and the size cap, the
+content is scanned for credential shapes (private-key blocks, common key
+prefixes, JWT-like values, `api_key`/`secret`/`token`/`password` assignments
+with a literal value). A file that matches is refused with the offending line
+numbers and no content, because whatever this tool returns goes to the model.
+Obvious placeholders (`your-…`, `changeme`, `example`, `xxx`) still read
+normally. There is no per-file approval prompt in the UI: the gate is the
+allowlist plus this scan.
+
 `merge_findings` / `unmerge_finding` currently return `{"unsupported": true}` — merge is a client-only fold (`mergeFindings` in the report UI) with no patch-callable API.
 
 The agent sees the evidence, not only the one-line summaries: `get_finding`

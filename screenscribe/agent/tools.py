@@ -11,6 +11,7 @@ import base64
 import json
 import logging
 import math
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -816,6 +817,14 @@ class ReportToolbelt:
         if size > _MAX_OPEN_FILE_BYTES:
             return {"error": f"file too large ({size} bytes)"}
         text = resolved.read_text(encoding="utf-8", errors="replace")
+        secret_lines = _content_looks_secret(text)
+        if secret_lines:
+            # Line numbers only: naming the lines is enough for the reviewer to
+            # check the file themselves, and the content never leaves the host.
+            return {
+                "error": "file content looks like it contains credentials; not sent to the model",
+                "lines": secret_lines,
+            }
         return {"path": str(relative), "content": text}
 
     def set_verdict(self, finding_id: object, verdict: object) -> dict[str, Any]:
@@ -1272,6 +1281,47 @@ def _repo_path_is_sensitive(relative: Path) -> bool:
         relative.suffix.lower() not in _SAFE_REPO_FILE_SUFFIXES
         and name not in _SAFE_REPO_FILE_NAMES
     )
+
+
+# Conservative credential shapes. The path allowlist already rejects dotfiles
+# and key/cert suffixes, but an allowlisted source or doc file can still carry a
+# pasted key, and whatever open_repo_file returns is sent straight to the model.
+_SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
+    re.compile(r"(?:ghp_|github_pat_)[A-Za-z0-9_]{16,}"),
+    re.compile(r"AKIA[0-9A-Z]{16}"),
+    re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),
+    re.compile(r"eyJ[A-Za-z0-9_-]{20,}\."),
+    re.compile(
+        r"(api[_-]?key|secret|token|password)\s*[:=]\s*[\"']?([A-Za-z0-9_\-/+=]{12,})",
+        re.IGNORECASE,
+    ),
+)
+# Documentation and sample config are the common case for these shapes; a value
+# that advertises itself as a placeholder is not a credential.
+_SECRET_PLACEHOLDER_HINTS = ("example", "changeme", "your-", "xxx", "<", "${")
+
+
+def _content_looks_secret(text: str) -> list[int]:
+    """1-based line numbers that look like they carry a credential.
+
+    Pure and line-oriented so the caller can report WHERE without ever
+    repeating WHAT. An empty list means the content passed the gate.
+    """
+    hits: list[int] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        for pattern in _SECRET_PATTERNS:
+            match = pattern.search(line)
+            if match is None:
+                continue
+            value = match.group(match.lastindex or 0)
+            lowered = value.lower()
+            if any(hint in lowered for hint in _SECRET_PLACEHOLDER_HINTS):
+                continue
+            hits.append(number)
+            break
+    return hits
 
 
 def _detail_copy(value: Any, *, key: str = "") -> Any:

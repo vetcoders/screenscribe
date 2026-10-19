@@ -14,6 +14,11 @@
   an SDK exception carrying a response body is logged by status — a provider can
   echo the API key it was sent or a fragment of the prompt.
 
+- **Security: repo files that look like credentials are not sent to the model.**
+  `open_repo_file` now scans content as well as paths and refuses a match with
+  the offending line numbers and no content. Placeholders and environment-variable
+  lookups still read normally.
+
 - **Fixed: doctor no longer certifies unimplemented tools.** `merge_findings`
   and `unmerge_finding` are client-only folds with no patch-callable API, and
   `screenscribe doctor` used to stamp both PROVEN. They are now stamped

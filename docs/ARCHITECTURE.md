@@ -118,9 +118,10 @@ but each registers its own routes.
   path and records the exact applied user request in reviewer notes.
   A global transcript correction is a `review_plan` the panel must approve, not
   a server-side write: it would change the user glossary every later analysis
-  reads.
-  Provider failures are logged by status, never by response body.
-  Cursor identity is bound to provider/protocol/host; report finding IDs do not become
+  reads. `open_repo_file` gates content as well as paths — a file matching a
+  credential shape is refused with line numbers only, never content.
+  Provider failures are logged by status, never by response body. Cursor
+  identity is bound to provider/protocol/host; report finding IDs do not become
   a shared conversation head.
   xAI uses stateless full history so trusted instructions can be repeated on
   every user/tool round.

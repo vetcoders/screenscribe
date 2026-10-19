@@ -137,6 +137,78 @@ def test_open_repo_file_rejects_non_source_extension(tmp_path: Path) -> None:
     assert result == {"error": "path is not an allowlisted source or documentation file"}
 
 
+# Credential SHAPES, assembled at runtime: a literal one in this file would be
+# a finding for the repo's own leak scan, which has no inline allowlist.
+_SHAPE_KEY = "sk-" + "abcd1234efgh5678ijkl"
+_SHAPE_PEM = "-----BEGIN " + "RSA PRIVATE KEY" + "-----"
+_SHAPE_GITHUB = "ghp_" + "abcdefghijklmnopqrstuvwxyz"
+_SHAPE_AWS = "AKIA" + "ZZ1234567890ABCD"
+_SHAPE_ASSIGNED = "Zm9vYmFy" + "YmF6cXV4MTIzNA=="
+
+
+@pytest.mark.parametrize(
+    ("name", "body", "expected_lines"),
+    [
+        (
+            "README.md",
+            f"# docs\n\nUse {_SHAPE_KEY} for staging.\n",
+            [3],
+        ),
+        (
+            "notes.md",
+            f"intro\n{_SHAPE_PEM}\nAAAABBBB\n",
+            [2],
+        ),
+        (
+            "deploy.md",
+            f'Set it up:\n\n    api_key = "{_SHAPE_ASSIGNED}"\n',
+            [3],
+        ),
+    ],
+)
+def test_open_repo_file_refuses_credential_looking_content(
+    tmp_path: Path, name: str, body: str, expected_lines: list[int]
+) -> None:
+    """Whatever this tool returns goes straight to the provider: fail closed."""
+    (tmp_path / name).write_text(body, encoding="utf-8")
+    result = _toolbelt(repo_root=tmp_path).open_repo_file(name)
+    assert result["error"] == (
+        "file content looks like it contains credentials; not sent to the model"
+    )
+    assert result["lines"] == expected_lines
+    assert "content" not in result
+    # The reason names WHERE, never WHAT.
+    rendered = json.dumps(result)
+    for shape in (_SHAPE_KEY, _SHAPE_PEM, _SHAPE_ASSIGNED):
+        assert shape not in rendered
+
+
+@pytest.mark.parametrize(
+    ("name", "body"),
+    [
+        ("settings.py", 'import os\n\nAPI_KEY = os.environ["X"]\n'),
+        ("sample.md", "Copy the sample:\n\n    API_KEY=your-key-here\n"),
+        ("config.md", "Use `API_TOKEN=changeme-before-deploy` locally.\n"),
+    ],
+)
+def test_open_repo_file_allows_env_lookups_and_placeholders(
+    tmp_path: Path, name: str, body: str
+) -> None:
+    """The gate must not swallow ordinary config docs and env-var reads."""
+    (tmp_path / name).write_text(body, encoding="utf-8")
+    result = _toolbelt(repo_root=tmp_path).open_repo_file(name)
+    assert result["content"] == body
+    assert "error" not in result
+
+
+def test_content_looks_secret_reports_every_offending_line() -> None:
+    from screenscribe.agent.tools import _content_looks_secret
+
+    assert _content_looks_secret("clean\nlines only\n") == []
+    flagged = _content_looks_secret(f"ok\n{_SHAPE_GITHUB}\nstill ok\n{_SHAPE_AWS}\n")
+    assert flagged == [2, 4]
+
+
 def test_repo_tool_schema_does_not_claim_nonexistent_cli_flag() -> None:
     schema = next(
         tool
