@@ -228,6 +228,7 @@ def complete_device_code_login(
     finally:
         if own:
             http.close()
+    tokens.authorized_at = int(time.time())
     store_account_tokens(row.provider, tokens)
     return tokens
 

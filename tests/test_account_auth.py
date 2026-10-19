@@ -205,7 +205,9 @@ def test_openai_device_flow_pending_then_success_exchanges_with_pkce() -> None:
     }
     status = account_status("openai")
     assert status.signed_in and status.email == "user@example.com"
-    assert status.api_bearer_usable is False
+    # Usable only on the ChatGPT Codex backend, never on api.openai.com.
+    assert status.api_bearer_usable is True and status.bearer_hosts == ("chatgpt.com",)
+    assert status.authorized_at is not None
 
 
 def test_openai_poll_non_pending_status_is_terminal() -> None:

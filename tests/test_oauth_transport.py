@@ -18,6 +18,12 @@ from screenscribe.account_auth.device_code import (
 MOCK_KEY = "synthetic"  # pragma: allowlist secret -- test token, never a real account
 
 
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never let a refresh test read or write the real account store."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+
 @pytest.mark.parametrize("provider", ["openai", "xai"])
 @pytest.mark.parametrize(
     "issuer", ["http://example.invalid", "http://localhost:7192", "http://[::1]:7192"]
