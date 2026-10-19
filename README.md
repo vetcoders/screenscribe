@@ -188,9 +188,23 @@ coherent set of credentials, endpoints, and compatible models. A known OpenAI↔
 mismatch blocks before any request is sent. Custom endpoints remain available
 with a warning when provider compatibility cannot be verified.
 
+Remote provider endpoints require HTTPS (WSS for live STT). HTTP/WS is allowed
+only for `localhost` or a literal loopback address, including IPv6. Private LAN
+addresses still require TLS. Provider identity is restricted to the exact API
+hosts `api.libraxis.cloud`, `api.openai.com`, and `api.x.ai`; other gateways are
+custom providers and need explicitly configured credentials. Provider redirects
+are not followed; configure the final endpoint directly.
+Plaintext loopback HTTP/WS connects directly: environment proxy settings cannot
+route these requests elsewhere, even with an empty `NO_PROXY`. HTTPS/WSS keeps
+configured proxy support. OAuth device/code exchange and token refresh require
+HTTPS even on loopback; issuer overrides must point to a trusted HTTPS service.
+
 The legacy `config --set-key` option remains for advanced compatibility, but it
 changes only the generic key and exposes its argument to shell history. It is
 not the recommended onboarding path.
+The existing config and its exact-byte backup are each replaced atomically with
+owner-only permissions. A failed backup leaves the config unchanged; a failed
+config replacement preserves the old config and the completed backup.
 
 > **Billing — bring-your-own-key (BYOK).** screenscribe does not resell or proxy
 > AI capacity. You bring your own provider key and you pay that provider directly
@@ -285,10 +299,15 @@ report and opens the HTML report in your browser. Key options:
 - `--lang / -l` — transcription language (default `en`; pass `--lang pl` for Polish).
 - `--no-serve` — write the report without starting the browser server.
 - `--transcript-source auto|audio|ocr` — where transcript segments come from:
-  audio STT when an audio track exists, or VLM OCR of frames otherwise.
-  `auto` (default) picks per video, so silent recordings are analyzed instead
-  of rejected; `--no-audio` is the shortcut for `ocr`, and `--frame-interval`
-  sets the seconds between OCR'd frames (default 5).
+  audio STT or VLM OCR of frames. `auto` (default) picks audio when the file
+  has an audio stream and switches to OCR when that stream carries no speech,
+  so silent recordings are analyzed instead of rejected; `--no-audio` is the
+  shortcut for `ocr`, and `--frame-interval` sets the seconds between OCR'd
+  frames (default 5).
+- `--ocr-max-frames` — cap the billable vision calls of one OCR transcript
+  (default 720, one hour at the default frame interval). Checked before the
+  first paid call, so a too-small `--frame-interval` cannot quietly run up a
+  bill.
 - `--no-vision` (alias `--no-vlm`) — skip the visual/screenshot (VLM) step; the
   semantic LLM detection still runs.
 - `--keywords-file` — per-run keywords file. Keywords are always-on AI hints

@@ -8,7 +8,15 @@ import httpx
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from .api_utils import retry_request
+from .api_utils import (
+    PROVIDER_HOSTS,
+    canonical_host,
+    endpoint_host,
+    is_loopback_host,
+    provider_client_options,
+    retry_request,
+    validate_provider_endpoint,
+)
 from .config import LIBRAXIS_STT_ENDPOINT
 from .providers.xai import transcribe_file_xai
 
@@ -37,6 +45,7 @@ from .transcribe_types import (
 from .transcribe_types import (
     transcript_timeline_coverage_is_safe as transcript_timeline_coverage_is_safe,
 )
+from .unified.wire import _build_glossary_block
 
 console = Console()
 
@@ -150,7 +159,7 @@ def _is_xai_endpoint(stt_endpoint: str | None) -> bool:
         host = (urlsplit(stt_endpoint).hostname or "").lower()
     except ValueError:
         return False
-    return host == "x.ai" or host.endswith(".x.ai")
+    return PROVIDER_HOSTS.get(canonical_host(host)) == "xai"
 
 
 def _transcribe_via_xai(
@@ -283,6 +292,7 @@ def _request_transcription_payload(
     stt_endpoint: str | None = None,
     stt_model: str = "whisper-1",
     response_format: str = "json",
+    output_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Send audio bytes to STT and return the raw JSON payload."""
     if not audio_data:
@@ -296,20 +306,28 @@ def _request_transcription_payload(
 
     url = _resolve_stt_url(use_local, stt_endpoint)
     mime_type = _normalize_content_type(filename, content_type)
-    is_local_endpoint = url.startswith("http://127.0.0.1") or url.startswith("http://localhost")
+    is_local_endpoint = is_loopback_host(endpoint_host(url))
     field_name = "audio" if is_local_endpoint else "file"
     files = {field_name: (filename, audio_data, mime_type)}
     headers: dict[str, str] = {}
     if api_key and not use_local and not is_local_endpoint:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    # OpenAI-compatible STT endpoints accept a ``prompt`` that guides vocabulary.
+    # xAI is routed to providers.xai and does not use this path; its ``keyterm``
+    # field is intentionally not forced here (B-01 documents the no-op).
+    stt_glossary = _build_glossary_block(output_dir)
+
     def post_with(fmt: str) -> httpx.Response:
-        data = {
+        data: dict[str, Any] = {
             "model": stt_model,
             "language": language,
             "response_format": fmt,
         }
-        with httpx.Client(timeout=600.0) as client:
+        if stt_glossary:
+            data["prompt"] = stt_glossary
+        with httpx.Client(timeout=600.0, **provider_client_options(url)) as client:
+            validate_provider_endpoint(url)
             response = client.post(url, files=files, data=data, headers=headers)
             response.raise_for_status()
             return response
@@ -359,9 +377,13 @@ def transcribe_audio_bytes(
     stt_endpoint: str | None = None,
     stt_model: str = "whisper-1",
     response_format: str = "json",
+    output_dir: str | Path | None = None,
 ) -> TranscriptionResult:
     """Transcribe in-memory audio payloads, suitable for browser uploads."""
     if not use_local and _is_xai_endpoint(stt_endpoint):
+        # xAI STT uses ``keyterm`` in providers.xai, not the OpenAI ``prompt``.
+        # B-01 documents this as an honest no-op rather than forcing a cross-module
+        # change into the xAI transport.
         return _transcribe_via_xai(
             audio_data,
             filename,
@@ -380,6 +402,7 @@ def transcribe_audio_bytes(
         stt_endpoint=stt_endpoint,
         stt_model=stt_model,
         response_format=response_format,
+        output_dir=output_dir,
     )
 
     return _build_transcription_result(payload, language)
@@ -392,6 +415,7 @@ def transcribe_audio(
     api_key: str | None = None,
     stt_endpoint: str | None = None,
     stt_model: str = "whisper-1",
+    output_dir: str | Path | None = None,
 ) -> TranscriptionResult:
     """
     Transcribe audio using LibraxisAI STT.
@@ -402,6 +426,9 @@ def transcribe_audio(
         use_local: Use local STT server instead of cloud
         api_key: LibraxisAI API key
         stt_endpoint: Custom STT endpoint URL (overrides default)
+        output_dir: Review/analyze output dir with ``corrections.json``; when a
+            ledger or global glossary exists, its compact glossary block is sent
+            as the STT ``prompt`` (OpenAI-compatible endpoints).
 
     Returns:
         TranscriptionResult with full text and segments
@@ -429,6 +456,7 @@ def transcribe_audio(
             audio_data = handle.read()
 
         if not use_local and _is_xai_endpoint(stt_endpoint):
+            # xAI STT is handled by providers.xai; see transcribe_audio_bytes.
             return _transcribe_via_xai(
                 audio_data,
                 audio_path.name,
@@ -447,6 +475,7 @@ def transcribe_audio(
             stt_endpoint=stt_endpoint,
             stt_model=stt_model,
             response_format="verbose_json",
+            output_dir=output_dir,
         )
     return _build_transcription_result(payload, language)
 
@@ -460,6 +489,7 @@ def transcribe_audio_chunked(
     stt_model: str = "whisper-1",
     chunk_duration: float = 60.0,
     overlap: float = 5.0,
+    output_dir: str | Path | None = None,
 ) -> TranscriptionResult:
     """Transcribe long audio by splitting it into silence-aware chunks.
 
@@ -484,6 +514,8 @@ def transcribe_audio_chunked(
         stt_model: STT model name.
         chunk_duration: Target chunk size in seconds (default: 60).
         overlap: Overlap between chunks in seconds (default: 5).
+        output_dir: Review/analyze output dir with ``corrections.json``; the
+            glossary block is sent with each chunk's STT request.
 
     Returns:
         TranscriptionResult with timestamp-accurate, merged segments.
@@ -507,6 +539,7 @@ def transcribe_audio_chunked(
             api_key=api_key,
             stt_endpoint=stt_endpoint,
             stt_model=stt_model,
+            output_dir=output_dir,
         )
 
     console.print(
@@ -530,6 +563,7 @@ def transcribe_audio_chunked(
             api_key=api_key,
             stt_endpoint=stt_endpoint,
             stt_model=stt_model,
+            output_dir=output_dir,
         )
 
     all_segments: list[Segment] = []
@@ -547,6 +581,7 @@ def transcribe_audio_chunked(
                 api_key=api_key,
                 stt_endpoint=stt_endpoint,
                 stt_model=stt_model,
+                output_dir=output_dir,
             )
 
             if result.response_id:

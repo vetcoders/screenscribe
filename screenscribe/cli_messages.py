@@ -17,6 +17,12 @@ transcript source per video (``transcript_sources.resolve_transcript_source``)
 and only calls this guard for videos routed to the ``audio`` source, so an
 explicit ``--transcript-source audio`` keeps the historical readable error
 while ``auto``/``ocr`` route silent recordings to frame OCR instead.
+
+A present audio stream is not proof of speech, so ``auto`` re-decides after
+STT: when ``validate_audio_quality`` rejects the transcript as speechless, the
+pipeline switches to frame OCR rather than stopping (see
+``transcript_sources.audio_quality_allows_ocr_fallback``). Empty/corrupt audio
+and an explicit ``--transcript-source audio`` keep the stop.
 """
 
 import errno
@@ -82,6 +88,36 @@ def _build_transcript_timeline_coverage_message(
         "or compressed on this recording.\n"
         "Continuing the review; for tighter timestamp alignment, try chunked "
         "transcription or a shorter recording."
+    )
+
+
+# How many individual gap ranges the console warning spells out before it
+# switches to a "+N more" tail. Enough to recognize the pattern, short enough
+# to stay a panel and not a wall of timestamps.
+OCR_COVERAGE_GAP_PREVIEW = 5
+
+
+def _format_ocr_coverage_gaps(gaps: list[tuple[float, float]]) -> str:
+    """Render coverage-gap ranges as ``mm:ss-mm:ss`` lines with a bounded preview."""
+    preview = gaps[:OCR_COVERAGE_GAP_PREVIEW]
+    lines = [f"  • {format_timestamp(start)}-{format_timestamp(end)}" for start, end in preview]
+    remaining = len(gaps) - len(preview)
+    if remaining > 0:
+        lines.append(f"  • … +{remaining} more range(s)")
+    return "\n".join(lines)
+
+
+def _build_ocr_coverage_gap_message(gaps: list[tuple[float, float]]) -> str:
+    """Build the user-facing warning for time ranges frame OCR never read."""
+    total_seconds = sum(end - start for start, end in gaps)
+    return (
+        "Frame OCR could not read every frame, so the transcript and the report "
+        "are INCOMPLETE for the ranges below.\n"
+        f"Uncovered: {total_seconds:.0f}s across {len(gaps)} range(s).\n"
+        f"{_format_ocr_coverage_gaps(gaps)}\n\n"
+        "Findings cannot exist for a range that was never analyzed.\n"
+        "Re-run with --resume to retry only the failed frames (every frame that "
+        "was read is cached)."
     )
 
 
@@ -251,6 +287,7 @@ def _transcribe_audio_or_exit(
     stt_endpoint: str | None,
     stt_model: str,
     resume_hint: bool = False,
+    output_dir: Path | None = None,
 ) -> Any:
     """Run STT for single-command paths with traceback-free CLI errors."""
     import screenscribe.cli as cli
@@ -266,6 +303,7 @@ def _transcribe_audio_or_exit(
             api_key=api_key,
             stt_endpoint=stt_endpoint,
             stt_model=stt_model,
+            output_dir=output_dir,
         )
     except (httpx.HTTPStatusError, httpx.RequestError, APIError, ValueError) as exc:
         cli.console.print()

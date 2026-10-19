@@ -71,13 +71,20 @@ class OcrTranscriptSource:
 
     name = "ocr"
 
-    def __init__(self, frame_interval: float = 5.0) -> None:
+    def __init__(self, frame_interval: float = 5.0, max_frames: int | None = None) -> None:
         self.frame_interval = frame_interval
+        # None keeps frame_ocr's own default budget as the single source of truth.
+        self.max_frames = max_frames
 
     def transcribe(self, video_path: Path, config: ScreenScribeConfig) -> TranscriptionResult:
-        from .frame_ocr import transcribe_video_ocr
+        from .frame_ocr import DEFAULT_OCR_MAX_FRAMES, transcribe_video_ocr
 
-        return transcribe_video_ocr(video_path, config, frame_interval=self.frame_interval)
+        return transcribe_video_ocr(
+            video_path,
+            config,
+            frame_interval=self.frame_interval,
+            max_frames=DEFAULT_OCR_MAX_FRAMES if self.max_frames is None else self.max_frames,
+        )
 
 
 TRANSCRIPT_SOURCE_REGISTRY: dict[str, TranscriptSource] = {
@@ -130,9 +137,29 @@ def resolve_transcript_source(
     ``auto`` picks ``audio`` when the container carries an audio stream and
     falls back to ``ocr`` otherwise, so a silent recording reaches semantic
     analysis instead of dying at the audio gate.
+
+    A *present* audio stream is not proof of speech. Whether the stream
+    actually carries narration is only knowable after STT, so the pipeline
+    re-decides there: see :func:`audio_quality_allows_ocr_fallback`.
     """
     if requested == "ocr":
         return "ocr"
     if requested == "audio":
         return "audio"
     return "audio" if has_audio(video_path) else "ocr"
+
+
+def audio_quality_allows_ocr_fallback(result: TranscriptionResult) -> bool:
+    """Whether a failed audio-quality check means "no speech" rather than "broken".
+
+    Only meaningful once ``validate_audio_quality`` has already returned
+    not-valid. Two of its stop cases describe a stream that decoded fine but
+    carries no narration (STT returned a generic silence hallucination, or a
+    high no-speech probability on a very short transcript); both leave segments
+    behind, and for a ``auto`` run frame OCR is the better answer than stopping.
+
+    The remaining case -- no segments at all -- means empty or corrupt audio.
+    Routing that to OCR would paper over a real input problem, so it keeps
+    stopping the run.
+    """
+    return bool(result.segments)

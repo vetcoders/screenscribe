@@ -10,7 +10,13 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from screenscribe.agent.chat import AgentChatError, AgentProvider, ProviderRound, format_sse
+from screenscribe.agent.chat import (
+    AgentChatError,
+    AgentProvider,
+    FunctionCall,
+    ProviderRound,
+    format_sse,
+)
 from screenscribe.config import ScreenScribeConfig
 from screenscribe.review_server import create_review_app
 
@@ -297,3 +303,135 @@ def test_agent_chat_stream_tool_events(tmp_path: Path, monkeypatch: pytest.Monke
     parsed = [json.loads(line[5:]) for line in body.splitlines() if line.startswith("data:")]
     names = [item.get("name") for item in parsed if "name" in item]
     assert "list_findings" in names
+
+
+def test_agent_chat_stream_midturn_error_frame(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "SCREENSCRIBE_AGENT_FALLBACK_API_KEY",
+        "SCREENSCRIBE_AGENT_EGRESS",
+        "SCREENSCRIBE_AGENT_PRIMARY_TRUST",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    rounds = {"n": 0}
+
+    async def fake_round(_provider: AgentProvider, _payload: dict[str, Any]) -> ProviderRound:
+        rounds["n"] += 1
+        if rounds["n"] == 1:
+            return ProviderRound(
+                text="partial",
+                response_id="resp_partial",
+                function_calls=[
+                    FunctionCall(name="get_report_summary", call_id="c1", arguments={})
+                ],
+            )
+        return ProviderRound(
+            text="",
+            response_id=None,
+            function_calls=[],
+            error="provider exploded",
+        )
+
+    monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
+    client = TestClient(_app(tmp_path))
+    body = client.post(
+        "/api/agent/chat/stream",
+        json={
+            "message": "continue",
+            "history": [
+                {"role": "user", "content": "earlier"},
+                {"role": "assistant", "content": "ack"},
+            ],
+            "previous_response_id": "resp_prev",
+        },
+    ).text
+    assert "event: token\n" in body
+    assert "partial" in body
+    assert "event: tool_call\n" in body
+    assert "event: error\n" in body
+    assert (
+        format_sse("error", {"message": "Review agent request failed. Check server logs."}) in body
+    )
+    assert "provider exploded" not in body
+    assert "provider exploded" in caplog.text
+    assert "event: done\n" not in body
+
+
+def test_agent_global_correction_leaves_the_glossary_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The agent may propose a global correction; only Apply may write it.
+
+    The glossary feeds every future analysis, so a turn that merely called the
+    tool must leave it absent and hand the panel a pending plan.
+    """
+    import screenscribe.agent.corrections as corrections
+
+    glossary_dir = tmp_path / "global-glossary"
+    monkeypatch.setattr(corrections, "default_glossary_dir", lambda: glossary_dir)
+    rounds = {"n": 0}
+
+    async def fake_round(_provider: AgentProvider, _payload: dict[str, Any]) -> ProviderRound:
+        rounds["n"] += 1
+        if rounds["n"] == 1:
+            return ProviderRound(
+                text="",
+                response_id="resp_plan",
+                function_calls=[
+                    FunctionCall(
+                        name="correct_transcript",
+                        call_id="c1",
+                        arguments={
+                            "match": "cloud",
+                            "replacement": "Claude",
+                            "scope": "global",
+                        },
+                    )
+                ],
+            )
+        return ProviderRound(text="proposed", response_id="resp_done", function_calls=[])
+
+    monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
+    app = _app(tmp_path)
+    client = TestClient(app)
+    body = client.post(
+        "/api/agent/chat/stream",
+        json={"message": "cloud is Claude everywhere", "history": [], "previous_response_id": None},
+    ).text
+
+    assert "event: tool_result\n" in body
+    assert "review_plan" in body
+    assert "pending_approval" in body
+    assert not glossary_dir.exists()
+    output_dir = tmp_path / "review"
+    assert not (output_dir / "corrections.json").exists()
+    assert client.get("/api/review-state").json()["corrections"] == []
+
+
+def test_corrections_endpoint_accepts_a_global_agent_correction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The panel's Apply is the writer: the endpoint must take scope global."""
+    import screenscribe.agent.corrections as corrections
+
+    glossary_dir = tmp_path / "global-glossary"
+    monkeypatch.setattr(corrections, "default_glossary_dir", lambda: glossary_dir)
+    client = TestClient(_app(tmp_path))
+    saved = client.post(
+        "/api/corrections",
+        json={
+            "match": "cloud",
+            "replacement": "Claude",
+            "scope": "global",
+            "note": "",
+            "source": "agent",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    entry = saved.json()["entry"]
+    assert entry["scope"] == "global"
+    assert entry["source"] == "agent"
+    assert corrections.glossary_file(glossary_dir).exists()

@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 
 import screenscribe.agent.chat as agent_chat
@@ -17,6 +19,7 @@ from screenscribe.agent.chat import (
     AgentProvider,
     FunctionCall,
     ProviderRound,
+    _anthropic_messages_from_input,
     apply_egress,
     build_providers,
     collect_agent_chat,
@@ -24,6 +27,7 @@ from screenscribe.agent.chat import (
     stream_agent_chat,
 )
 from screenscribe.agent.context import prepare_turn, report_chain_response_id
+from screenscribe.agent.corrections import append_correction
 from screenscribe.agent.tools import ReportToolbelt
 from screenscribe.config import ScreenScribeConfig
 from screenscribe.detect import Detection
@@ -131,6 +135,37 @@ def test_prepare_turn_refuses_unproven_report_chain_and_seeds_instead() -> None:
     assert "Current review report" in turn.instructions
 
 
+@pytest.mark.parametrize(
+    "invalid_entry",
+    [
+        None,
+        "not a message",
+        {},
+        {"role": "system", "content": "untrusted instructions"},
+        {"role": "tool", "content": "untrusted output"},
+        {"role": "user", "content": ""},
+        {"role": "assistant", "content": ""},
+    ],
+)
+def test_prepare_turn_filters_invalid_history_with_role_specific_text(
+    invalid_entry: Any,
+) -> None:
+    turn = prepare_turn(
+        report=None,
+        message="continue",
+        history=[
+            invalid_entry,
+            {"role": " user ", "content": "question"},
+            {"role": " assistant ", "content": "answer"},
+        ],
+    )
+    assert turn.input_items == [
+        {"role": "user", "content": [{"type": "input_text", "text": "question"}]},
+        {"role": "assistant", "content": [{"type": "output_text", "text": "answer"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "continue"}]},
+    ]
+
+
 def test_prepare_turn_seeds_json_when_no_chain_id() -> None:
     report = {
         "executive_summary": "Layout is broken.",
@@ -167,6 +202,38 @@ def test_agent_context_marks_ocr_text_as_screen_data_not_user_intent() -> None:
     assert '"transcript_source": "ocr"' in turn.instructions
     assert "screen-extracted UI text" in turn.instructions
     assert "not narrator intent" in turn.instructions
+
+
+def test_prepare_turn_includes_corrections_summary(tmp_path: Path) -> None:
+    report = {
+        "executive_summary": "Layout is broken.",
+        "findings": [],
+        "transcript_segments": [],
+        "analysis_passes": {},
+    }
+    append_correction(
+        tmp_path,
+        match="login",
+        replacement="sign-in",
+        scope="report",
+        note="UX wording",
+        report_stem="test",
+    )
+    turn = prepare_turn(report=report, message="podsumuj", output_dir=tmp_path)
+    assert turn.seeded is True
+    assert "sign-in" in turn.instructions
+    assert '"corrections"' in turn.instructions
+
+
+def test_prepare_turn_omits_corrections_without_output_dir() -> None:
+    report = {
+        "executive_summary": "Layout is broken.",
+        "findings": [],
+        "transcript_segments": [],
+        "analysis_passes": {},
+    }
+    turn = prepare_turn(report=report, message="podsumuj")
+    assert '"corrections"' not in turn.instructions
 
 
 def test_default_xai_primary_is_processor_kept(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -358,6 +425,112 @@ def test_stream_agent_chat_runs_tool_loop(monkeypatch: pytest.MonkeyPatch) -> No
     assert "event: token" in body
     assert "Podsumowanie gotowe." in body
     assert '"response_id": null' in body
+
+
+def test_slow_tool_keeps_event_loop_and_stream_responsive(monkeypatch: pytest.MonkeyPatch) -> None:
+    rounds = iter(
+        [
+            ProviderRound(
+                text="",
+                response_id="tool-round",
+                function_calls=[
+                    FunctionCall(name="get_report_summary", call_id="slow-tool", arguments={})
+                ],
+            ),
+            ProviderRound(text="Finished.", response_id="final-round", function_calls=[]),
+        ]
+    )
+
+    async def fake_round(_provider: AgentProvider, _payload: dict[str, Any]) -> ProviderRound:
+        return next(rounds)
+
+    release = threading.Event()
+    loop_thread = threading.get_ident()
+    worker_threads: list[int] = []
+
+    def slow_execute(self: ReportToolbelt, name: str, arguments: dict[str, Any]) -> str:
+        worker_threads.append(threading.get_ident())
+        assert release.wait(5), "event loop did not emit a keepalive while the tool was running"
+        return '{"ok":true}'
+
+    monkeypatch.setattr(agent_chat, "round_tripper", fake_round)
+    monkeypatch.setattr(agent_chat, "_KEEPALIVE_SECONDS", 0.01)
+    monkeypatch.setattr(ReportToolbelt, "execute", slow_execute)
+    _drop_agent_env(monkeypatch)
+    report = _with_xai_processing_receipt(_load_fixture())
+
+    async def collect() -> str:
+        frames = []
+        try:
+            async for frame in stream_agent_chat(
+                config=_xai_config(),
+                report=report,
+                tools=ReportToolbelt(report),
+                message="Summarize.",
+            ):
+                frames.append(frame)
+                if frame == agent_chat.KEEPALIVE_FRAME:
+                    release.set()
+        finally:
+            release.set()
+        return "".join(frames)
+
+    body = asyncio.run(collect())
+    assert worker_threads and all(worker != loop_thread for worker in worker_threads)
+    assert agent_chat.KEEPALIVE_FRAME in body
+    assert "event: tool_result" in body and "Finished." in body
+
+
+def test_stop_during_tool_does_not_start_the_next_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    release = threading.Event()
+    executed: list[str] = []
+    _drop_agent_env(monkeypatch)
+
+    async def fake_round(_provider: AgentProvider, _payload: dict[str, Any]) -> ProviderRound:
+        return ProviderRound(
+            text="",
+            response_id="tools",
+            function_calls=[
+                FunctionCall(name="get_report_summary", call_id="first", arguments={}),
+                FunctionCall(name="list_findings", call_id="second", arguments={}),
+            ],
+        )
+
+    monkeypatch.setattr(agent_chat, "round_tripper", fake_round)
+    report = _with_xai_processing_receipt(_load_fixture())
+
+    async def scenario() -> None:
+        started = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def slow_execute(self: ReportToolbelt, name: str, arguments: dict[str, Any]) -> str:
+            executed.append(name)
+            loop.call_soon_threadsafe(started.set)
+            assert release.wait(5)
+            return '{"ok":true}'
+
+        monkeypatch.setattr(ReportToolbelt, "execute", slow_execute)
+
+        async def consume() -> None:
+            async for _frame in stream_agent_chat(
+                config=_xai_config(),
+                report=report,
+                tools=ReportToolbelt(report),
+                message="Summarize.",
+            ):
+                pass
+
+        task = asyncio.create_task(consume())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=1)
+        finally:
+            release.set()
+
+    asyncio.run(scenario())
+    assert executed == ["get_report_summary"]
 
 
 def test_collect_agent_chat_raises_when_egress_denies_all(
@@ -944,7 +1117,15 @@ def test_anthropic_client_uses_configured_base_url(monkeypatch: pytest.MonkeyPat
             captured["client_kwargs"] = kwargs
             self.messages = FakeMessages()
 
-    monkeypatch.setitem(sys.modules, "anthropic", SimpleNamespace(AsyncAnthropic=FakeAnthropic))
+        async def close(self) -> None:
+            await captured["client_kwargs"]["http_client"].aclose()
+            captured["closed"] = True
+
+    monkeypatch.setitem(
+        sys.modules,
+        "anthropic",
+        SimpleNamespace(AsyncAnthropic=FakeAnthropic, DefaultAsyncHttpxClient=httpx.AsyncClient),
+    )
     provider = AgentProvider(
         name="fallback",
         protocol="anthropic",
@@ -962,6 +1143,8 @@ def test_anthropic_client_uses_configured_base_url(monkeypatch: pytest.MonkeyPat
         )
     )
     assert captured["client_kwargs"]["base_url"] == "https://proxy.example/custom"
+    assert captured["client_kwargs"]["http_client"].follow_redirects is False
+    assert captured["closed"] is True
     assert result.response_id is None
 
 
@@ -1014,9 +1197,11 @@ def test_responses_function_events_keep_one_call_id() -> None:
     [
         ([{"type": "response.output_text.done", "text": "final-only"}], "final-only", None, []),
         (
+            # The event's message and code are provider free text: the raised
+            # error names the provider and the shape, never the prose.
             [{"type": "error", "error": {"message": "provider failed", "code": "server_error"}}],
             "",
-            "provider failed",
+            r"Provider primary reported a stream error \(.*details omitted\)",
             [],
         ),
         (
@@ -1102,6 +1287,88 @@ def test_responses_round_handles_final_text_and_stream_errors(
         assert [item["type"] for item in result.response_output_items] == expected_output_types
 
 
+def test_provider_error_body_never_reaches_the_message_or_the_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A 4xx body can echo the sent key and the prompt; it must stay unread."""
+    _drop_agent_env(monkeypatch)
+    leaked_key = "sk-test-SECRET123"  # pragma: allowlist secret
+    prompt_fragment = "the reviewer asked about the broken save button"
+    body = json.dumps(
+        {"error": {"message": f"invalid api key {leaked_key}", "echo": prompt_fragment}}
+    )
+    read_body = False
+
+    class FakeResponse:
+        status_code = 401
+
+        async def __aenter__(self) -> FakeResponse:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def aread(self) -> bytes:
+            nonlocal read_body
+            read_body = True
+            return body.encode()
+
+        async def aiter_lines(self) -> Any:  # pragma: no cover - 401 short-circuits
+            if False:
+                yield ""
+
+    class FakeClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        def stream(self, *_args: Any, **_kwargs: Any) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("screenscribe.agent.chat.httpx.AsyncClient", FakeClient)
+    provider = AgentProvider(
+        name="primary",
+        protocol="responses",
+        key="fake",
+        model="m",
+        url="https://api.x.ai/v1/responses",
+        trust="external",
+        slot="primary",
+        host="api.x.ai",
+    )
+    with pytest.raises(AgentChatError) as raised:
+        asyncio.run(agent_chat._responses_round(provider, {}))
+    assert str(raised.value) == "Provider primary HTTP 401 (details omitted)"
+    assert not read_body
+
+    async def _run() -> str:
+        return "".join(
+            [
+                frame
+                async for frame in stream_agent_chat(
+                    config=_xai_config(agent_egress="allow"),
+                    report=_load_fixture(),
+                    tools=ReportToolbelt(_load_fixture()),
+                    message="why does save fail",
+                )
+            ]
+        )
+
+    with caplog.at_level("WARNING", logger="screenscribe.agent.chat"):
+        frames = asyncio.run(_run())
+    assert "HTTP 401" in caplog.text
+    for secret in (leaked_key, prompt_fragment, "invalid api key"):
+        assert secret not in caplog.text
+        assert secret not in frames
+    assert "event: error" in frames
+
+
 def test_chat_completions_endpoint_is_rejected_before_network(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1138,6 +1405,362 @@ def test_chat_completions_endpoint_is_rejected_before_network(
     assert "requires a Responses API endpoint" in body
 
 
+@pytest.mark.parametrize("host", ["api.x.ai", "api.libraxis.cloud"])
+@pytest.mark.parametrize("use_response_id", [False, True])
+def test_two_turns_over_responses_http_preserve_role_content_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    use_response_id: bool,
+    host: str,
+) -> None:
+    _drop_agent_env(monkeypatch)
+    payloads: list[dict[str, Any]] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert str(request.url) == f"https://{host}/v1/responses"
+        payload = json.loads(request.content)
+        payloads.append(payload)
+        for index, item in enumerate(payload["input"]):
+            for block_index, block in enumerate(item["content"]):
+                if item["role"] == "assistant" and block["type"] not in {
+                    "output_text",
+                    "refusal",
+                }:
+                    return httpx.Response(
+                        400,
+                        json={
+                            "error": {
+                                "message": (
+                                    f"Invalid value: '{block['type']}'. Supported values "
+                                    "are: 'output_text' and 'refusal'."
+                                ),
+                                "type": "invalid_request_error",
+                                "param": f"input[{index}].content[{block_index}]",
+                                "code": "invalid_value",
+                            }
+                        },
+                    )
+        response_id = f"resp_{len(payloads)}"
+        text = "CodeScribe" if len(payloads) == 1 else "Codescribe"
+        events = [
+            {"type": "response.created", "response": {"id": response_id}},
+            {"type": "response.output_text.delta", "delta": text},
+            {"type": "response.completed", "response": {"id": response_id, "output": []}},
+        ]
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            text="".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n",
+        )
+
+    client_class = httpx.AsyncClient
+    transport = httpx.MockTransport(handle_request)
+
+    def make_client(**kwargs: Any) -> httpx.AsyncClient:
+        return client_class(transport=transport, **kwargs)
+
+    monkeypatch.setattr("screenscribe.agent.chat.httpx.AsyncClient", make_client)
+    monkeypatch.setattr("screenscribe.agent.chat.round_tripper", None)
+    config = _xai_config(llm_endpoint=f"https://{host}/v1/responses", agent_egress="allow")
+    report: dict[str, Any] = {"findings": [], "analysis_passes": {}}
+    tools = ReportToolbelt(report)
+
+    async def _run() -> dict[str, Any]:
+        first = await collect_agent_chat(
+            config=config,
+            report=report,
+            tools=tools,
+            message="What is the app called?",
+        )
+        assert first == {
+            "text": "CodeScribe",
+            "response_id": "resp_1" if host != "api.x.ai" else None,
+        }
+        return await collect_agent_chat(
+            config=config,
+            report=report,
+            tools=tools,
+            message="Codescribe / codescribe, not CodeScribe",
+            history=[
+                {"role": "user", "content": "What is the app called?"},
+                {"role": "assistant", "content": first["text"]},
+            ],
+            previous_response_id="resp_1" if use_response_id else None,
+            previous_response_provider="primary",
+            previous_response_protocol="responses",
+            previous_response_host=host,
+        )
+
+    assert asyncio.run(_run()) == {
+        "text": "Codescribe",
+        "response_id": "resp_2" if host != "api.x.ai" else None,
+    }
+    assert len(payloads) == 2
+    assert all(payload["stream"] is True for payload in payloads)
+    assert payloads[0]["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "What is the app called?"}]}
+    ]
+    assert payloads[1]["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "What is the app called?"}]},
+        {"role": "assistant", "content": [{"type": "output_text", "text": "CodeScribe"}]},
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Codescribe / codescribe, not CodeScribe"}],
+        },
+    ]
+    expected_response_id = "resp_1" if use_response_id and host != "api.x.ai" else None
+    assert payloads[1].get("previous_response_id") == expected_response_id
+
+
+def test_three_turns_with_tools_keep_the_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Three turns, including tool calls, must finish instead of dying on turn two.
+
+    In-process probe before the cap: turns 1 and 2 already returned ``done``.
+    This locks that survival and the response id handed to the next turn.
+    """
+    _drop_agent_env(monkeypatch)
+    script = [
+        [
+            ProviderRound(
+                text="",
+                response_id="resp_1a",
+                function_calls=[
+                    FunctionCall(name="get_report_summary", call_id="c1", arguments={})
+                ],
+            ),
+            ProviderRound(text="one", response_id="resp_1b", function_calls=[]),
+        ],
+        [ProviderRound(text="two", response_id="resp_2", function_calls=[])],
+        [
+            ProviderRound(
+                text="",
+                response_id="resp_3a",
+                function_calls=[
+                    FunctionCall(name="list_findings", call_id="c3", arguments={"severity": "high"})
+                ],
+            ),
+            ProviderRound(text="three", response_id="resp_3b", function_calls=[]),
+        ],
+    ]
+    seen: list[dict[str, Any]] = []
+    cursor = {"turn": 0, "step": 0}
+
+    async def fake_round(_provider: AgentProvider, payload: dict[str, Any]) -> ProviderRound:
+        seen.append(
+            {
+                "turn": cursor["turn"],
+                "previous": payload.get("previous_response_id"),
+                "roles": [
+                    item.get("role")
+                    for item in payload.get("input") or []
+                    if isinstance(item, dict)
+                ],
+            }
+        )
+        item = script[cursor["turn"]][cursor["step"]]
+        cursor["step"] += 1
+        return item
+
+    monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
+    config = _libraxis_config()
+    report = _load_fixture()
+
+    async def _run() -> list[str]:
+        history: list[dict[str, str]] = []
+        previous: str | None = None
+        bodies: list[str] = []
+        for index, message in enumerate(("q1", "q2", "q3")):
+            cursor["turn"] = index
+            cursor["step"] = 0
+            frames = [
+                frame
+                async for frame in stream_agent_chat(
+                    config=config,
+                    report=report,
+                    tools=ReportToolbelt(report),
+                    message=message,
+                    history=list(history),
+                    previous_response_id=previous,
+                    previous_response_provider="primary",
+                    previous_response_protocol="responses",
+                    previous_response_host="api.libraxis.cloud",
+                )
+            ]
+            body = "".join(frames)
+            if "event: error" in body:
+                raise AssertionError(body)
+            response_ids = [
+                line.split('"response_id": "', 1)[1].split('"', 1)[0]
+                for line in body.splitlines()
+                if '"response_id": "' in line
+            ]
+            texts = [
+                line.split('"text": "', 1)[1].split('"', 1)[0]
+                for line in body.splitlines()
+                if '"text": "' in line
+            ]
+            previous = response_ids[-1]
+            history.append({"role": "user", "content": message})
+            history.append({"role": "assistant", "content": "".join(texts)})
+            bodies.append(body)
+        return bodies
+
+    bodies = asyncio.run(_run())
+    assert len(bodies) == 3
+    assert "event: tool_call" in bodies[0]
+    assert "resp_1b" in bodies[0]
+    assert "event: tool_call" in bodies[2]
+    assert "resp_3b" in bodies[2]
+    second = [item for item in seen if item["turn"] == 1]
+    third = [item for item in seen if item["turn"] == 2]
+    assert second and second[0]["previous"] == "resp_1b"
+    assert second[0]["roles"] == ["user", "assistant", "user"]
+    assert third and third[0]["previous"] == "resp_2"
+    assert "assistant" in third[0]["roles"]
+
+
+def test_forwarded_history_caps_at_20_and_keeps_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _drop_agent_env(monkeypatch)
+    seen: list[dict[str, Any]] = []
+
+    async def fake_round(_provider: AgentProvider, payload: dict[str, Any]) -> ProviderRound:
+        seen.append(payload)
+        return ProviderRound(text="ok", response_id="resp_cap", function_calls=[])
+
+    monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
+    history = [
+        {"role": "user" if index % 2 == 0 else "assistant", "content": f"m{index}"}
+        for index in range(30)
+    ]
+
+    async def _run() -> str:
+        return "".join(
+            [
+                frame
+                async for frame in stream_agent_chat(
+                    config=_libraxis_config(),
+                    report=_load_fixture(),
+                    tools=ReportToolbelt(_load_fixture()),
+                    message="now",
+                    history=history,
+                    previous_response_id="resp_chain",
+                    previous_response_provider="primary",
+                    previous_response_protocol="responses",
+                    previous_response_host="api.libraxis.cloud",
+                )
+            ]
+        )
+
+    body = asyncio.run(_run())
+    assert "event: done" in body
+    assert "resp_cap" in body
+    payload = seen[0]
+    assert payload["previous_response_id"] == "resp_chain"
+    inputs = payload["input"]
+    assert len(inputs) == 21
+    texts = [item["content"][0]["text"] for item in inputs]
+    assert texts[0] == "m10"
+    assert texts[-2] == "m29"
+    assert texts[-1] == "now"
+    assert "m0" not in texts
+    assert "m9" not in texts
+
+
+def test_error_after_yield_emits_sse_error_without_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _drop_agent_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")  # pragma: allowlist secret
+    calls: list[str] = []
+    primary_rounds = {"n": 0}
+
+    async def fake_round(provider: AgentProvider, _payload: dict[str, Any]) -> ProviderRound:
+        calls.append(provider.name)
+        if provider.name != "primary":
+            return ProviderRound(text="fallback-ran", response_id="resp_fb", function_calls=[])
+        primary_rounds["n"] += 1
+        if primary_rounds["n"] == 1:
+            return ProviderRound(
+                text="partial",
+                response_id="resp_partial",
+                function_calls=[
+                    FunctionCall(name="get_report_summary", call_id="c1", arguments={})
+                ],
+            )
+        raise RuntimeError("connection reset by peer")
+
+    monkeypatch.setattr("screenscribe.agent.chat.round_tripper", fake_round)
+
+    async def _run() -> str:
+        return "".join(
+            [
+                frame
+                async for frame in stream_agent_chat(
+                    config=_xai_config(agent_egress="allow"),
+                    report=_load_fixture(),
+                    tools=ReportToolbelt(_load_fixture()),
+                    message="keep going",
+                )
+            ]
+        )
+
+    body = asyncio.run(_run())
+    assert "event: token" in body
+    assert "partial" in body
+    assert "event: error" in body
+    assert (
+        format_sse("error", {"message": "Review agent request failed. Check server logs."}) in body
+    )
+    assert "connection reset by peer" not in body
+    assert "connection reset by peer" in caplog.text
+    assert "fallback-ran" not in body
+    assert "event: done" not in body
+    assert calls == ["primary", "primary"]
+
+
+@pytest.mark.parametrize("assistant_content_type", ["input_text", "output_text"])
+def test_anthropic_cache_control_marks_last_history_turn(assistant_content_type: str) -> None:
+    items = [
+        {
+            "role": "user" if index % 2 == 0 else "assistant",
+            "content": [
+                {
+                    "type": "input_text" if index % 2 == 0 else assistant_content_type,
+                    "text": f"m{index}",
+                }
+            ],
+        }
+        for index in range(4)
+    ]
+    items.append({"role": "user", "content": [{"type": "input_text", "text": "now"}]})
+    messages = _anthropic_messages_from_input(items)
+    assert len(messages) == len(items)
+    assert messages[:3] == [
+        {
+            "role": "user" if index % 2 == 0 else "assistant",
+            "content": [{"type": "text", "text": f"m{index}"}],
+        }
+        for index in range(3)
+    ]
+    assert messages[-1] == {"role": "user", "content": [{"type": "text", "text": "now"}]}
+    cached = messages[-2]["content"]
+    assert isinstance(cached, list)
+    assert cached[0]["text"] == "m3"
+    assert cached[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    solo = _anthropic_messages_from_input(
+        [{"role": "user", "content": [{"type": "input_text", "text": "only"}]}]
+    )
+    assert solo == [{"role": "user", "content": [{"type": "text", "text": "only"}]}]
+    tool_only = _anthropic_messages_from_input(
+        [{"type": "function_call_output", "call_id": "c1", "output": "{}"}]
+    )
+    assert tool_only[0]["content"][0]["type"] == "tool_result"
+    assert "cache_control" not in tool_only[0]["content"][0]
+
+
 def test_config_file_loads_agent_egress(tmp_path: Path) -> None:
     path = tmp_path / "config.env"
     path.write_text(
@@ -1149,3 +1772,107 @@ def test_config_file_loads_agent_egress(tmp_path: Path) -> None:
     config._load_from_file(path)
     assert config.agent_egress == "allow"
     assert config.agent_primary_trust == "internal"
+
+
+def test_corrections_survive_seed_truncation_of_a_long_report(tmp_path: Path) -> None:
+    """R2-04: a long transcript must not push the ledger out of the seed.
+
+    The seed is cut at its character budget from the end; corrections used to
+    be the last key of the JSON blob, so 80 long segments silently removed
+    them from the agent's context.
+    """
+    report = {
+        "executive_summary": "Layout is broken.",
+        "findings": [],
+        "transcript_segments": [
+            {"id": i, "start": float(i), "end": float(i + 1), "text": "słowo " * 40}
+            for i in range(80)
+        ],
+        "analysis_passes": {},
+    }
+    append_correction(
+        tmp_path,
+        match="login",
+        replacement="sign-in",
+        scope="report",
+        report_stem="test",
+    )
+    turn = prepare_turn(report=report, message="podsumuj", output_dir=tmp_path)
+    assert "…(truncated)" in turn.instructions
+    assert '"corrections"' in turn.instructions
+    assert "sign-in" in turn.instructions
+
+
+def test_responses_round_refuses_a_stream_cut_before_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3-01: tokens + clean EOF without a terminal event is not an answer.
+
+    A proxy timeout or provider crash can close a 200 stream mid-response with
+    no error event. Returning the fragment as a finished turn hides the loss
+    from the reviewer and blocks Retry.
+    """
+    events = [
+        {"type": "response.created", "response": {"id": "resp_cut"}},
+        {"type": "response.output_text.delta", "delta": "the answer begins"},
+        # ...and the stream ends here: no response.completed, no [DONE].
+    ]
+
+    class FakeResponse:
+        status_code = 200
+
+        async def __aenter__(self) -> FakeResponse:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def aiter_lines(self) -> Any:
+            for event in events:
+                yield f"data: {json.dumps(event)}"
+
+    class FakeClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        def stream(self, *_args: Any, **_kwargs: Any) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("screenscribe.agent.chat.httpx.AsyncClient", FakeClient)
+    provider = AgentProvider(
+        name="primary",
+        protocol="responses",
+        key="fake",
+        model="m",
+        url="https://provider.example/v1/responses",
+        trust="internal",
+        slot="primary",
+        host="provider.example",
+    )
+    with pytest.raises(AgentChatError, match="before completing"):
+        asyncio.run(agent_chat._responses_round(provider, {}))
+
+    # The same stream with a terminal [DONE] sentinel is a complete answer.
+    events.append("__DONE__")
+
+    class DoneResponse(FakeResponse):
+        async def aiter_lines(self) -> Any:
+            for event in events:
+                if event == "__DONE__":
+                    yield "data: [DONE]"
+                else:
+                    yield f"data: {json.dumps(event)}"
+
+    class DoneClient(FakeClient):
+        def stream(self, *_args: Any, **_kwargs: Any) -> DoneResponse:
+            return DoneResponse()
+
+    monkeypatch.setattr("screenscribe.agent.chat.httpx.AsyncClient", DoneClient)
+    result = asyncio.run(agent_chat._responses_round(provider, {}))
+    assert result.text == "the answer begins"

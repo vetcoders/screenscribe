@@ -48,6 +48,16 @@ from urllib.parse import urlencode, urlsplit
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
+from .api_utils import PROVIDER_HOSTS, canonical_host, validate_provider_endpoint
+
+
+class DirectProviderConnect(connect):
+    """Do not follow redirects away from the checked live-STT destination."""
+
+    def process_redirect(self, exc: Exception) -> Exception:
+        return exc
+
+
 EventKind = Literal["partial", "final", "ended", "error"]
 
 LIBRAXIS_STT_LIVE_ENDPOINT = "wss://api.libraxis.cloud/v1/audio/transcribe"
@@ -185,8 +195,11 @@ class StreamingSttClient:
         self._loop = asyncio.get_running_loop()
         self._outbox = asyncio.Queue()
         try:
-            async with connect(
-                self.url,
+            url = self.url
+            validate_provider_endpoint(url, websocket=True)
+            async with DirectProviderConnect(
+                url,
+                proxy=None if urlsplit(url).scheme.lower() == "ws" else True,
                 additional_headers=self._headers,
                 open_timeout=self._connect_timeout,
                 max_size=None,
@@ -409,7 +422,7 @@ def stream_client_for_endpoint(
 ) -> StreamingSttClient:
     """Pick the client by websocket host: ``api.x.ai`` -> xAI, anything else -> LibraxisAI wire."""
     host = (urlsplit(endpoint).hostname or "").lower()
-    if host == "api.x.ai" or host.endswith(".x.ai"):
+    if PROVIDER_HOSTS.get(canonical_host(host)) == "xai":
         return XaiStreamClient(
             api_key=api_key, sample_rate=sample_rate, language=language, endpoint=endpoint, **kwargs
         )

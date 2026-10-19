@@ -59,6 +59,21 @@ def test_serialize_transcription_roundtrip_preserves_synthetic_flag() -> None:
     assert restored.timestamps_are_synthetic is True
 
 
+def test_serialize_transcription_roundtrip_preserves_coverage_gaps() -> None:
+    """A/P2: a resumed OCR run must keep warning about the ranges it never read,
+    so the gap ranges survive the JSON round-trip as (start, end) tuples."""
+    original = TranscriptionResult(
+        text="frame text",
+        segments=[Segment(id=0, start=0.0, end=5.0, text="frame text")],
+        language="en",
+        coverage_gaps=[(5.0, 10.0), (25.0, 30.0)],
+    )
+
+    restored = deserialize_transcription(serialize_transcription(original))
+
+    assert restored.coverage_gaps == [(5.0, 10.0), (25.0, 30.0)]
+
+
 def test_deserialize_transcription_defaults_missing_response_id() -> None:
     """Old checkpoints written before response_id was persisted must still load."""
     legacy = {
@@ -71,6 +86,9 @@ def test_deserialize_transcription_defaults_missing_response_id() -> None:
 
     assert restored.response_id == ""
     assert restored.segments[0].no_speech_prob == 0.0
+    # Written before coverage gaps were tracked: an empty list is the honest
+    # default, never a crash on the missing key.
+    assert restored.coverage_gaps == []
 
 
 def test_checkpoint_validity_binds_transcript_and_preset_inputs(tmp_path: Path) -> None:

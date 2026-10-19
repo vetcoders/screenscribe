@@ -685,6 +685,241 @@ function enrichManualFrameImagesFromServerState(snapshot) {
     return enriched;
 }
 
+/* ss-corrections-overlay:start */
+// Literal case-insensitive whole-phrase overlay. Match text is never a regex.
+function ssIsWordChar(ch) {
+    if (!ch) return false;
+    if (ch === '_') return true;
+    if (ch >= '0' && ch <= '9') return true;
+    return ch.toLowerCase() !== ch.toUpperCase();
+}
+
+function ssBoundaryBefore(text, index) {
+    if (index <= 0) return true;
+    return !ssIsWordChar(text.charAt(index - 1));
+}
+
+function ssBoundaryAfter(text, index) {
+    if (index >= text.length) return true;
+    return !ssIsWordChar(text.charAt(index));
+}
+
+function ssFindPhraseSpans(text, phrase) {
+    if (!phrase) return [];
+    const folded = phrase.toLowerCase();
+    const target = folded.length;
+    const spans = [];
+    let index = 0;
+    const length = text.length;
+    while (index < length) {
+        if (!ssBoundaryBefore(text, index)) {
+            index += 1;
+            continue;
+        }
+        let matchedEnd = -1;
+        let end = index;
+        while (end < length) {
+            end += 1;
+            const foldedSlice = text.slice(index, end).toLowerCase();
+            if (foldedSlice === folded && ssBoundaryAfter(text, end)) {
+                matchedEnd = end;
+                break;
+            }
+            if (foldedSlice.length > target) break;
+        }
+        if (matchedEnd < 0) {
+            index += 1;
+            continue;
+        }
+        spans.push([index, matchedEnd]);
+        index = matchedEnd;
+    }
+    return spans;
+}
+
+function correctionPieces(text, entries) {
+    const raw = Array.isArray(entries) ? entries : [];
+    const candidates = [];
+    for (let order = 0; order < raw.length; order += 1) {
+        const entry = raw[order];
+        if (!entry || typeof entry.match !== 'string' || entry.match.length === 0) continue;
+        if (typeof entry.replacement !== 'string') continue;
+        const createdAt = typeof entry.created_at === 'string' ? entry.created_at : '';
+        ssFindPhraseSpans(String(text), entry.match).forEach((span) => {
+            candidates.push({
+                start: span[0],
+                end: span[1],
+                replacement: entry.replacement,
+                created_at: createdAt,
+                order: order,
+            });
+        });
+    }
+    candidates.sort((left, right) => {
+        if (left.created_at !== right.created_at) {
+            return left.created_at < right.created_at ? 1 : -1;
+        }
+        return right.order - left.order;
+    });
+    const chosen = [];
+    candidates.forEach((span) => {
+        const overlaps = chosen.some((other) => span.start < other.end && other.start < span.end);
+        if (!overlaps) chosen.push(span);
+    });
+    chosen.sort((left, right) => left.start - right.start);
+    const pieces = [];
+    const source = String(text);
+    let cursor = 0;
+    chosen.forEach((span) => {
+        if (span.start > cursor) {
+            pieces.push({ text: source.slice(cursor, span.start), original: null });
+        }
+        pieces.push({
+            text: span.replacement,
+            original: source.slice(span.start, span.end),
+        });
+        cursor = span.end;
+    });
+    if (cursor < source.length || pieces.length === 0) {
+        pieces.push({ text: source.slice(cursor), original: null });
+    }
+    return pieces;
+}
+
+function applyCorrectionElement(el, entries, sourceOverride) {
+    if (!el) return;
+    let source;
+    if (sourceOverride != null) {
+        source = String(sourceOverride);
+    } else if (el.dataset && Object.prototype.hasOwnProperty.call(el.dataset, 'ssOriginal')) {
+        source = String(el.dataset.ssOriginal);
+    } else {
+        source = String(el.textContent == null ? '' : el.textContent);
+    }
+    if (el.dataset) el.dataset.ssOriginal = source;
+    const pieces = correctionPieces(source, entries);
+    const corrected = pieces.some((piece) => piece.original != null);
+    if (!corrected) {
+        if (el.textContent !== source) el.textContent = source;
+        return;
+    }
+    const nodes = pieces.map((piece) => {
+        if (piece.original == null) return document.createTextNode(piece.text);
+        const span = document.createElement('span');
+        span.className = 'ss-correction';
+        span.textContent = piece.text;
+        if (span.style) span.style.textDecoration = 'underline dotted';
+        span.title = piece.original;
+        if (typeof span.setAttribute === 'function') span.setAttribute('title', piece.original);
+        return span;
+    });
+    if (typeof el.replaceChildren === 'function') {
+        el.replaceChildren(...nodes);
+        return;
+    }
+    while (el.firstChild) el.removeChild(el.firstChild);
+    nodes.forEach((node) => el.appendChild(node));
+}
+/* ss-corrections-overlay:end */
+
+const transcriptCorrectionRuntime = {
+    entries: [],
+    applying: false,
+};
+
+function adoptTranscriptCorrections(entries) {
+    if (!Array.isArray(entries)) return;
+    transcriptCorrectionRuntime.entries = entries;
+    applyTranscriptCorrectionOverlay();
+}
+
+function applyTranscriptCorrectionOverlay() {
+    if (typeof document === 'undefined' || transcriptCorrectionRuntime.applying) return;
+    transcriptCorrectionRuntime.applying = true;
+    try {
+        const entries = transcriptCorrectionRuntime.entries;
+        document.querySelectorAll('.subtitle-item .text, .finding-transcript, .merged-frame-transcript').forEach((el) => {
+            applyCorrectionElement(el, entries);
+        });
+        const current = document.getElementById('currentSubtitle');
+        if (current && current.classList && !current.classList.contains('empty')) {
+            applyCorrectionElement(current, entries);
+        }
+    } finally {
+        transcriptCorrectionRuntime.applying = false;
+    }
+}
+
+function installTranscriptCorrectionHost() {
+    if (typeof document === 'undefined') return;
+    const Player = typeof ScreenScribePlayer === 'function' ? ScreenScribePlayer : null;
+    if (Player && !Player.prototype.__ssCorrectionHooked) {
+        const originalRender = Player.prototype.renderSubtitleList;
+        if (typeof originalRender === 'function') {
+            Player.prototype.renderSubtitleList = function renderSubtitleListWithCorrections(segments) {
+                const result = originalRender.apply(this, arguments);
+                applyTranscriptCorrectionOverlay();
+                return result;
+            };
+        }
+        const originalDisplay = Player.prototype.updateSubtitleDisplay;
+        if (typeof originalDisplay === 'function') {
+            Player.prototype.updateSubtitleDisplay = function updateSubtitleDisplayWithCorrections(text) {
+                const result = originalDisplay.apply(this, arguments);
+                const node = this.subtitleDisplay;
+                if (node && text && node.classList && !node.classList.contains('empty')) {
+                    applyCorrectionElement(node, transcriptCorrectionRuntime.entries, text);
+                }
+                return result;
+            };
+        }
+        Player.prototype.__ssCorrectionHooked = true;
+    }
+    const list = document.getElementById('subtitleList');
+    if (list && !list.dataset.ssCorrectionObserved && typeof MutationObserver === 'function') {
+        list.dataset.ssCorrectionObserved = '1';
+        const observer = new MutationObserver(() => {
+            if (transcriptCorrectionRuntime.applying) return;
+            applyTranscriptCorrectionOverlay();
+        });
+        observer.observe(list, { childList: true });
+    }
+}
+
+function mergeCorrectionEntry(entry) {
+    const entries = transcriptCorrectionRuntime.entries.slice();
+    const idx = entries.findIndex((row) => row && entry && row.id === entry.id);
+    if (idx >= 0) entries[idx] = entry;
+    else entries.push(entry);
+    adoptTranscriptCorrections(entries);
+}
+
+async function applyTranscriptCorrectionOp(op) {
+    if (op && op.persisted && op.entry && typeof op.entry === 'object') {
+        mergeCorrectionEntry(op.entry);
+        return { op: 'correct_transcript', id: op.entry.id || '', reversible: false };
+    }
+    const response = await fetch('/api/corrections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+            match: op.match,
+            replacement: op.replacement,
+            scope: op.scope,
+            note: op.note || '',
+            source: 'agent',
+        }),
+    });
+    const payload = await fetchJsonOrThrow(response, 'Failed to record transcript correction.');
+    if (Array.isArray(payload.corrections)) {
+        adoptTranscriptCorrections(payload.corrections);
+    } else if (payload.entry) {
+        mergeCorrectionEntry(payload.entry);
+    }
+    const entryId = payload.entry && payload.entry.id ? payload.entry.id : '';
+    return { op: 'correct_transcript', id: entryId, reversible: false };
+}
+
 async function hydrateReportStateFromDisk({ enrichManualFrameImagesOnly = false } = {}) {
     // Static-demo sample (GitHub Pages): there is no server, so skip the
     // /api/review-state hydration entirely — no request leaves the page and the
@@ -700,6 +935,7 @@ async function hydrateReportStateFromDisk({ enrichManualFrameImagesOnly = false 
             return;
         }
         const snapshot = await response.json();
+        adoptTranscriptCorrections(snapshot && snapshot.corrections);
         if (enrichManualFrameImagesOnly) {
             enrichManualFrameImagesFromServerState(snapshot);
             return;
@@ -878,6 +1114,7 @@ function initSharedStateSync() {
 
 function initReviewState() {
     reportState.reportId = document.body.dataset.reportId || '';
+    installTranscriptCorrectionHost();
     applyWindowMode(getWindowModeFromLocation(), { persistUrl: false });
     const restoredLocalState = initSharedStateSync();
     void hydrateReportStateFromDisk({ enrichManualFrameImagesOnly: restoredLocalState });
@@ -3484,11 +3721,34 @@ async function seekPlayerBeforeFrameCapture(timestamp) {
     });
 }
 
+let agentMarkerSeq = 0;
+
 async function addFindingFromPatch(op) {
     const timestamp = Number(op.timestamp);
     const summary = String(op.summary || '');
     const severity = String(op.severity || '');
     const category = String(op.category || '');
+    // A retried agent turn replays its tool calls (the dedupe inside one turn
+    // does not reach across a Retry). The same timestamp + summary is the same
+    // finding: hand back the stored marker instead of minting a twin.
+    const existing = (reportState.manualFrames || []).find((entry) => {
+        if (Number(entry.timestamp) !== timestamp) return false;
+        const notes = String(entry.notes || '');
+        const stored = entry.result && typeof entry.result === 'object'
+            ? String(entry.result.summary || '')
+            : '';
+        // notes may carry an appended "[chat] instruction" block after apply.
+        return stored === summary || notes === summary || notes.startsWith(summary + '\n');
+    });
+    if (existing) {
+        return {
+            op: 'add_finding',
+            markerId: existing.marker_id,
+            captured: false,
+            reversible: false,
+            duplicate: true,
+        };
+    }
     if (Number.isFinite(timestamp)) {
         seekToTimestamp(timestamp);
     }
@@ -3525,7 +3785,10 @@ async function addFindingFromPatch(op) {
             return { op: 'add_finding', markerId, captured: true, reversible: false };
         }
     }
-    const markerId = `agent-${String(Number.isFinite(timestamp) ? timestamp : 0)}-${Date.now()}`;
+    agentMarkerSeq += 1;
+    // Date.now() alone collides when two agent findings land in the same
+    // millisecond, and upsertManualFrame would silently replace the first.
+    const markerId = `agent-${String(Number.isFinite(timestamp) ? timestamp : 0)}-${Date.now()}-${agentMarkerSeq}`;
     upsertManualFrame({
         marker_id: markerId,
         timestamp: Number.isFinite(timestamp) ? timestamp : 0,
@@ -3550,6 +3813,7 @@ async function applyOneReviewOp(op) {
     if (kind === 'set_severity') return applySeverityOp(op);
     if (kind === 'edit_finding') return applyEditFindingOp(op);
     if (kind === 'add_finding') return addFindingFromPatch(op);
+    if (kind === 'correct_transcript') return applyTranscriptCorrectionOp(op);
     if (kind === 'merge_findings' || kind === 'unmerge_finding') {
         return {
             skipped: true,
@@ -4947,6 +5211,16 @@ const ANNOTATION_TEXT_HALO_RATIO = 0.14;
 // Shape under-stroke width relative to the coloured stroke (peeks out as edge).
 const ANNOTATION_SHAPE_HALO_MULT = 2.4;
 
+// Intended text height in pixels for export / rasterization. The rel value is
+// defined as a fraction of FRAME HEIGHT (not the longer edge), so a default
+// 0.036 annotation is always ~3.6% of the rendered frame height regardless of
+// aspect ratio. Keeping the computation in one pure function makes the unit
+// contract testable and prevents the live normalized viewBox from accidentally
+// consuming a pixel-scaled value (the giant-text bug).
+function annotationFontSizePx(ann, targetWidth, targetHeight) {
+    return (ann.fontSizeRel || 0.036) * targetHeight;
+}
+
 // Build a stroked shape with a darker, wider under-stroke beneath the coloured
 // stroke so thin light shapes stay readable on any background.
 function makeContrastShape(tag, geom, stroke, strokeWidth) {
@@ -5257,7 +5531,7 @@ function applyAnnotationProperties(ann, props) {
         ann.strokeWidthRel = props.strokeWidthRel;
     }
     if (props.fontSizeRel != null && ann.type === 'text') {
-        ann.fontSizeRel = props.fontSizeRel;
+        ann.fontSizeRel = Math.max(0.012, Math.min(0.2, props.fontSizeRel));
     }
     return ann;
 }
@@ -5347,7 +5621,7 @@ function readAnnotationDefaultColor() {
     return '#ffffff';
 }
 
-function createAnnotationElement(ann) {
+function createAnnotationElement(ann, renderWidth = 1, renderHeight = 1) {
     if (!ann) return null;
     const stroke = ann.color || readAnnotationDefaultColor();
     // Use strokeWidthPx for export (denormalized) or strokeWidthRel for live rendering
@@ -5414,7 +5688,15 @@ function createAnnotationElement(ann) {
     }
 
     if (ann.type === 'text' && ann.text) {
-        const fontSize = ann.fontSizePx || ann.fontSizeRel || 0.036;
+        // Live rendering uses a normalized 0-1 viewBox, so the font size must be
+        // the relative value. Export rendering uses a pixel viewBox after
+        // denormalizeAnnotations, so it consumes the pre-computed pixel value.
+        // Using ann.fontSizePx unconditionally in the normalized viewBox was the
+        // unit-space mismatch that produced giant glyphs spanning the frame.
+        const isPixelSpace = renderHeight > 1 || renderWidth > 1;
+        const fontSize = isPixelSpace
+            ? (ann.fontSizePx || annotationFontSizePx(ann, renderWidth, renderHeight))
+            : (ann.fontSizeRel || 0.036);
         // Halo as SVG presentation attributes (paint-order: stroke draws the
         // dark halo UNDER the fill) so the contrast survives PNG export. The
         // user-picked colour (or the white default) stays the fill, so it reads
@@ -5433,6 +5715,7 @@ function createAnnotationElement(ann) {
             'dominant-baseline': 'hanging',
         });
         textEl.textContent = ann.text;
+        textEl.classList.remove('annotation-shape');
         textEl.classList.add('annotation-text');
         return textEl;
     }
@@ -5455,7 +5738,7 @@ function renderAnnotationsToSvg(svg, annotations, renderWidth = 1, renderHeight 
     const group = document.createElementNS(SVG_NS, 'g');
     let selectedAnn = null;
     (annotations || []).forEach(ann => {
-        const el = createAnnotationElement(ann);
+        const el = createAnnotationElement(ann, renderWidth, renderHeight);
         if (!el) return;
         if (ann && ann.id) el.setAttribute('data-ann-id', ann.id);
         if (selectedId && ann && ann.id === selectedId) {
@@ -5522,7 +5805,7 @@ function denormalizeAnnotations(annotations, targetWidth, targetHeight) {
                 ...ann,
                 x: (ann.x || 0) * targetWidth,
                 y: (ann.y || 0) * targetHeight,
-                fontSizePx: (ann.fontSizeRel || 0.036) * Math.max(targetWidth, targetHeight),
+                fontSizePx: annotationFontSizePx(ann, targetWidth, targetHeight),
                 strokeWidthPx,
             };
         }

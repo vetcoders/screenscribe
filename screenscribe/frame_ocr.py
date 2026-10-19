@@ -17,16 +17,32 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import subprocess  # nosec B404 - ffmpeg/ffprobe invocation, no shell
 import tempfile
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, cast
 
 import httpx
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 
-from .api_utils import extract_response_payload_error, retry_request
+from .api_utils import (
+    extract_response_payload_error,
+    provider_client_options,
+    retry_request,
+    validate_provider_endpoint,
+)
 from .audio import get_video_duration
 from .config import ScreenScribeConfig
 from .prompts import apply_analysis_prompt_override
@@ -38,6 +54,21 @@ from .unified.wire import _build_unified_payload
 console = Console()
 
 DEFAULT_FRAME_INTERVAL_SECONDS = 5.0
+
+# Hard ceiling on billable vision calls for one OCR transcript: one hour of
+# footage at the default 5 s grid. Without it, --frame-interval 0.5 on an hour
+# of dynamic footage silently queues up to 7200 paid frames. Raise it with
+# --ocr-max-frames when that is genuinely what you want.
+DEFAULT_OCR_MAX_FRAMES = 720
+
+# Concurrent OCR requests. A 12-minute recording at 5 s is ~140 frames; one
+# request at a time left the terminal silent for tens of minutes.
+OCR_MAX_WORKERS = 4
+
+# Two frame-grid ranges are "adjacent" when one ends where the next begins.
+# The grid is built by repeated float addition, so compare with a tolerance
+# far below any real frame interval.
+_RANGE_ADJACENCY_TOLERANCE = 1e-6
 
 # The vision model is asked for a verbatim transcription only; analysis stays
 # with the downstream semantic/vision passes that consume the segments.
@@ -65,11 +96,17 @@ def extract_interval_frames(
     output_dir: Path,
     *,
     duration: float | None = None,
+    on_frame: Callable[[], None] | None = None,
+    on_failure: Callable[[float, Exception], None] | None = None,
 ) -> list[tuple[float, Path]]:
     """Extract one frame every ``interval_seconds`` via the shared ffmpeg helper.
 
     Returns ``(timestamp, frame_path)`` pairs. Frame extraction failures are
-    skipped (a missing frame only means a gap in OCR coverage, never a crash).
+    skipped (a missing frame only means a gap in OCR coverage, never a crash),
+    but they are *reported*: ``on_failure(timestamp, error)`` is called for each
+    one so the caller can turn them into structured coverage gaps instead of a
+    console line nobody reads. ``on_frame`` is called after every attempted
+    timestamp (progress display).
     """
     if interval_seconds <= 0:
         raise ValueError("frame interval must be positive")
@@ -87,9 +124,45 @@ def extract_interval_frames(
             frames.append((timestamp, frame_path))
         except RuntimeError as e:
             console.print(f"  [red]✗[/] Frame at {timestamp:.1f}s failed: {e}")
+            if on_failure is not None:
+                on_failure(timestamp, e)
+        if on_frame is not None:
+            on_frame()
         timestamp += interval_seconds
         index += 1
     return frames
+
+
+def merge_time_ranges(ranges: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Collapse overlapping and adjacent ``(start, end)`` ranges into the fewest spans.
+
+    A run of consecutive failed frames is one gap in the recording, not N
+    separate ones, so the warning the operator reads stays readable.
+    """
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1] + _RANGE_ADJACENCY_TOLERANCE:
+            previous_start, previous_end = merged[-1]
+            merged[-1] = (previous_start, max(previous_end, end))
+            continue
+        merged.append((start, end))
+    return merged
+
+
+def _coverage_gaps_from_timestamps(
+    timestamps: list[float],
+    interval_seconds: float,
+    duration: float,
+) -> list[tuple[float, float]]:
+    """Turn failed frame timestamps into merged ``[t, t + interval)`` gap ranges."""
+    if not timestamps:
+        return []
+    return merge_time_ranges(
+        [
+            (timestamp, min(timestamp + interval_seconds, duration) if duration > 0 else timestamp)
+            for timestamp in timestamps
+        ]
+    )
 
 
 def _frame_probe_hash(frame_path: Path) -> str:
@@ -177,9 +250,20 @@ def _write_private_cache_entry(cache_path: Path, payload: dict[str, str]) -> Non
     cache_path.chmod(0o600)
 
 
+class FrameOCRConfigError(ValueError):
+    """A setup problem that dooms every frame (e.g. missing vision key).
+
+    Subclasses ``ValueError`` so existing handlers keep working. The OCR pool
+    aborts the whole run only for this type; any other error from a single
+    frame (including a provider returning a malformed payload) is a gap in
+    the transcript, not a lost run.
+    """
+
+
 def _post_ocr_request(endpoint: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Transport for one OCR request (the patch seam for tests)."""
-    with httpx.Client(timeout=120.0) as client:
+    with httpx.Client(timeout=120.0, **provider_client_options(endpoint)) as client:
+        validate_provider_endpoint(endpoint)
         response = client.post(
             endpoint,
             headers={
@@ -208,7 +292,7 @@ def ocr_frame(
     """
     api_key = config.get_vision_api_key()
     if not api_key:
-        raise ValueError(
+        raise FrameOCRConfigError(
             "Vision API key required for OCR transcript source. "
             "Run `screenscribe auth login` or set SCREENSCRIBE_VISION_API_KEY."
         )
@@ -267,11 +351,25 @@ def ocr_frame(
     return text, response_id
 
 
+def _ocr_progress() -> Progress:
+    """Visible progress for the two long OCR phases (extraction, VLM reads)."""
+    return Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=24),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    )
+
+
 def transcribe_video_ocr(
     video_path: Path,
     config: ScreenScribeConfig,
     *,
     frame_interval: float = DEFAULT_FRAME_INTERVAL_SECONDS,
+    max_frames: int = DEFAULT_OCR_MAX_FRAMES,
     cache_dir: Path | None = None,
     work_dir: Path | None = None,
 ) -> TranscriptionResult:
@@ -280,7 +378,18 @@ def transcribe_video_ocr(
     Each surviving (non-duplicate) frame with readable text becomes one
     segment spanning ``[t, t + frame_interval)`` clamped to the video
     duration, so timestamps come from the frame grid, not from the model.
+
+    Frames lost to extraction or OCR failures are recorded on the result as
+    ``coverage_gaps``: the pipeline warns on them and the report says which
+    ranges were never analyzed, instead of looking complete. A deduplicated
+    frame is NOT a gap -- its content is identical to the kept frame before it.
+
+    ``max_frames`` caps the billable vision calls. It is checked once, after
+    dedupe and before the first OCR request, so an over-budget run costs
+    nothing: it raises :class:`FrameOCRConfigError` naming both remedies.
     """
+    if max_frames < 1:
+        raise ValueError("OCR frame budget must be at least 1")
     duration = get_video_duration(video_path)
     owned_work_dir: tempfile.TemporaryDirectory[str] | None = None
     if work_dir is None:
@@ -291,15 +400,74 @@ def transcribe_video_ocr(
         console.print(
             f"[blue]OCR transcript:[/] frames every {frame_interval:g}s over {duration:.0f}s"
         )
-        frames = extract_interval_frames(video_path, frame_interval, work_dir, duration=duration)
+        expected_frames = max(1, math.ceil(duration / frame_interval)) if duration > 0 else 0
+        extraction_failures: list[float] = []
+        with _ocr_progress() as progress:
+            extract_task = progress.add_task("Extracting frames", total=expected_frames or None)
+            frames = extract_interval_frames(
+                video_path,
+                frame_interval,
+                work_dir,
+                duration=duration,
+                on_frame=lambda: progress.advance(extract_task),
+                on_failure=lambda timestamp, _exc: extraction_failures.append(timestamp),
+            )
         kept = dedupe_frames(frames)
         if len(kept) < len(frames):
             console.print(f"[dim]  Frame dedup: {len(frames)} → {len(kept)}[/]")
 
+        # Budget gate: the very next block pays per frame, so the only honest
+        # place to stop is here -- before the first request, after dedupe has
+        # established the real call count.
+        if len(kept) > max_frames:
+            raise FrameOCRConfigError(
+                f"Frame OCR needs {len(kept)} vision call(s) for this recording, "
+                f"over the budget of {max_frames} frame(s). "
+                f"Either raise the budget (--ocr-max-frames {len(kept)}) or sample "
+                f"fewer frames (--frame-interval above {frame_interval:g}s)."
+            )
+        console.print(
+            f"[blue]OCR:[/] {len(kept)} unique frame(s) → up to {len(kept)} "
+            f"vision call(s) (budget {max_frames})"
+        )
+
+        results: dict[int, tuple[str, str]] = {}
+        failures: list[tuple[float, Exception]] = []
+        with _ocr_progress() as progress:
+            ocr_task = progress.add_task(f"OCR {len(kept)} frame(s)", total=len(kept))
+            with ThreadPoolExecutor(max_workers=OCR_MAX_WORKERS) as executor:
+                futures = {
+                    executor.submit(ocr_frame, frame_path, config, cache_dir=cache_dir): index
+                    for index, (_timestamp, frame_path) in enumerate(kept)
+                }
+                for future in as_completed(futures):
+                    index = futures[future]
+                    try:
+                        results[index] = future.result()
+                    except FrameOCRConfigError:
+                        # Configuration errors (missing key) are not per-frame
+                        # transients: fail the whole source immediately. A
+                        # plain ValueError (e.g. one malformed provider
+                        # payload) stays a per-frame gap below.
+                        raise
+                    except Exception as exc:  # one bad frame is a gap, not a lost run
+                        failures.append((kept[index][0], exc))
+                        console.print(
+                            f"  [yellow]⚠[/] OCR failed for frame at {kept[index][0]:.1f}s: {exc}"
+                        )
+                    progress.advance(ocr_task)
+
+        if kept and not results:
+            raise RuntimeError(
+                f"Frame OCR failed for all {len(kept)} frame(s); last error: {failures[-1][1]}"
+            ) from failures[-1][1]
+
         segments: list[Segment] = []
         last_response_id = ""
-        for timestamp, frame_path in kept:
-            text, response_id = ocr_frame(frame_path, config, cache_dir=cache_dir)
+        for index, (timestamp, _frame_path) in enumerate(kept):
+            if index not in results:
+                continue
+            text, response_id = results[index]
             if response_id:
                 last_response_id = response_id
             if not text:
@@ -312,6 +480,19 @@ def transcribe_video_ocr(
                     text=text,
                 )
             )
+        # Extraction and OCR failures are the same thing to the reader: a time
+        # range the transcript (and therefore the report) says nothing about.
+        coverage_gaps = _coverage_gaps_from_timestamps(
+            extraction_failures + [timestamp for timestamp, _exc in failures],
+            frame_interval,
+            duration,
+        )
+        if coverage_gaps:
+            console.print(
+                f"[yellow]OCR transcript:[/] {len(extraction_failures) + len(failures)} frame(s) "
+                f"failed and leave {len(coverage_gaps)} gap(s) in the transcript; "
+                "a re-run retries only those (the rest is cached)"
+            )
 
         full_text = "\n".join(segment.text for segment in segments)
         console.print(
@@ -322,6 +503,7 @@ def transcribe_video_ocr(
             segments=segments,
             language=config.language,
             response_id=last_response_id,
+            coverage_gaps=coverage_gaps,
         )
     finally:
         if owned_work_dir is not None:

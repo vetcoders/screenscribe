@@ -2,7 +2,7 @@ name: Deploy canonical production (screenscribe.vetcoders.io)
 
 # Canonical production for the landing site is Caddy on a VM
 # (screenscribe.vetcoders.io). GitHub Pages is a non-canonical mirror.
-# Operator decision 2026-07-09. This workflow performs an atomic,
+# This workflow performs an atomic,
 # release-directory-based deploy over SSH/rsync with pre-activation
 # validation, post-switch smoke checks, and automatic rollback.
 #

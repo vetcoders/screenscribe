@@ -959,6 +959,25 @@ def test_review_server_error_does_not_leak_paths(
     assert ".json" not in body
 
 
+def test_review_save_internal_error_does_not_expose_exception_details(
+    review_workspace: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import screenscribe.review_server as server
+
+    output_dir, report_file, video_path = review_workspace
+    _write_min_report(output_dir)
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+
+    def fail_replace(*args: object) -> None:
+        raise OSError("synthetic-private-diagnostic")
+
+    monkeypatch.setattr(server.os, "replace", fail_replace)
+    response = TestClient(app).post("/api/save")
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Failed to save review state."}
+    assert "synthetic-private-diagnostic" not in response.text
+
+
 def test_review_server_save_merges_human_review(
     review_workspace: tuple[Path, Path, Path],
 ) -> None:
@@ -1087,6 +1106,7 @@ def test_review_server_reset_returns_to_generated_report_state(
         "reviewer": "",
         "modified": False,
         "resetGeneration": 1,
+        "corrections": [],
     }
 
 
@@ -2689,6 +2709,7 @@ def test_review_state_snapshot_serializes_with_reset_lock(
                 "reviewer": "",
                 "modified": False,
                 "resetGeneration": 1,
+                "corrections": [],
             }
 
     asyncio.run(_run())
@@ -2793,3 +2814,241 @@ def test_concurrent_manual_analyses_last_response_id_uses_cas(
     # Fast committed "fast-id"; slow read the stale "" and lost the CAS, so the
     # head keeps the newer id rather than being clobbered by the late writer.
     assert session.last_response_id == "fast-id"
+
+
+def _write_min_report(output_dir: Path) -> None:
+    import json
+
+    (output_dir / "screen_report.json").write_text(
+        json.dumps({"video": "screen.mov", "findings": []}),
+        encoding="utf-8",
+    )
+
+
+def test_review_state_carries_saved_corrections(
+    review_workspace: tuple[Path, Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POST a literal correction, then /api/review-state returns it. Bad input is 400."""
+    import screenscribe.agent.corrections as transcript_corrections
+
+    output_dir, report_file, video_path = review_workspace
+    _write_min_report(output_dir)
+    transcript = output_dir / "transcript.vtt"
+    transcript_bytes = b"WEBVTT\n\n00:00.000 --> 00:01.000\ncloud agent\n"
+    transcript.write_bytes(transcript_bytes)
+    report_bytes = (output_dir / "screen_report.json").read_bytes()
+    monkeypatch.setattr(transcript_corrections, "default_glossary_dir", lambda: tmp_path / "cfg")
+
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    client = TestClient(app)
+    rejected = client.post(
+        "/api/corrections",
+        json={"match": " ", "replacement": "Claude", "scope": "report"},
+    )
+    assert rejected.status_code == 400
+    bad_scope = client.post(
+        "/api/corrections",
+        json={"match": "cloud", "replacement": "Claude", "scope": "regex"},
+    )
+    assert bad_scope.status_code == 400
+
+    saved = client.post(
+        "/api/corrections",
+        json={
+            "match": "cloud",
+            "replacement": "Claude",
+            "scope": "report",
+            "note": "agent voice -> Claude, not chmura",
+        },
+    )
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["entry"]["match"] == "cloud"
+    assert body["entry"]["replacement"] == "Claude"
+    assert body["entry"]["kind"] == "transcript"
+    state = client.get("/api/review-state")
+    assert state.status_code == 200
+    assert state.json()["corrections"] == body["corrections"]
+    assert state.json()["corrections"][0]["match"] == "cloud"
+    assert "correctionsWarning" not in state.json()
+    assert transcript.read_bytes() == transcript_bytes
+    assert (output_dir / "screen_report.json").read_bytes() == report_bytes
+    literal = client.post(
+        "/api/corrections",
+        json={"match": "c.oud", "replacement": "NO", "scope": "report"},
+    )
+    assert literal.status_code == 200
+    assert literal.json()["entry"]["match"] == "c.oud"
+
+
+def test_global_glossary_does_not_retroactively_change_report_overlay(
+    review_workspace: tuple[Path, Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import screenscribe.agent.corrections as corrections
+
+    output_dir, report_file, video_path = review_workspace
+    _write_min_report(output_dir)
+    glossary_dir = tmp_path / "global-glossary"
+    monkeypatch.setattr(corrections, "default_glossary_dir", lambda: glossary_dir)
+    corrections.append_correction(
+        tmp_path / "another-report",
+        match="old wording",
+        replacement="global wording",
+        scope="global",
+        glossary_dir=glossary_dir,
+    )
+    client = TestClient(create_review_app(output_dir, report_file.name, video_path, _config()))
+    assert client.get("/api/review-state").json()["corrections"] == []
+    saved = client.post(
+        "/api/corrections",
+        json={"match": "local wording", "replacement": "report wording", "scope": "report"},
+    )
+    assert saved.status_code == 200
+    assert [item["match"] for item in saved.json()["corrections"]] == ["local wording"]
+    assert client.get("/api/review-state").json()["corrections"] == saved.json()["corrections"]
+    effective = corrections.corrections_summary(output_dir, limit=None)
+    assert {item["match"] for item in effective["entries"]} == {"old wording", "local wording"}
+
+
+def test_malformed_corrections_ledger_degrades_without_500(
+    review_workspace: tuple[Path, Path, Path],
+) -> None:
+    output_dir, report_file, video_path = review_workspace
+    _write_min_report(output_dir)
+    (output_dir / "corrections.json").write_text("{not json", encoding="utf-8")
+    app = create_review_app(output_dir, report_file.name, video_path, _config())
+    response = TestClient(app).get("/api/review-state")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["corrections"] == []
+    assert "not valid JSON" in payload["correctionsWarning"]
+
+
+def test_transcript_overlay_marks_subtitle_and_finding_quote() -> None:
+    """Node vm: subtitle list and finding quotes show the correction, tooltip keeps the original."""
+    import os
+    import shutil
+    import subprocess
+    import textwrap
+
+    node = shutil.which("node")
+    if not node:
+        where = (
+            "CI"
+            if os.environ.get("CI", "").strip().lower() in {"1", "true", "yes", "on"}
+            else "local"
+        )
+        pytest.fail(f"node is missing ({where}): transcript overlay vm test must run, not skip")
+    source = (
+        Path(__file__).resolve().parents[1] / "screenscribe/html_pro_assets/scripts/review_app.js"
+    ).read_text(encoding="utf-8")
+    start = source.index("/* ss-corrections-overlay:start */")
+    end = source.index("/* ss-corrections-overlay:end */")
+    overlay = source[start:end]
+    runner = textwrap.dedent(
+        """
+        const vm = require('vm');
+        function makeEl(tag) {
+            const el = {
+                tagName: tag,
+                className: '',
+                title: '',
+                textContent: '',
+                dataset: {},
+                children: [],
+                attrs: {},
+                classList: {
+                    _c: new Set(),
+                    contains(value) { return this._c.has(value); },
+                    add(value) { this._c.add(value); },
+                },
+                setAttribute(name, value) {
+                    this.attrs[name] = String(value);
+                    if (name === 'title') this.title = String(value);
+                },
+                getAttribute(name) {
+                    return this.attrs[name] == null ? null : this.attrs[name];
+                },
+                appendChild(child) { this.children.push(child); return child; },
+                removeChild(child) {
+                    this.children = this.children.filter((item) => item !== child);
+                    return child;
+                },
+                replaceChildren(...nodes) { this.children = nodes; },
+            };
+            Object.defineProperty(el, 'firstChild', { get() { return el.children[0] || null; } });
+            return el;
+        }
+        const document = {
+            createElement: (tag) => makeEl(tag),
+            createTextNode: (text) => ({ textContent: String(text), nodeType: 3 }),
+        };
+        const sandbox = { document, console };
+        vm.createContext(sandbox);
+        vm.runInContext(OVERLAY, sandbox, { filename: 'corrections-overlay.js' });
+        const entries = [{
+            match: 'cloud',
+            replacement: 'Claude',
+            created_at: '2026-09-28T21:00:00Z',
+        }];
+        const subtitle = makeEl('div');
+        subtitle.className = 'text';
+        subtitle.textContent = 'the Cloud agent';
+        sandbox.applyCorrectionElement(subtitle, entries);
+        const span = subtitle.children.find((child) => child.className === 'ss-correction');
+        if (!span) throw new Error('subtitle span missing');
+        if (span.textContent !== 'Claude') throw new Error('subtitle replacement ' + span.textContent);
+        if (span.title !== 'Cloud') throw new Error('subtitle tooltip ' + span.title);
+        if (span.getAttribute('title') !== 'Cloud') throw new Error('subtitle title attr');
+        const visible = subtitle.children.map((child) => child.textContent).join('');
+        if (visible !== 'the Claude agent') throw new Error('subtitle visible ' + visible);
+
+        const finding = makeEl('div');
+        finding.className = 'finding-transcript';
+        finding.textContent = 'heard cloud not the name';
+        sandbox.applyCorrectionElement(finding, entries);
+        const quote = finding.children.find((child) => child.className === 'ss-correction');
+        if (!quote || quote.title !== 'cloud' || quote.textContent !== 'Claude') {
+            throw new Error('finding quote overlay missing');
+        }
+
+        const untouched = makeEl('div');
+        untouched.textContent = 'cloudless';
+        sandbox.applyCorrectionElement(untouched, entries);
+        if (untouched.textContent !== 'cloudless' || untouched.children.length) {
+            throw new Error('whole-phrase boundary failed');
+        }
+        const literal = makeEl('div');
+        literal.textContent = 'cloud';
+        sandbox.applyCorrectionElement(literal, [{
+            match: 'c.oud',
+            replacement: 'NO',
+            created_at: '2026-09-28T21:00:00Z',
+        }]);
+        if (literal.textContent !== 'cloud' || literal.children.length) {
+            throw new Error('regex metachar was interpreted');
+        }
+        const overlapped = sandbox.correctionPieces('the cloud agent', [
+            { match: 'cloud agent', replacement: 'X', created_at: '2026-09-28T21:00:00Z' },
+            { match: 'cloud', replacement: 'Claude', created_at: '2026-09-28T21:01:00Z' },
+        ]).map((piece) => piece.text).join('');
+        if (overlapped !== 'the Claude agent') throw new Error('later entry lost: ' + overlapped);
+        process.stdout.write('overlay:ok');
+        """
+    )
+    completed = subprocess.run(
+        [node, "-e", "const OVERLAY = " + repr(overlay) + ";\n" + runner],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        pytest.fail(
+            "transcript overlay vm failed:\n"
+            f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+        )
+    assert "overlay:ok" in completed.stdout

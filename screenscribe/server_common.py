@@ -252,8 +252,12 @@ def serialize_stt_result(
     return payload
 
 
+# Browser audio upload routes sharing the MAX_AUDIO_BYTES cap.
+_STT_UPLOAD_PATHS = frozenset({"/api/stt", "/api/agent/stt"})
+
+
 def install_stt_upload_cap(app: FastAPI) -> None:
-    """Register the ``/api/stt`` upload-cap middleware on ``app``.
+    """Register the browser-audio upload-cap middleware on ``app``.
 
     Rejects an honestly-declared oversized STT upload before the body is
     parsed/spooled at all (the handler still enforces the cap chunk-wise
@@ -262,7 +266,7 @@ def install_stt_upload_cap(app: FastAPI) -> None:
 
     @app.middleware("http")
     async def _stt_upload_cap(request: Request, call_next):  # type: ignore[no-untyped-def]
-        if request.url.path == "/api/stt":
+        if request.url.path in _STT_UPLOAD_PATHS:
             declared = request.headers.get("content-length", "")
             # Small slack on top of the cap for multipart framing overhead.
             if declared.isdigit() and int(declared) > MAX_AUDIO_BYTES + 64 * 1024:
@@ -279,8 +283,14 @@ def transcribe_browser_audio(
     filename: str,
     content_type: str,
     config: ScreenScribeConfig,
+    output_dir: Path | None = None,
 ) -> Any:
-    """Transcribe browser uploads directly, then fall back to MP3 normalization."""
+    """Transcribe browser uploads directly, then fall back to MP3 normalization.
+
+    ``output_dir`` is the review output directory; passing it lets saved
+    report-scoped corrections steer the STT glossary for dictation and voice
+    notes, the same way they already steer the pipeline's own STT calls.
+    """
     from .audio import normalize_audio_for_stt
     from .transcribe import transcribe_audio, transcribe_audio_bytes
 
@@ -293,6 +303,7 @@ def transcribe_browser_audio(
             api_key=config.get_stt_api_key(),
             stt_endpoint=config.stt_endpoint,
             stt_model=config.stt_model,
+            output_dir=output_dir,
         )
     except Exception as direct_error:
         # BH18: only FORMAT failures benefit from the ffmpeg-normalization
@@ -319,6 +330,7 @@ def transcribe_browser_audio(
                 api_key=config.get_stt_api_key(),
                 stt_endpoint=config.stt_endpoint,
                 stt_model=config.stt_model,
+                output_dir=output_dir,
             )
         finally:
             if source_path is not None:

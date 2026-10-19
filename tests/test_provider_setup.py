@@ -66,6 +66,20 @@ def test_xai_setup_can_choose_an_api_key_over_a_signed_in_account(
     assert config.get_llm_api_key() == "xai-fixture-key"
 
 
+def test_declined_key_selection_keeps_file_and_reports_no_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _config_path(monkeypatch, tmp_path)
+    path.parent.mkdir(parents=True)
+    before = b"# existing neutral configuration\nSCREENSCRIBE_PROVIDER=libraxis\n"
+    path.write_bytes(before)
+    result = runner.invoke(app, ["config", "auth", "xai", "--key"], input="synthetic-key\nn\n")
+    assert result.exit_code == 0, result.output
+    assert path.read_bytes() == before
+    assert "nothing was written" in result.output
+    assert "synthetic-key" not in result.output
+
+
 def test_libraxis_preset_is_coherent() -> None:
     config = ScreenScribeConfig.provider_preset("libraxis", "lx-test-key")
 
@@ -234,26 +248,25 @@ def test_known_mismatch_blocks_before_any_runtime_or_request(
     assert "No request was sent" in result.output
 
 
-def test_openai_env_key_on_libraxis_endpoint_is_a_hard_block(
+def test_openai_env_key_on_libraxis_selection_is_ignored_with_warning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Provenance block (Codex P1): a key from the explicit OPENAI_API_KEY env var
-    # is a proven OpenAI key. Left on the default LibraxisAI endpoint it must be a
-    # blocking error -- unlike an ambiguous sk- key of unknown origin, which warns.
+    # Sovereignty doctrine (supersedes the fill-then-hard-block gate): a
+    # proven-OpenAI ambient key under a LibraxisAI selection never enters the
+    # slots -- it is ignored with a warning, so it cannot reach LibraxisAI.
     for key in ("SCREENSCRIBE_LLM_API_KEY", "SCREENSCRIBE_VISION_API_KEY", "SCREENSCRIBE_PROVIDER"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-ambient-openai-key")  # pragma: allowlist secret
     config = ScreenScribeConfig()
     config._load_from_env()
 
-    # The llm/vision slots carry the OPENAI_API_KEY provenance; blocking is scoped
-    # to those providers (transcribe, which only touches stt, stays unaffected).
-    errors = config.validate({"llm", "vision"})
-    assert any("OPENAI_API_KEY" in error for error in errors)
-    assert any("No request was sent" in error for error in errors)
-    assert "sk-ambient-openai-key" not in "\n".join(errors)  # pragma: allowlist secret
-    # stt is not filled from OPENAI_API_KEY, so an stt-only check does not block.
-    assert config.validate({"stt"}) == []
+    assert config.llm_api_key == ""
+    assert config.vision_api_key == ""
+    assert config.openai_env_key_slots == set()
+    assert config.validate({"llm", "vision"}) == []
+    warnings = config.mismatch_warnings({"llm", "vision"})
+    assert any("OPENAI_API_KEY" in warning for warning in warnings)
+    assert "sk-ambient-openai-key" not in "\n".join(warnings)  # pragma: allowlist secret
 
 
 def test_config_show_reports_provider_and_status(monkeypatch: pytest.MonkeyPatch) -> None:

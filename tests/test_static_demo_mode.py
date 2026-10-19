@@ -13,6 +13,7 @@ behaviour is exercised in the headless e2e layer.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from screenscribe.html_pro.renderer import render_html_report_pro
 from screenscribe.transcribe import Segment
@@ -102,3 +103,20 @@ def test_static_demo_message_is_single_sourced_en_pl() -> None:
     ).read_text(encoding="utf-8")
     # Present under both language blocks of the JS bundle.
     assert i18n_js.count('"staticDemoNoVideo"') == 2
+
+
+def test_public_demo_embeds_the_current_panel_assets() -> None:
+    """R5-04: merging must not deploy a stale panel to the public site.
+
+    Reports inline their scripts at generation time and ``site/**`` deploys on
+    merge, so a demo generated before a panel change silently ships the old
+    chat. This pins the deployed demo to the installed sources; regenerate
+    with ``uv run python examples/generate_example.py`` and copy
+    ``examples/example_report.html`` over ``site/demo/report.html``.
+    """
+    from screenscribe.html_pro.assets import load_js_agent_panel, load_js_i18n_runtime
+
+    repo_root = Path(__file__).resolve().parents[1]
+    demo = (repo_root / "site" / "demo" / "report.html").read_text(encoding="utf-8")
+    assert load_js_agent_panel() in demo
+    assert load_js_i18n_runtime() in demo

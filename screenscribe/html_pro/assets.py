@@ -121,6 +121,16 @@ def load_js_agent_panel() -> str:
     return load_asset("scripts/agent_panel.js")
 
 
+def load_css_selection_toolbar() -> str:
+    """Load the selection reference toolbar stylesheet (review report only)."""
+    return load_asset("styles/selection_toolbar.css")
+
+
+def load_js_selection_toolbar() -> str:
+    """Load the selection reference toolbar (review report only)."""
+    return load_asset("scripts/selection_toolbar.js")
+
+
 @lru_cache(maxsize=1)
 def load_favicon_data_uri() -> str:
     """Return the screenscribe favicon as a self-contained data URI.

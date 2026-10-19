@@ -85,9 +85,10 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 | `--prompt`, `-P` | none | Append custom instructions to the semantic, semantic-prefilter, and vision prompts. |
 | `--lang`, `-l` | `en` | Language code for transcription. |
 | `--local` | off | Use a local STT server instead of the cloud provider. |
-| `--transcript-source` | `auto` | Where transcript segments come from: `auto` (audio STT when an audio track exists, frame OCR otherwise), `audio` (STT; fails fast on silent recordings), `ocr` (VLM OCR of frames, no audio needed). |
+| `--transcript-source` | `auto` | Where transcript segments come from: `auto` (audio STT when the file has an audio stream, switching to frame OCR when that stream carries no speech), `audio` (STT; fails fast on silent recordings), `ocr` (VLM OCR of frames, no audio needed). |
 | `--no-audio` | off | Alias for `--transcript-source ocr`: skip audio/STT entirely and build the transcript from OCR'd frames. Conflicts with `--transcript-source audio`. |
 | `--frame-interval` | `5.0` | Seconds between frames for the OCR transcript source (minimum 0.5). |
+| `--ocr-max-frames` | `720` | Maximum billable vision calls per video for the OCR transcript source (minimum 1). Checked after frame dedup, before the first paid call; over budget stops the video with both remedies. |
 | `--vision` / `--no-vision` (alias `--no-vlm`) | on | Skip visual/screenshot analysis. Semantic LLM detection still runs. |
 | `--json` / `--no-json` | on | Save the JSON report. |
 | `--markdown` / `--no-markdown` (`--md`) | on | Save the Markdown report. |
@@ -134,15 +135,43 @@ The transcript is an abstraction over where timestamped segments come from:
   (semantic pre-filter, screenshots, unified VLM analysis, reports, response
   chaining) works unchanged. OCR uses the vision credentials/endpoint, so it
   also works under `--no-vision` (which only skips VLM *analysis*).
-- `auto` (default) — `audio` when the recording has an audio track, `ocr`
-  otherwise. A recording without an audio track reaches semantic analysis instead
-  of failing at the audio gate. `--no-audio` is a shortcut for
-  `--transcript-source ocr`.
+- `auto` (default) — picks `audio` when the file has an audio stream and
+  switches to OCR when that stream carries no speech. A recording with no audio
+  track, and one whose track turns out to be speechless (STT returns a generic
+  silence hallucination, or near-certain no-speech on a very short transcript),
+  both reach semantic analysis instead of failing at the audio gate. The switch
+  is announced on the console and recorded in the checkpoint, so `--resume`
+  continues as an OCR run instead of paying for the STT round again. Empty or
+  corrupt audio still stops the run — that is a broken input, not a silent one —
+  and an explicit `--transcript-source audio` keeps the stop in every case.
+  `--no-audio` is a shortcut for `--transcript-source ocr`.
 
 `--prompt` instructions reach the OCR stage and all analysis stages either
 way. Private OCR cache entries bind frame content, model, endpoint and the
 effective prompt. Matching re-runs reuse them; changing those inputs triggers
 fresh OCR. Checkpoints also bind the source/interval, preset and vocabulary.
+
+**OCR frame budget.** Every surviving frame is a paid vision call, and a small
+`--frame-interval` multiplies fast: half-second sampling over an hour of
+dynamic footage is up to 7200 calls. `--ocr-max-frames` (default `720`, one
+hour at the default 5 s grid) caps that. The count is checked once, after
+dedup and before the first request, so an over-budget run costs nothing: the
+video stops with the kept-frame count, the budget and both remedies (raise
+`--ocr-max-frames` or increase `--frame-interval`). Every run also prints the
+planned spend before the paid stage:
+
+```
+OCR: 138 unique frame(s) → up to 138 vision call(s) (budget 720)
+```
+
+**OCR coverage gaps.** A frame that cannot be extracted or read is skipped, so
+the transcript (and therefore the report) says nothing about that slice of the
+recording. Those ranges are not silent: they are recorded on the transcript as
+coverage gaps, printed as an `OCR Coverage Warning` panel with `mm:ss` ranges,
+and carried into the JSON/HTML/Markdown report through the report's errors
+channel. A re-run with `--resume` retries only the failed frames — every frame
+that was read is cached. Deduplicated frames are *not* gaps: their content is
+identical to the kept frame before them.
 
 ```bash
 uv run screenscribe review silent-demo.mov --no-audio --prompt "No audio; the explanations are written on screen"
@@ -162,8 +191,8 @@ describing who the viewer is and what counts as a finding:
 - `medical` — clinical consultations and medical systems; findings use
   `finding/observation/risk/followup/other` with a Polish+English clinical
   dictionary.
-- `veterinary` — veterinary consultations, procedures, and clinic systems
-  (e.g. Vista); same clinical categories with a veterinary dictionary.
+- `veterinary` — veterinary consultations, procedures, and clinic systems;
+  same clinical categories with a veterinary dictionary.
 - `custom` — your own profile, backed by `--keywords-file`; the file's
   top-level keys become the finding categories. Without `--keywords-file`,
   `review` stops with instructions.
@@ -479,6 +508,30 @@ For a one-off run with a different keywords file, pass `--keywords-file /path` t
 
 ---
 
+### `screenscribe doctor`
+
+```bash
+screenscribe doctor --out ./proofs --json
+```
+
+Runs small live provider probes with the configured credentials and local tool
+checks. Provider calls can consume API quota. The output contains per-element
+receipt JSON, `MATRIX.md`, and, with `--json`, `summary.json`. Files are owner-only
+(`0600`, directory `0700`, where supported). Exit codes: `0` means all elements
+are proven, `2` means at least one is not proven, and `1` means the harness failed.
+
+Provider diagnostics retain endpoint scheme/host/port/path and locally generated
+status information. URL userinfo, query strings and fragments are removed;
+malformed or unsupported endpoint URLs become placeholders. HTTP exceptions
+retain their status code and exception type. Arbitrary provider error messages,
+response bodies and internal console output are omitted, because they may echo
+account tokens or truncated credentials. Redaction does not resolve or refresh
+an account; the live probes still use the normal credential resolution flow.
+Custom SDK/debug logging is outside this artifact policy. Review endpoint paths
+and other configuration metadata before sharing diagnostics.
+
+---
+
 ### `screenscribe version`
 
 ```bash
@@ -489,6 +542,42 @@ uv run screenscribe --version    # short form (also -V)
 ---
 
 ## Configuration reference
+
+Provider transport is checked again immediately before each request, including
+direct API calls, STT fallback, TTS, agent fallback, and live STT. Remote URLs
+must use `https://` or, for WebSockets, `wss://`. Plain `http://` / `ws://` is
+supported only for `localhost` (case/trailing-dot normalized) and literal
+loopback IPs: IPv4 `127.0.0.0/8`, IPv6 `::1`, and IPv4-mapped loopback. Hostname
+prefixes, DNS aliases, private LAN IPs, and alternate integer/octal IPv4 spelling
+are not loopback exceptions. Use TLS for those deployments. Redirects are not
+followed; set the final destination URL directly.
+
+Local plaintext HTTP/WS always connects directly. Provider clients ignore proxy
+environment settings for HTTP, including SDK-specific proxy mounts; WebSocket
+clients explicitly disable proxy discovery for WS. This does not depend on
+`NO_PROXY`. HTTPS/WSS retains configured environment proxy support.
+
+OAuth has a stricter rule: device authorization, authorization-code exchange,
+and refresh-token requests require HTTPS, including on loopback. The
+`SCREENSCRIBE_OPENAI_OAUTH_ISSUER` and `SCREENSCRIBE_XAI_OAUTH_ISSUER` overrides
+remain available for trusted HTTPS issuers; HTTPS is transport protection, not
+proof that an arbitrary issuer is trustworthy. Both resolved issuers and final
+token destinations are validated, and OAuth redirects are refused even for an
+injected client configured to follow redirects.
+
+Automatic provider identity uses only `api.libraxis.cloud`, `api.openai.com`,
+and `api.x.ai`, after IDNA/case/trailing-dot normalization. Parent domains and
+unlisted subdomains are custom endpoints, not proof of provider ownership.
+Custom HTTPS gateways remain available with explicitly configured keys.
+
+`config --set-key` writes an exact-byte `config.env.bak` before replacing the
+config; each file uses a temporary file in the same directory, `0600`, flush,
+fsync, and atomic replacement. Other config lines and their line endings are
+preserved. Failure before replacement leaves the old target intact. The two
+files are not a single transaction: if config replacement fails after a
+successful backup, the old config and its completed backup remain. This does
+not promise recovery from arbitrary hardware failure or serialize concurrent
+writers; avoid simultaneous configuration edits.
 
 screenscribe reads configuration from (in order) a config file and then
 environment variables, where **environment variables always win**.
@@ -599,19 +688,85 @@ affected finding/manual-frame notes, preserving existing notes. Read-only or
 no-op chat does not modify review data. The panel reports `review_applied:`
 only after a successful save; a failed save remains visibly unconfirmed.
 
+`correct_transcript` with `scope: "report"` writes the report's correction
+ledger straight away (it only affects this review). With `scope: "global"` it
+writes nothing: the tool returns a `review_plan` with `status:
+"pending_approval"`, the panel renders an Apply/Cancel card naming the phrase,
+the replacement and the scope, and only **Apply** posts it to
+`/api/corrections`. Cancel leaves the user glossary untouched. The glossary
+feeds every later transcription and analysis, so the agent may propose that
+change but never commit it alone.
+
+If the server was started with a repo root, `open_repo_file` reads allowlisted
+source and documentation files. Beyond the path allowlist and the size cap, the
+content is scanned for credential shapes (private-key blocks, common key
+prefixes, JWT-like values, `api_key`/`secret`/`token`/`password` assignments
+with a literal value). A file that matches is refused with the offending line
+numbers and no content, because whatever this tool returns goes to the model.
+Obvious placeholders (`your-…`, `changeme`, `example`, `xxx`) still read
+normally. There is no per-file approval prompt in the UI: the gate is the
+allowlist plus this scan.
+
 `merge_findings` / `unmerge_finding` currently return `{"unsupported": true}` — merge is a client-only fold (`mergeFindings` in the report UI) with no patch-callable API.
+
+The agent sees the evidence, not only the one-line summaries: `get_finding`
+returns a finding's full visual analysis and every merged frame, and
+`view_frame` attaches the real screenshot pixels to the model conversation
+(Responses `input_image`, or Anthropic image blocks). Frames are read only
+from the report directory and are never streamed to the browser.
+`capture_video_frames` grabs fresh frames from the source video at any
+timestamps (4 per call, 8 frames per turn together with `view_frame`, nothing
+written to the report), so the agent can read moments the pipeline did not
+keep, or a recording without narration minute by minute.
+
+#### Chat panel
+
+- **Streaming and Stop.** Answers render as they stream. "Agent is
+  responding…" shows with a **Stop** button (or `Esc` in the composer); a
+  stopped answer keeps the received text, marked as stopped. A timeout or lost
+  connection keeps the partial text and offers **Retry**, which replaces it
+  instead of appending a duplicate.
+- **Composer.** Multi-line field that grows with its content. `Enter` sends,
+  `Shift+Enter` adds a line, IME composition is respected. **Send** is
+  disabled for an empty draft; the draft stays editable while an answer
+  streams and survives closing the panel or reloading the page.
+- **Answers and bubbles.** Answers render Markdown (lists, bold, code,
+  tables) built without `innerHTML`; links stay text, never clickable URLs. Your messages are on the right,
+  the agent's on the left, each captioned "You" / "Agent".
+- **Screenshots.** Paste an image into the composer, drop it on the panel, or
+  use the image button: up to 4 per message, larger captures downscaled to a
+  2048 px long side. They go to the agent with the message (`images` in the
+  chat request; PNG, JPEG, WebP or GIF, checked by magic bytes, 6 MB each).
+- **Dictation.** The microphone button records a message, **Stop** (click the
+  microphone again) transcribes it into the draft for editing; **Cancel**
+  discards the recording. With **Send after dictation** checked (remembered per
+  report) the dictated message is sent right away when no turn is streaming;
+  otherwise it remains in the draft and is labeled as inserted, not sent. Uses
+  `POST /api/agent/stt` (same 25 MB cap and STT provider as `/api/stt`, but it
+  never advances the manual-frame conversation chain). Without a microphone,
+  permission, browser support, or the local server, the panel says why.
+- **Size.** Drag the bottom-left grip, use arrow keys on it (`Shift` for
+  larger steps, `Home`/`End` for smallest/largest), or cycle compact /
+  standard / large with the header button. The size is remembered per report
+  and is always kept inside the viewport and off the video player.
 
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `SCREENSCRIBE_AGENT_EGRESS` | `deny` | `deny` skips providers whose trust is `external`. `allow` sends the loaded report (and therefore the recording's contents) to those hosts. Analysis hosts (`processor`) are always kept. |
-| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from host and report receipt | `local` / `internal` / `processor` / `external`. localhost is `local`; `api.libraxis.cloud` is `internal`; a recorded successful semantic LLM host is `processor`. Set `external` to exclude that host under `deny`. |
+| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from host and report receipt | `local` / `internal` / `processor` / `external`. Strict loopback is `local`; only the canonical `api.libraxis.cloud` is implicitly `internal`, not other subdomains; a recorded successful semantic LLM host is `processor`. Set `external` to exclude that host under `deny`. An explicit trust override never bypasses transport validation. |
 
 Optional Anthropic fallback (skipped when unset): `ANTHROPIC_API_KEY` or `SCREENSCRIBE_AGENT_FALLBACK_API_KEY`. Install the extra with `pip install 'screenscribe[anthropic]'`.
 
-SSE events: `token`, `tool_call`, `tool_result`, `done`, `error`. Text uses
-round-buffered delivery: the backend sends it after each provider round
-completes, then emits tool events. It does not deliver individual tokens as
-the provider generates them. Unexpected provider/tool failures return a
+SSE events: `token`, `tool_call`, `tool_result`, `done`, `error`. `token`
+frames carry provider text deltas as they are generated, so the first words of
+an answer appear before the turn ends; a turn has many `token` frames. While a
+provider round produces no output (reasoning, slow first token) the stream
+sends SSE comment frames (`: keepalive`, every ~10 s); clients treat 60 s
+without any byte as a dead connection. Closing the HTTP stream (the panel's
+Stop) cancels the provider request. Tool calls run sequentially off the server
+event loop, with keepalives while waiting. A screenshot extraction has a 60-second
+timeout. Stop stops waiting and prevents further tool calls; a synchronous tool
+already running may finish its current operation. Unexpected provider/tool failures return a
 generic error to the browser and model; exception details remain in server
 logs. Explicit configuration and tool-input validation messages remain
 available. Requests
@@ -626,6 +781,16 @@ evidence, not a shared conversation head.
 The xAI agent uses stateless full history: each round includes trusted
 instructions, the report seed, prior output items and tool results. It sends
 no `previous_response_id` and returns `done.response_id=null`.
+
+#### Transcript correction scope
+
+An existing report displays only corrections saved in that report's ledger.
+The original transcript files stay unchanged. Global corrections also become
+glossary hints for subsequent transcription and analysis requests; they do not
+retroactively replace text in other saved reports. Re-running analysis produces
+a new result using the current glossary. Because of that reach, a global
+correction proposed by the review agent is saved only after you approve it in
+the chat panel; a report-scoped one is saved when the tool runs.
 
 ### xAI, TTS and live STT
 
@@ -990,7 +1155,9 @@ answer, set `SCREENSCRIBE_LLM_REASONING_EFFORT=low` (default: `low` on xAI,
 `review` handles silent recordings out of the box: the default `auto`
 transcript source routes them to frame OCR (`--transcript-source ocr`, alias
 `--no-audio`), reading frames every `--frame-interval` seconds with the vision
-model. Only an explicit `--transcript-source audio` (and `transcribe`, which
+model. This covers both a missing audio track and a track that carries no
+speech — `auto` switches to OCR after STT comes back speechless, rather than
+stopping at "Audio Quality Issue". Only an explicit `--transcript-source audio` (and `transcribe`, which
 is STT-only) fails fast on a missing audio track, with a clear message that
 suggests the vision-only path:
 

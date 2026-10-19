@@ -261,6 +261,9 @@ def serialize_transcription(transcription: TranscriptionResult) -> dict[str, Any
         # Persist so --resume keeps reporting a no-speech recording as a clean
         # empty result rather than a corrupt-audio error (FW-09).
         "hallucinations_filtered": transcription.hallucinations_filtered,
+        # Persist so a resumed run keeps warning about the time ranges frame OCR
+        # never managed to read; JSON has no tuple, so they round-trip as pairs.
+        "coverage_gaps": [[start, end] for start, end in transcription.coverage_gaps],
         "segments": [
             {
                 "id": s.id,
@@ -274,6 +277,17 @@ def serialize_transcription(transcription: TranscriptionResult) -> dict[str, Any
             for s in transcription.segments
         ],
     }
+
+
+def _deserialize_coverage_gaps(value: Any) -> list[tuple[float, float]]:
+    """Restore ``(start, end)`` coverage gaps from their JSON pair form."""
+    if not isinstance(value, list):
+        return []
+    gaps: list[tuple[float, float]] = []
+    for entry in value:
+        if isinstance(entry, (list, tuple)) and len(entry) == 2:
+            gaps.append((float(entry[0]), float(entry[1])))
+    return gaps
 
 
 def deserialize_transcription(data: dict[str, Any]) -> TranscriptionResult:
@@ -298,6 +312,9 @@ def deserialize_transcription(data: dict[str, Any]) -> TranscriptionResult:
         response_id=data.get("response_id", ""),
         timestamps_are_synthetic=data.get("timestamps_are_synthetic", False),
         hallucinations_filtered=data.get("hallucinations_filtered", False),
+        # Absent in checkpoints written before OCR coverage gaps were tracked;
+        # an empty list is the honest default for them (nothing was recorded).
+        coverage_gaps=_deserialize_coverage_gaps(data.get("coverage_gaps")),
     )
 
 

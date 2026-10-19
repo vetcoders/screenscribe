@@ -8,8 +8,8 @@ on sys.path). So we:
 2. Install it into an ISOLATED venv in a tmp dir (``uv venv`` + ``uv pip install``).
 3. Run ``screenscribe`` from a cwd OUTSIDE the repo, using that venv's binary.
 
-Report generation goes through the REAL pipeline once (a ~2s fixture clip, a
-small cloud round-trip), serialized into a session-scoped output dir. The review
+Report generation goes through the REAL pipeline once (a short synthetic bug
+demo, real STT/LLM/VLM calls), serialized into a session-scoped output dir. The review
 server is then started against that pre-generated dir through the SAME serve
 code path the user hits (``screenscribe.cli._serve_report`` -> ``tokenized_url``),
 so the token-fragment flow is genuinely exercised. We pre-generate once and reuse
@@ -18,6 +18,7 @@ to keep the browser assertions deterministic (one pipeline call per session).
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -31,6 +32,12 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+FIXTURE_NARRATION = (
+    "There is a bug in the dashboard preview. The screen shows a colored test "
+    "pattern instead of the dashboard. Please replace the test pattern with "
+    "the expected dashboard view."
+)
 
 # Tokenized URL printed by the serve path, e.g.
 #   http://localhost:8765/fixture_report.html#token=<urlsafe-token>
@@ -147,15 +154,16 @@ def _generate_fixture_video(dest: Path) -> None:
 
     The pipeline needs a video stream (screenshots) and an audio stream (STT).
     The audio must be actual speech, not a tone: a sine makes STT return nothing
-    and is a poor stand-in for the user's runtime. On macOS we synthesise speech
-    with ``say``; elsewhere we fall back to a sine (the first E2E does not assert
-    STT output, so a tone keeps the suite runnable off-mac). Generated on demand
+    and is a poor stand-in for the user's runtime. Use an explicit English voice
+    with ``say`` or ``espeak``; a missing synthesizer fails the requested gate.
+    The narration describes the visible test pattern as a dashboard bug, so all
+    analysis stages must execute before browser tests can pass. Generated on demand
     into a tmp dir, never committed: the media guard forbids tracked ``*.mov`` in
     the shippable seed (the seed ships from ``git archive HEAD``).
     """
     ffmpeg = _ffmpeg_bin()
     if ffmpeg is None:
-        pytest.skip("ffmpeg not available to generate the e2e fixture video")
+        pytest.fail("ffmpeg is required for the requested pipeline-backed E2E gate")
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     say = shutil.which("say")
@@ -164,18 +172,29 @@ def _generate_fixture_video(dest: Path) -> None:
         subprocess.run(
             [
                 say,
+                "-v",
+                "Samantha",
+                "-r",
+                "150",
                 "-o",
                 str(speech),
-                "Recording a short screencast to test the screenscribe review "
-                "pipeline. Here is a manual frame the reviewer should check.",
+                FIXTURE_NARRATION,
             ],
             check=True,
             capture_output=True,
             text=True,
         )
-        audio_input = ["-i", str(speech)]
     else:
-        audio_input = ["-f", "lavfi", "-i", "sine=frequency=440:duration=6"]
+        espeak = shutil.which("espeak-ng") or shutil.which("espeak")
+        if espeak is None:
+            pytest.fail("say or espeak-ng/espeak is required for the speech E2E fixture")
+        speech = dest.parent / "speech.wav"
+        subprocess.run(
+            [espeak, "-v", "en-us", "-s", "150", "-w", str(speech), FIXTURE_NARRATION],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     subprocess.run(
         [
@@ -184,8 +203,9 @@ def _generate_fixture_video(dest: Path) -> None:
             "-f",
             "lavfi",
             "-i",
-            "testsrc=size=320x240:rate=10:duration=10",
-            *audio_input,
+            "testsrc=size=320x240:rate=10",
+            "-i",
+            str(speech),
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -210,6 +230,37 @@ def fixture_video(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return dest
 
 
+def _assert_generated_review(report_json: Path) -> None:
+    """Reject a green browser run over an empty or degraded pipeline result."""
+    report = json.loads(report_json.read_text(encoding="utf-8"))
+    assert report.get("transcript_source") == "audio", "E2E must exercise real STT"
+    transcript = report.get("transcript", "").lower()
+    assert len(transcript.split()) >= 15 and all(
+        word in transcript for word in ("dashboard", "test", "pattern", "replace")
+    ), "STT did not recover the synthetic bug narration; inspect the pipeline before browser tests"
+    assert report.get("transcript_segments"), "STT produced no transcript segments"
+    assert not report.get("errors"), "Pipeline reported errors"
+    passes = report.get("analysis_passes", {})
+    for stage in ("detections", "screenshots", "unified_analysis"):
+        result = passes.get(stage, {})
+        assert result.get("status") == "completed" and result.get("count", 0) > 0, (
+            f"Pipeline stage {stage} did not complete with evidence"
+        )
+    assert report.get("findings"), "The narrated dashboard bug produced no findings"
+    for finding in report["findings"]:
+        analysis = finding.get("unified_analysis", {})
+        assert analysis.get("status") == "completed" and not analysis.get("degraded", True), (
+            "VLM analysis is missing or degraded"
+        )
+        screenshot = finding.get("screenshot")
+        assert screenshot, "Finding has no screenshot"
+        path = report_json.parent / "screenshots" / screenshot
+        assert path.is_file() and path.stat().st_size > 0, "Screenshot artifact is missing or empty"
+    assert any(f["unified_analysis"].get("is_issue") for f in report["findings"]), (
+        "VLM did not identify the narrated dashboard bug"
+    )
+
+
 @pytest.fixture(scope="session")
 def generated_review(
     installed_cli: InstalledCli,
@@ -229,16 +280,34 @@ def generated_review(
     env = dict(os.environ)
     env["BROWSER"] = "true"  # no-op any webbrowser.open
 
-    proc = subprocess.run(
-        [str(installed_cli.binary), "review", video_copy.name, "--no-serve"],
-        cwd=work,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    # Include semantic detection, per-frame VLM and summary calls, not just
+    # STT + rendering. The old five-minute bound killed a live run mid-analysis.
+    # Keep partial output privately for diagnosis if a provider exceeds the bound.
+    pipeline_log = work / "pipeline.log"
+    with pipeline_log.open("w", encoding="utf-8") as output:
+        pipeline_log.chmod(0o600)
+        try:
+            proc = subprocess.run(
+                [
+                    str(installed_cli.binary),
+                    "review",
+                    video_copy.name,
+                    "--lang",
+                    "en",
+                    "--no-serve",
+                ],
+                cwd=work,
+                env=env,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=900,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"Pipeline exceeded 900 seconds; inspect private log: {pipeline_log}")
+    pipeline_output = pipeline_log.read_text(encoding="utf-8")
     if proc.returncode != 0:
-        combined = f"{proc.stdout}\n{proc.stderr}"
+        combined = pipeline_output
         # --run-e2e is the explicit "run the REAL gate" request: reaching this
         # fixture means the caller opted into the pipeline-backed e2e suite. A
         # missing API key here used to `pytest.skip(...)`, which silently masked
@@ -256,18 +325,19 @@ def generated_review(
                 "let keyless CI report a false green (half the suite unrun). Set "
                 "SCREENSCRIBE_API_KEY to run the gate, or drop --run-e2e to opt "
                 "out of e2e entirely.\n"
-                f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}"
+                f"Inspect private log: {pipeline_log}"
             )
         pytest.fail(
             "pipeline generation failed (network/key required for STT/LLM/VLM?):\n"
-            f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}"
+            f"Inspect private log: {pipeline_log}"
         )
 
     out_dir = work / f"{video_copy.stem}_review"
     report_html = out_dir / f"{video_copy.stem}_report.html"
     report_json = out_dir / f"{video_copy.stem}_report.json"
-    assert report_html.exists(), f"report HTML not generated: {report_html}\n{proc.stdout}"
+    assert report_html.exists(), f"report HTML not generated: {report_html}; log: {pipeline_log}"
     assert report_json.exists(), f"report JSON not generated: {report_json}"
+    _assert_generated_review(report_json)
     return out_dir
 
 

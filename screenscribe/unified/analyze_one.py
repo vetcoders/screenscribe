@@ -17,9 +17,11 @@ from rich.markup import escape
 from ..api_utils import (
     extract_response_payload_error,
     extract_stream_error_event,
+    provider_client_options,
     redact_error_message,
     retry_request,
     stream_chunk_has_model_output,
+    validate_provider_endpoint,
 )
 from ..config import ScreenScribeConfig
 from ..detect import Detection
@@ -89,6 +91,7 @@ def analyze_finding_unified_streaming(
     on_reasoning: Callable[[str], None] | None = None,
     on_content: Callable[[str], None] | None = None,
     force_text_only: bool = False,
+    output_dir: Path | None = None,
 ) -> UnifiedFinding | None:
     """
     Analyze a single finding using VLM with streaming SSE response.
@@ -149,6 +152,7 @@ def analyze_finding_unified_streaming(
             prompt=prompt,
             screenshot_path=None if use_text_only_backend else screenshot_path,
             previous_response_id=previous_response_id,
+            output_dir=output_dir,
             stream=True,
             same_provider=_may_chain_previous_response(
                 config, use_text_only_backend=use_text_only_backend
@@ -215,7 +219,8 @@ def analyze_finding_unified_streaming(
                     emitted = True
                     on_reasoning(text)
 
-            with httpx.Client(timeout=120.0) as client:
+            with httpx.Client(timeout=120.0, **provider_client_options(endpoint)) as client:
+                validate_provider_endpoint(endpoint)
                 with client.stream(
                     "POST",
                     endpoint,
@@ -383,6 +388,7 @@ def analyze_finding_unified_streaming(
                     screenshot_path,
                     config,
                     previous_response_id=previous_response_id,
+                    output_dir=output_dir,
                     on_reasoning=on_reasoning,
                     on_content=on_content,
                     force_text_only=True,
@@ -396,6 +402,7 @@ def analyze_finding_unified_streaming(
                 screenshot_path,
                 config,
                 previous_response_id=previous_response_id,
+                output_dir=output_dir,
                 force_text_only=use_text_only_backend,
             )
 
@@ -416,6 +423,7 @@ def analyze_finding_unified_streaming(
                 screenshot_path,
                 config,
                 previous_response_id=previous_response_id,
+                output_dir=output_dir,
                 on_reasoning=on_reasoning,
                 on_content=on_content,
                 force_text_only=True,
@@ -428,6 +436,7 @@ def analyze_finding_unified_streaming(
             screenshot_path,
             config,
             previous_response_id=previous_response_id,
+            output_dir=output_dir,
             force_text_only=use_text_only_backend,
         )
 
@@ -438,6 +447,7 @@ def analyze_finding_unified(
     config: ScreenScribeConfig,
     previous_response_id: str | None = None,
     force_text_only: bool = False,
+    output_dir: Path | None = None,
 ) -> UnifiedFinding | None:
     """
     Analyze a single finding using VLM with both image and full context.
@@ -481,13 +491,14 @@ def analyze_finding_unified(
     try:
 
         def do_unified_request() -> httpx.Response:
-            with httpx.Client(timeout=120.0) as client:
+            with httpx.Client(timeout=120.0, **provider_client_options(endpoint)) as client:
                 payload = _build_unified_payload(
                     endpoint=endpoint,
                     model=model,
                     prompt=prompt,
                     screenshot_path=None if use_text_only_backend else screenshot_path,
                     previous_response_id=previous_response_id,
+                    output_dir=output_dir,
                     stream=False,
                     same_provider=_may_chain_previous_response(
                         config, use_text_only_backend=use_text_only_backend
@@ -497,6 +508,7 @@ def analyze_finding_unified(
                     ),
                 )
 
+                validate_provider_endpoint(endpoint)
                 response = client.post(
                     endpoint,
                     headers={
@@ -548,6 +560,7 @@ def analyze_finding_unified(
                     screenshot_path,
                     config,
                     previous_response_id=previous_response_id,
+                    output_dir=output_dir,
                     force_text_only=True,
                 )
             console.print(
@@ -581,6 +594,7 @@ def analyze_finding_unified(
                 screenshot_path,
                 config,
                 previous_response_id=previous_response_id,
+                output_dir=output_dir,
                 force_text_only=True,
             )
         console.print(f"[yellow]Unified analysis failed: {escape(redact_error_message(e))}[/]")
