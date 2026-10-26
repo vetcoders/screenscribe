@@ -17,7 +17,8 @@
 
 - **Added: visible review-agent activity.** The chat shows its current phase,
   elapsed time and the freshness of server data before the first response
-  text and during tool use, with reduced-motion support.
+  text and during tool use, with reduced-motion support. The standalone public
+  demo embeds the same current panel assets.
 
 - **Added: a signed-in ChatGPT account runs LLM + vision.** After
   `screenscribe auth login openai` (device flow),
