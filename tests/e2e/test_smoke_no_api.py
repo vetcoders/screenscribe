@@ -208,6 +208,7 @@ def test_agent_show_frame_highlights_resolved_manual_moment(
         }""",
         [marker, TINY_JPEG_B64],
     )
+    assert page.locator(".manual-frame-item").get_attribute("data-manual-marker-id") == marker_id
     page.click("#ss-agent-fab")
     page.fill("#ss-agent-input", "Show the saved manual moment.")
     page.click("#ss-agent-send")

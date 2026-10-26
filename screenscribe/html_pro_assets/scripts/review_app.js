@@ -3941,6 +3941,12 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function escapeHtmlAttribute(text) {
+    return escapeHtml(text)
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function formatPreciseTime(seconds) {
     const safe = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
     const m = Math.floor(safe / 60);
@@ -4257,7 +4263,8 @@ function renderManualFrames() {
             return `<option value="${escapeHtml(value)}"${sel}>${escapeHtml(t(key))}</option>`;
         }).join('');
         const findingId = manualFindingId(frame.marker_id);
-        const markerIdAttr = escapeHtml(frame.marker_id);
+        const findingIdAttr = escapeHtmlAttribute(findingId);
+        const markerIdAttr = escapeHtmlAttribute(frame.marker_id);
         const transcript = frame.transcript ? `
             <div class="manual-frame-human-entry">
                 <div class="manual-frame-source-label" data-i18n="media.manualFrameSpokenDescription">${escapeHtml(t('media.manualFrameSpokenDescription'))}</div>
@@ -4312,7 +4319,7 @@ function renderManualFrames() {
         return `
             <article class="manual-frame-item" data-manual-marker-id="${markerIdAttr}">
                 <div class="manual-frame-preview-card">
-                    <div class="annotation-container" data-finding-id="${escapeHtml(findingId)}">
+                    <div class="annotation-container" data-finding-id="${findingIdAttr}">
                         <img class="thumbnail"
                              src="${escapeHtml(frame.frameDataUrl)}"
                              data-full="${escapeHtml(frame.frameDataUrl)}"
