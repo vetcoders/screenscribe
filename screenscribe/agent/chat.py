@@ -11,6 +11,7 @@ SSE (binding for w1-05)::
     event: token        data: {"text": ...}   (one provider text delta; many per turn)
     event: tool_call    data: {"name", "input"}
     event: tool_result  data: {"name", "result"}
+    event: status       data: {"phase": "finalizing"} (tool limit reached)
     event: done         data: {"response_id", "provider", "protocol", "host"}
     event: error        data: {"message": ...}
 
@@ -523,6 +524,7 @@ async def _run_provider(
     # chain only ids minted by its own later tool rounds.
     previous = turn.previous_response_id if stateful_chain and provider.slot == "primary" else None
     last_response_id = previous
+    preamble_tail = ""
 
     for _round in range(_MAX_TOOL_ROUNDS):
         if provider.protocol == "chat_completions":
@@ -555,6 +557,8 @@ async def _run_provider(
         round_result = holder[0]
         if round_result.error:
             raise AgentChatError(round_result.error)
+        if streamed:
+            preamble_tail = (preamble_tail + "".join(streamed))[-2:]
         if round_result.response_id and stateful_chain:
             last_response_id = round_result.response_id
             previous = round_result.response_id
@@ -562,6 +566,7 @@ async def _run_provider(
             # A provider (or test double) that delivered no deltas: send the
             # round's text as one frame rather than dropping it.
             yield format_sse("token", {"text": round_result.text})
+            preamble_tail = (preamble_tail + round_result.text)[-2:]
         if not round_result.function_calls:
             yield format_sse(
                 "done",
@@ -667,9 +672,83 @@ async def _run_provider(
                 )
             current_input = [*current_input, *response_items, *outputs]
 
+    yield format_sse("status", {"phase": "finalizing"})
+    final_instructions = (
+        f"{turn.instructions}\n\n"
+        "FINALIZATION MODE: The hard limit of "
+        f"{_MAX_TOOL_ROUNDS} tool-execution rounds has been reached. No tools are "
+        "available in this final response. Using only the tool results already in "
+        "the conversation, clearly state that the tool-round limit was reached, "
+        "summarize what was completed, and list every requested item that remains "
+        "unverified or unexecuted. Do not request or emit another tool call. Never "
+        "claim a review edit was saved unless a review_applied message confirms it."
+    )
+    if provider.protocol == "anthropic":
+        final_payload = {
+            "model": provider.model,
+            "instructions": final_instructions,
+            "input": current_input,
+        }
+    else:
+        final_payload = _build_responses_payload(
+            config=config,
+            provider=provider,
+            instructions=final_instructions,
+            input_items=current_input,
+            previous_response_id=previous,
+            include_repo=include_repo,
+            allow_tools=False,
+        )
+    holder = []
+    buffered: list[str] = []
+    async for frame in _stream_round(
+        provider,
+        final_payload,
+        holder,
+        buffered,
+        forward_deltas=False,
+    ):
+        yield frame
+    final_result = holder[0]
+    if final_result.error:
+        raise AgentChatError(final_result.error)
+    if final_result.function_calls:
+        # Neither cursor is safe to resume: the previous response contains the
+        # tool call whose output was consumed by this final round, while the
+        # final response contains an intentionally unexecuted tool call.
+        last_response_id = None
+        final_text = (
+            f"Tool execution stopped after the hard limit of {_MAX_TOOL_ROUNDS} rounds. "
+            "The provider requested another tool during finalization, so it was not run. "
+            "Results from completed tools remain available above. Any remaining requested "
+            "work is unfinished; no additional review edit was saved."
+        )
+    else:
+        if final_result.response_id and stateful_chain:
+            last_response_id = final_result.response_id
+        final_text = final_result.text.strip() or (
+            f"Tool execution stopped after the hard limit of {_MAX_TOOL_ROUNDS} rounds. "
+            "The provider returned no final summary. Results from completed tools remain "
+            "available above; any remaining requested work is unfinished and no additional "
+            "review edit was saved."
+        )
+    if preamble_tail:
+        separator = (
+            ""
+            if preamble_tail.endswith("\n\n")
+            else ("\n" if preamble_tail.endswith("\n") else "\n\n")
+        )
+        if separator:
+            yield format_sse("token", {"text": separator})
+    yield format_sse("token", {"text": final_text})
     yield format_sse(
-        "error",
-        {"message": f"Exceeded {_MAX_TOOL_ROUNDS} tool-call rounds."},
+        "done",
+        {
+            "response_id": last_response_id,
+            "provider": provider.name,
+            "protocol": provider.protocol,
+            "host": provider.host,
+        },
     )
 
 
@@ -731,13 +810,15 @@ def _build_responses_payload(
     input_items: list[dict[str, Any]],
     previous_response_id: str | None,
     include_repo: bool,
+    allow_tools: bool = True,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": provider.model,
         "input": input_items,
-        "tools": responses_tool_schemas(include_repo=include_repo),
         "stream": True,
     }
+    if allow_tools:
+        payload["tools"] = responses_tool_schemas(include_repo=include_repo)
     if instructions:
         payload["instructions"] = instructions
     if previous_response_id:
@@ -758,16 +839,21 @@ async def _stream_round(
     payload: dict[str, Any],
     holder: list[ProviderRound],
     streamed: list[str],
+    *,
+    forward_deltas: bool = True,
 ) -> AsyncIterator[str]:
     """Run one provider round, yielding ``token`` frames as deltas arrive.
 
     The finished ``ProviderRound`` is appended to ``holder``; every forwarded
     delta is appended to ``streamed``. Provider silence longer than
-    ``_KEEPALIVE_SECONDS`` yields an SSE comment frame. If the consumer stops
-    iterating (client disconnect), the provider request is cancelled.
+    ``_KEEPALIVE_SECONDS`` yields an SSE comment frame. ``forward_deltas=False``
+    buffers the provider response until its tool-call contract can be checked.
+    If the consumer stops iterating (client disconnect), the provider request is
+    cancelled.
     """
     queue: asyncio.Queue[str] = asyncio.Queue()
-    task = asyncio.create_task(_dispatch_round(provider, payload, on_delta=queue.put_nowait))
+    on_delta = queue.put_nowait if forward_deltas else None
+    task = asyncio.create_task(_dispatch_round(provider, payload, on_delta=on_delta))
     getter: asyncio.Future[str] | None = None
     try:
         while True:
@@ -1059,8 +1145,9 @@ async def _anthropic_round(
         "model": provider.model,
         "max_tokens": 4096,
         "messages": messages,
-        "tools": tools,
     }
+    if tools:
+        kwargs["tools"] = tools
     if system:
         kwargs["system"] = system
 

@@ -65,6 +65,10 @@
         stopRequested: false,
         idleTimer: null,
         timedOut: false,
+        activityTimer: null,
+        activityStartedAt: 0,
+        activityLastReceivedAt: 0,
+        activityPhase: 'agentResponding',
         retryRows: [],
         mic: { status: 'idle', transport: null, timer: null, startedAt: 0, message: '' },
         attachments: [],
@@ -448,18 +452,24 @@
         }
     }
 
-    function attachRetry(row, retryFn) {
+    function attachRetry(row, retryFn, saveAttempt) {
         if (!row) return;
         var btn = el('button', 'ss-agent-retry', { type: 'button' });
         btn.textContent = t('review.agentPatchRetry');
         btn.addEventListener('click', function () {
-            if (btn.disabled) return;
+            if (btn.disabled || (saveAttempt && saveAttempt.saved)) return;
             btn.disabled = true;
-            Promise.resolve(retryFn()).finally(function () {
-                btn.disabled = false;
+            var saved = false;
+            Promise.resolve(retryFn()).then(function (result) {
+                saved = Boolean(result && result.ok);
+                if (saved) btn.hidden = true;
+            }).finally(function () {
+                btn.disabled = saved || Boolean(saveAttempt && saveAttempt.saved);
+                if (btn.disabled) btn.hidden = true;
             });
         });
         row.appendChild(btn);
+        if (saveAttempt) saveAttempt.retryButtons.push(btn);
         return btn;
     }
 
@@ -472,7 +482,7 @@
         return saveFn();
     }
 
-    async function applyOpsAndSave(ops, explain, userInstruction) {
+    async function applyOpsAndSave(ops, explain, userInstruction, onSaved) {
         if (isOffline()) {
             appendSystemLine(tx('review.agentPatchOffline'), 'ss-agent-msg-warn');
             return { ok: false, offline: true };
@@ -499,6 +509,7 @@
         if (saved && saved.ok) {
             appendSystemLine(confirmationLine(explain), 'ss-agent-msg-ok');
             recordReviewApplied(explain);
+            if (typeof onSaved === 'function') await onSaved(applied.length);
             return { ok: true, applied: applied.length, saved: true, results: results };
         }
         var message = (saved && saved.message) || tx('review.agentPatchSaveFailed', { message: '' });
@@ -506,28 +517,47 @@
             tx('review.agentPatchSaveFailed', { message: message }),
             'ss-agent-msg-error'
         );
-        attachRetry(failRow, function () { return retrySave(explain); });
+        var saveAttempt = { saved: false, saving: false, retryButtons: [] };
+        attachRetry(failRow, function () {
+            return retrySave(explain, onSaved, applied.length, saveAttempt);
+        }, saveAttempt);
         return { ok: false, status: saved && saved.status, applied: applied.length, results: results };
     }
 
-    async function retrySave(explain) {
+    async function retrySave(explain, onSaved, applied, saveAttempt) {
         if (isOffline()) {
             appendSystemLine(tx('review.agentPatchOffline'), 'ss-agent-msg-warn');
             return { ok: false, offline: true };
         }
-        var saved = await saveAfterPatch();
-        if (saved && saved.ok) {
-            appendSystemLine(confirmationLine(explain), 'ss-agent-msg-ok');
-            recordReviewApplied(explain);
+        var attempt = saveAttempt || { saved: false, saving: false, retryButtons: [] };
+        if (attempt.saved) return { ok: true, alreadySaved: true };
+        if (attempt.saving) return { ok: false, pending: true };
+        attempt.saving = true;
+        try {
+            var saved = await saveAfterPatch();
+            if (saved && saved.ok) {
+                attempt.saved = true;
+                attempt.retryButtons.forEach(function (button) {
+                    button.disabled = true;
+                    button.hidden = true;
+                });
+                appendSystemLine(confirmationLine(explain), 'ss-agent-msg-ok');
+                recordReviewApplied(explain);
+                if (typeof onSaved === 'function') await onSaved(applied);
+                return saved;
+            }
+            var message = (saved && saved.message) || '';
+            var failRow = appendSystemLine(
+                tx('review.agentPatchSaveFailed', { message: message }),
+                'ss-agent-msg-error'
+            );
+            attachRetry(failRow, function () {
+                return retrySave(explain, onSaved, applied, attempt);
+            }, attempt);
             return saved;
+        } finally {
+            attempt.saving = false;
         }
-        var message = (saved && saved.message) || '';
-        var failRow = appendSystemLine(
-            tx('review.agentPatchSaveFailed', { message: message }),
-            'ss-agent-msg-error'
-        );
-        attachRetry(failRow, function () { return retrySave(explain); });
-        return saved;
     }
 
     function renderPlanCard(plan, userInstruction) {
@@ -536,6 +566,7 @@
         var ops = Array.isArray(plan.ops) ? plan.ops : [];
         var rationale = Array.isArray(plan.rationale) ? plan.rationale : [];
         var card = el('div', 'ss-agent-plan ss-agent-msg ss-agent-msg-system');
+        card.setAttribute('data-state', 'pending');
         var list = el('ul', 'ss-agent-plan-ops');
         ops.forEach(function (op, index) {
             var item = el('li', 'ss-agent-plan-op');
@@ -557,10 +588,31 @@
         applyBtn.textContent = t('review.agentPlanApply');
         var cancelBtn = el('button', 'ss-agent-plan-cancel', { type: 'button' });
         cancelBtn.textContent = t('review.agentPlanCancel');
-        applyBtn.addEventListener('click', function () {
-            if (applyBtn.disabled) return;
+        var settled = false;
+        var waitingForSave = false;
+        function lockChoices() {
+            card.querySelectorAll('.ss-agent-plan-check').forEach(function (check) {
+                check.disabled = true;
+            });
+        }
+        async function settleApplied(applied) {
+            if (settled) return;
+            settled = true;
+            waitingForSave = false;
+            card.setAttribute('data-state', 'applied');
+            lockChoices();
             applyBtn.disabled = true;
             cancelBtn.disabled = true;
+            cancelBtn.hidden = true;
+            var summary = tx('review.agentPlanApplied', { applied: applied, total: ops.length });
+            applyBtn.textContent = summary;
+            appendMessage('user', summary);
+            // Approval can happen after the stream's finally block has already
+            // persisted the conversation. Keep its receipt across a reload too.
+            await persistThread();
+        }
+        applyBtn.addEventListener('click', function () {
+            if (settled || waitingForSave || applyBtn.disabled) return;
             var selected = [];
             var checks = card.querySelectorAll('.ss-agent-plan-check');
             checks.forEach(function (check) {
@@ -569,22 +621,37 @@
                     if (ops[idx]) selected.push(ops[idx]);
                 }
             });
+            if (!selected.length) return;
+            applyBtn.disabled = true;
+            cancelBtn.disabled = true;
+            card.setAttribute('data-state', 'applying');
             Promise.resolve(applyOpsAndSave(selected, tx('review.agentPlanApplied', {
                 applied: selected.length,
                 total: ops.length,
-            }), userInstruction)).then(function (result) {
-                if (!result || !result.ok) return;
-                var summary = tx('review.agentPlanApplied', {
-                    applied: result.applied || 0,
-                    total: ops.length,
-                });
-                appendMessage('user', summary);
+            }), userInstruction, settleApplied)).then(function (result) {
+                if (result && !result.ok && result.applied > 0) {
+                    // The edits already exist in memory. Retry their save,
+                    // rather than running the operations a second time.
+                    waitingForSave = true;
+                    card.setAttribute('data-state', 'save_failed');
+                    lockChoices();
+                    applyBtn.textContent = t('review.agentPlanAwaitingSave');
+                    cancelBtn.hidden = true;
+                } else if (!settled) {
+                    card.setAttribute('data-state', 'pending');
+                }
+            }).catch(function () {
+                card.setAttribute('data-state', 'pending');
+                appendSystemLine(tx('review.agentPlanApplyFailed'), 'ss-agent-msg-error');
             }).finally(function () {
-                applyBtn.disabled = false;
-                cancelBtn.disabled = false;
+                if (!settled && !waitingForSave) {
+                    applyBtn.disabled = false;
+                    cancelBtn.disabled = false;
+                }
             });
         });
         cancelBtn.addEventListener('click', function () {
+            if (settled || waitingForSave || cancelBtn.disabled) return;
             if (card.parentNode) card.parentNode.removeChild(card);
         });
         actions.appendChild(applyBtn);
@@ -1236,6 +1303,69 @@
         syncComposer();
     }
 
+    function renderAgentActivity() {
+        var doc = root.document;
+        var label = doc.getElementById('ss-agent-activity-text');
+        var detail = doc.getElementById('ss-agent-activity-detail');
+        if (!state.streaming || !state.activityStartedAt) return;
+        var phase = tx('review.' + state.activityPhase);
+        if (label && label.textContent !== phase) label.textContent = phase;
+        var now = Date.now();
+        var seconds = Math.max(0, Math.floor((now - state.activityStartedAt) / 1000));
+        var elapsed = Math.floor(seconds / 60) + ':' + ('0' + (seconds % 60)).slice(-2);
+        var silence = state.activityLastReceivedAt
+            ? Math.max(0, Math.floor((now - state.activityLastReceivedAt) / 1000))
+            : 0;
+        // A ticking local clock does not prove the server is alive. Describe
+        // actual received data, including keepalives, separately from elapsed time.
+        var connection = !state.activityLastReceivedAt
+            ? tx('review.agentWaitingServer')
+            : silence >= 15
+                ? tx('review.agentWaitingData', { seconds: silence })
+                : tx('review.agentConnectionActive');
+        if (detail) {
+            detail.textContent = t('review.agentActivityDetails', {
+                elapsed: elapsed,
+                connection: connection,
+            });
+        }
+    }
+
+    function setAgentActivityPhase(key) {
+        state.activityPhase = key;
+        renderAgentActivity();
+    }
+
+    function finishAgentActivity() {
+        if (state.activityTimer) clearInterval(state.activityTimer);
+        state.activityTimer = null;
+        state.activityStartedAt = 0;
+        state.activityLastReceivedAt = 0;
+    }
+
+    function startAgentActivity() {
+        finishAgentActivity();
+        state.activityStartedAt = Date.now();
+        state.activityPhase = 'agentResponding';
+        renderAgentActivity();
+        state.activityTimer = setInterval(renderAgentActivity, 1000);
+    }
+
+    function noteAgentActivity() {
+        state.activityLastReceivedAt = Date.now();
+        renderAgentActivity();
+        armIdleTimer();
+    }
+
+    function toolActivityPhase(name) {
+        if (name === 'view_frame' || name === 'capture_video_frames') return 'agentInspectingFrames';
+        if (name === 'propose_review') return 'agentPreparingPlan';
+        if (name === 'set_verdict' || name === 'set_severity' || name === 'edit_finding'
+            || name === 'add_finding' || name === 'correct_transcript') return 'agentPreparingChanges';
+        if (name === 'seek' || name === 'show_frame') return 'agentReviewingRecording';
+        return 'agentReadingReport';
+    }
+
     function draftKey() {
         return storageKey() + ':draft';
     }
@@ -1657,6 +1787,7 @@
         state.stopRequested = false;
         state.timedOut = false;
         state.streaming = true;
+        startAgentActivity();
         var assistantRow = appendMessage('assistant', '');
         if (assistantRow && assistantRow.classList) {
             assistantRow.classList.add('ss-agent-msg-streaming');
@@ -1709,14 +1840,17 @@
                 markRetryable(assistantRow, await readFailureMessage(response), message);
                 return true;
             }
+            noteAgentActivity();
             await consumeSse(response, async function (evt) {
                 if (!evt) return;
                 if (evt.event === 'token') {
+                    setAgentActivityPhase('agentWritingAnswer');
                     assembled += (evt.data && evt.data.text) || '';
                     if (assistantRow && !errored) renderRich(assistantRow, assembled);
                     var log = root.document.getElementById('ss-agent-log');
                     if (log && typeof log.scrollTop === 'number') log.scrollTop = log.scrollHeight || 0;
                 } else if (evt.event === 'tool_call') {
+                    setAgentActivityPhase(toolActivityPhase(evt.data && evt.data.name));
                     applyToolCall(
                         evt.data && evt.data.name,
                         evt.data && (evt.data.input != null ? evt.data.input : evt.data.arguments)
@@ -1728,6 +1862,8 @@
                         seenToolResults,
                         message
                     );
+                } else if (evt.event === 'status' && evt.data && evt.data.phase === 'finalizing') {
+                    setAgentActivityPhase('agentFinalizing');
                 } else if (evt.event === 'done') {
                     sawDone = true;
                     if (!errored) {
@@ -1745,7 +1881,7 @@
                 }
             }, {
                 signal: controller ? controller.signal : null,
-                onActivity: armIdleTimer,
+                onActivity: noteAgentActivity,
             });
             if (state.stopRequested || state.timedOut) throw abortError();
             if (!errored && !sawDone) {
@@ -1789,6 +1925,7 @@
             }
         } finally {
             clearIdleTimer();
+            finishAgentActivity();
             state.abort = null;
             state.streaming = false;
             state.stopRequested = false;
@@ -2555,16 +2692,24 @@
         });
         offline.textContent = t('review.agentOffline');
 
-        // "Agent is responding…" bar with the Stop control, shown only while a
-        // turn streams. role=status announces the start without stealing focus.
+        // Keep activity outside the scrollable log, including before the first
+        // answer token. Only phase changes are announced; the clock is visual.
         var activity = el('div', 'ss-agent-activity', {
             id: 'ss-agent-activity',
             role: 'status',
+            'aria-atomic': 'true',
             hidden: 'hidden',
         });
         var pulse = el('span', 'ss-agent-pulse', { 'aria-hidden': 'true' });
-        var activityText = el('span', 'ss-agent-activity-text', { 'data-i18n': 'agentResponding' });
+        var activityCopy = el('div', 'ss-agent-activity-copy');
+        var activityText = el('span', 'ss-agent-activity-text', { id: 'ss-agent-activity-text' });
         activityText.textContent = t('review.agentResponding');
+        var activityDetail = el('span', 'ss-agent-activity-detail', {
+            id: 'ss-agent-activity-detail',
+            'aria-hidden': 'true',
+        });
+        activityCopy.appendChild(activityText);
+        activityCopy.appendChild(activityDetail);
         var stopBtn = el('button', 'ss-agent-stop', {
             id: 'ss-agent-stop',
             type: 'button',
@@ -2579,7 +2724,7 @@
         stopBtn.appendChild(stopText);
         stopBtn.addEventListener('click', function () { stop(); });
         activity.appendChild(pulse);
-        activity.appendChild(activityText);
+        activity.appendChild(activityCopy);
         activity.appendChild(stopBtn);
 
         var form = el('form', 'ss-agent-form', { id: 'ss-agent-form' });

@@ -18,6 +18,13 @@ from typing import Any
 
 from ..work_item import VERDICT_VALUES
 from .corrections import CorrectionRejected, append_correction, validate_correction_fields
+from .moments import (
+    manual_marker_addresses,
+    manual_marker_id,
+    manual_marker_result,
+    manual_marker_summary,
+    manual_markers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,8 +136,10 @@ def responses_tool_schemas(*, include_repo: bool) -> list[dict[str, Any]]:
     tools = [
         _function_tool(
             "list_findings",
-            "List findings from the current review. Optional filter matches "
-            "severity, category, id, or text (case-insensitive substring).",
+            "List AI findings and manually saved review moments from the current "
+            "review. Each row has kind=finding or kind=manual_marker. Optional "
+            "filter matches severity, category, id, text, notes, or frame path "
+            "(case-insensitive substring).",
             {
                 "filter": {
                     "type": "string",
@@ -539,6 +548,7 @@ class ReportToolbelt:
         for finding in self._findings():
             unified = _unified(finding)
             row = {
+                "kind": "finding",
                 "id": finding.get("id"),
                 "category": finding.get("category"),
                 "timestamp": finding.get("timestamp_start"),
@@ -554,7 +564,42 @@ class ReportToolbelt:
             if needle and needle not in hay:
                 continue
             rows.append(row)
-        return {"count": len(rows), "findings": rows, "filter": filter_text}
+        for address, marker in self._manual_marker_addresses():
+            result = manual_marker_result(marker)
+            marker_id = manual_marker_id(marker)
+            frame_path = marker.get("frame_path")
+            row = {
+                "kind": "manual_marker",
+                "id": address,
+                "marker_id": marker_id,
+                "category": result.get("category") or marker.get("category"),
+                "timestamp": marker.get("timestamp"),
+                "timestamp_formatted": marker.get("timestamp_formatted")
+                or _format_ts(_as_float(marker.get("timestamp"))),
+                "severity": marker.get("severity") or result.get("severity"),
+                "is_issue": result.get("is_issue"),
+                "summary": manual_marker_summary(marker),
+                "notes": marker.get("notes"),
+                "frame_path": frame_path,
+                "screenshot": frame_path,
+                "frame_count": 1 if isinstance(frame_path, str) and frame_path.strip() else 0,
+            }
+            hay_values = [*row.values(), marker.get("transcript"), result]
+            hay = " ".join(str(value) for value in hay_values if value is not None).lower()
+            if needle and needle not in hay:
+                continue
+            rows.append(row)
+        finding_count = sum(row["kind"] == "finding" for row in rows)
+        manual_marker_count = sum(row["kind"] == "manual_marker" for row in rows)
+        return {
+            "count": len(rows),
+            "total_count": len(rows),
+            "available_moment_count": len(rows),
+            "finding_count": finding_count,
+            "manual_marker_count": manual_marker_count,
+            "findings": rows,
+            "filter": filter_text,
+        }
 
     def get_transcript(self, start: object = None, end: object = None) -> dict[str, Any]:
         start_s = _as_float(start)
@@ -621,6 +666,8 @@ class ReportToolbelt:
         if kind == "manual_marker":
             detail: dict[str, Any] = dict(_detail_copy(record))
             detail["kind"] = "manual_marker"
+            detail["id"] = finding_id
+            detail["marker_id"] = manual_marker_id(record)
             detail["frames"] = [
                 {"frame": record.get("frame_path"), "timestamp": record.get("timestamp")}
             ]
@@ -782,13 +829,18 @@ class ReportToolbelt:
 
     def get_report_summary(self) -> dict[str, Any]:
         passes = self.report.get("analysis_passes")
+        finding_count = len(self._findings())
+        manual_marker_count = len(self._manual_markers())
         return {
             "video": self.report.get("video"),
             "executive_summary": self.report.get("executive_summary") or "",
             "severity_breakdown": self.report.get("severity_breakdown") or {},
             "summary": self.report.get("summary") or {},
             "analysis_passes": passes if isinstance(passes, dict) else {},
-            "finding_count": len(self._findings()),
+            "finding_count": finding_count,
+            "manual_marker_count": manual_marker_count,
+            "total_count": finding_count + manual_marker_count,
+            "available_moment_count": finding_count + manual_marker_count,
         }
 
     def open_repo_file(self, path: str) -> dict[str, Any]:
@@ -1094,18 +1146,10 @@ class ReportToolbelt:
         return wanted
 
     def _manual_markers(self) -> list[dict[str, Any]]:
-        markers: list[dict[str, Any]] = []
-        manual = self.report.get("manual_review")
-        if isinstance(manual, dict):
-            for marker in manual.get("markers") or []:
-                if isinstance(marker, dict):
-                    markers.append(marker)
-        human = self.report.get("human_review")
-        if isinstance(human, dict):
-            for frame in human.get("manual_frames") or []:
-                if isinstance(frame, dict):
-                    markers.append(frame)
-        return markers
+        return manual_markers(self.report)
+
+    def _manual_marker_addresses(self) -> list[tuple[object, dict[str, Any]]]:
+        return manual_marker_addresses(self.report)
 
     def _frame_target(
         self, finding_id: object
@@ -1128,9 +1172,8 @@ class ReportToolbelt:
             for member in members:
                 if isinstance(member, dict) and str(member.get("id")) == wanted:
                     return ("member", member, parent)
-        for marker in self._manual_markers():
-            marker_id = marker.get("marker_id", marker.get("id"))
-            if marker_id is not None and str(marker_id) == wanted:
+        for address, marker in self._manual_marker_addresses():
+            if address is not None and str(address) == wanted:
                 return ("manual_marker", marker, None)
         return None
 
@@ -1175,7 +1218,7 @@ class ReportToolbelt:
             ref = marker.get("frame_path")
             if isinstance(ref, str) and ref.strip():
                 ts = _as_float(marker.get("timestamp"))
-                marker_id = marker.get("marker_id", marker.get("id"))
+                marker_id = manual_marker_id(marker)
                 frames.append(
                     {
                         "ref": ref,

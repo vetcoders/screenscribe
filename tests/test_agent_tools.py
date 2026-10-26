@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from screenscribe.agent.context import seed_report_context
+from screenscribe.agent.moments import manual_markers
 from screenscribe.agent.tools import ReportToolbelt, responses_tool_schemas
 
 FIXTURE = Path(__file__).parent / "fixtures" / "agent_report_synthetic.json"
@@ -46,6 +49,158 @@ def test_list_findings_filter_includes_raw_text_and_context() -> None:
     belt = ReportToolbelt(report)
     assert belt.list_findings("literal-user-wording")["count"] == 1
     assert belt.list_findings("later-correction")["count"] == 1
+
+
+def test_manual_markers_are_discoverable_deduplicated_and_round_trip_by_id() -> None:
+    report = {
+        "findings": [
+            {
+                "id": 7,
+                "category": "bug",
+                "timestamp_start": 12.0,
+                "text": "AI finding",
+                "screenshot": "screenshots/ai.jpg",
+                "unified_analysis": {"severity": "high", "summary": "AI summary"},
+            }
+        ],
+        "manual_review": {
+            "markers": [
+                {
+                    "marker_id": "manual-54",
+                    "timestamp": 54.0,
+                    "frame_path": "manual_frames/manual-54.jpg",
+                    "notes": "First manual note",
+                },
+                {
+                    "marker_id": "manual-63",
+                    "timestamp": 63.0,
+                    "frame_path": "manual_frames/manual-63.jpg",
+                    "notes": "Second manual note",
+                },
+            ]
+        },
+        "human_review": {
+            "manual_frames": [
+                {"marker_id": "manual-54", "timestamp": 54.0, "notes": "UI alias"},
+                {"id": "manual-63", "timestamp": 63.0, "notes": "legacy id alias"},
+            ]
+        },
+    }
+    belt = ReportToolbelt(report)
+
+    result = belt.list_findings()
+    assert result["count"] == 3
+    assert result["finding_count"] == 1
+    assert result["manual_marker_count"] == 2
+    assert result["available_moment_count"] == 3
+    assert result["total_count"] == 3
+    assert result["findings"][0]["kind"] == "finding"
+    manual_rows = [row for row in result["findings"] if row["kind"] == "manual_marker"]
+    assert [row["id"] for row in manual_rows] == ["manual-54", "manual-63"]
+    assert manual_rows[1]["frame_path"] == "manual_frames/manual-63.jpg"
+    assert manual_rows[1]["notes"] == "Second manual note"
+
+    filtered = belt.list_findings("manual_frames/manual-63")
+    assert filtered["count"] == 1
+    assert filtered["finding_count"] == 0
+    assert filtered["manual_marker_count"] == 1
+    discovered_id = filtered["findings"][0]["id"]
+    detail = belt.get_finding(discovered_id)
+    assert detail["kind"] == "manual_marker"
+    assert detail["marker_id"] == "manual-63"
+    assert detail["notes"] == "Second manual note"
+    assert detail["frames"] == [{"frame": "manual_frames/manual-63.jpg", "timestamp": 63.0}]
+
+    summary = belt.get_report_summary()
+    assert summary["finding_count"] == 1
+    assert summary["manual_marker_count"] == 2
+    assert summary["available_moment_count"] == 3
+    assert summary["total_count"] == 3
+
+
+def test_manual_marker_normalization_merges_compat_sources_without_mutation() -> None:
+    report = {
+        "findings": [],
+        "manual_review": {
+            "markers": [
+                {
+                    "marker_id": "m2",
+                    "timestamp": 54.0,
+                    "notes": "user note",
+                    "severity": "critical",
+                }
+            ],
+            "results": [
+                {
+                    "marker_id": "m2",
+                    "timestamp": 54.0,
+                    "category": "bug",
+                    "severity": "high",
+                    "summary": "saved result summary",
+                    "issues_detected": ["Contrast is too low"],
+                    "suggested_fix": "Raise contrast",
+                }
+            ],
+        },
+        "human_review": {
+            "manual_frames": [
+                {
+                    "marker_id": "m2",
+                    "timestamp": 999.0,
+                    "notes": "",
+                    "severity": "",
+                    "frame_path": "manual_frames/m2.jpg",
+                    "result": {
+                        "category": "ui",
+                        "summary": "analysis from compatibility frame",
+                    },
+                }
+            ]
+        },
+    }
+    original = deepcopy(report)
+
+    normalized = manual_markers(report)
+    assert normalized == [
+        {
+            "marker_id": "m2",
+            "timestamp": 54.0,
+            "notes": "user note",
+            "severity": "critical",
+            "frame_path": "manual_frames/m2.jpg",
+            "result": {
+                "marker_id": "m2",
+                "timestamp": 54.0,
+                "category": "ui",
+                "severity": "high",
+                "summary": "analysis from compatibility frame",
+                "issues_detected": ["Contrast is too low"],
+                "suggested_fix": "Raise contrast",
+            },
+        }
+    ]
+
+    belt = ReportToolbelt(report)
+    row = belt.list_findings()["findings"][0]
+    assert row["id"] == "m2"
+    assert row["marker_id"] == "m2"
+    assert row["timestamp"] == 54.0
+    assert row["notes"] == "user note"
+    assert row["severity"] == "critical"
+    assert row["frame_path"] == "manual_frames/m2.jpg"
+    assert row["summary"] == "analysis from compatibility frame"
+
+    detail = belt.get_finding(row["id"])
+    assert detail["marker_id"] == "m2"
+    assert detail["result"]["category"] == "ui"
+    assert detail["result"]["issues_detected"] == ["Contrast is too low"]
+    assert detail["result"]["suggested_fix"] == "Raise contrast"
+
+    seed = json.loads(seed_report_context(report))
+    assert seed["manual_markers"][0]["id"] == row["id"]
+    assert seed["manual_markers"][0]["summary"] == row["summary"]
+    assert seed["manual_markers"][0]["frame_path"] == row["frame_path"]
+    assert report == original
 
 
 def test_get_transcript_window() -> None:

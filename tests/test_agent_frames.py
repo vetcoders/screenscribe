@@ -133,6 +133,94 @@ def test_view_frame_member_timestamp_frame_and_manual(report_dir: Path) -> None:
     assert len(images) == 4
 
 
+def test_manual_addresses_round_trip_through_ai_collisions_and_prefix_ids(
+    report_dir: Path,
+) -> None:
+    manual_dir = report_dir / "manual_frames"
+    (manual_dir / "m2.png").write_bytes(PNG + b"m2")
+    (manual_dir / "prefixed.png").write_bytes(PNG + b"prefixed")
+    (manual_dir / "member.png").write_bytes(PNG + b"member")
+    report = {
+        "findings": [
+            {
+                "id": "m2",
+                "timestamp_start": 1.0,
+                "text": "AI owns the raw id",
+                "screenshot": "01_bug_09-22.jpg",
+                "merged_frames": [
+                    {
+                        "id": "member",
+                        "timestamp_start": 2.0,
+                        "text": "AI member owns this raw id",
+                        "screenshot": "03_bug_11-59.jpg",
+                    }
+                ],
+            }
+        ],
+        "manual_review": {
+            "markers": [
+                {
+                    "marker_id": "m2",
+                    "timestamp": 3.0,
+                    "frame_path": "manual_frames/m2.png",
+                    "notes": "collides with finding",
+                },
+                {
+                    "marker_id": "manual:m2",
+                    "timestamp": 4.0,
+                    "frame_path": "manual_frames/prefixed.png",
+                    "notes": "real prefix-like id",
+                },
+                {
+                    "marker_id": "member",
+                    "timestamp": 5.0,
+                    "frame_path": "manual_frames/member.png",
+                    "notes": "collides with merged member",
+                },
+            ]
+        },
+        "human_review": {
+            "manual_frames": [
+                {
+                    "marker_id": "m2",
+                    "timestamp": 3.0,
+                    "frame_path": "manual_frames/m2.png",
+                    "result": {"summary": "compatibility analysis"},
+                }
+            ]
+        },
+    }
+    belt = _belt(report_dir, report)
+
+    listed = belt.list_findings()
+    ai_row = next(row for row in listed["findings"] if row["kind"] == "finding")
+    manual_rows = {
+        row["marker_id"]: row for row in listed["findings"] if row["kind"] == "manual_marker"
+    }
+    assert ai_row["id"] == "m2"
+    assert {marker_id: row["id"] for marker_id, row in manual_rows.items()} == {
+        "m2": "manual:manual:m2",
+        "manual:m2": "manual:m2",
+        "member": "manual:member",
+    }
+    assert belt.get_finding("m2")["kind"] == "finding"
+
+    for marker_id, row in manual_rows.items():
+        detail = belt.get_finding(row["id"])
+        assert detail["kind"] == "manual_marker"
+        assert detail["id"] == row["id"]
+        assert detail["marker_id"] == marker_id
+        viewed = belt.view_frame(finding_id=row["id"])
+        assert viewed["attached"] == 1
+        assert viewed["frames"][0]["frame"] == row["frame_path"]
+
+    seed = json.loads(seed_report_context(report))
+    assert {row["marker_id"]: row["id"] for row in seed["manual_markers"]} == {
+        marker_id: row["id"] for marker_id, row in manual_rows.items()
+    }
+    assert len(belt.drain_images()) == len(manual_rows)
+
+
 def test_view_frame_refuses_escape_missing_and_non_images(report_dir: Path) -> None:
     report = _report()
     report["findings"][0]["screenshot"] = "../../etc/passwd"
@@ -168,9 +256,35 @@ def test_view_frame_turn_budget_caps_attached_images(report_dir: Path) -> None:
 
 
 def test_seed_and_prompt_point_the_model_at_frames(report_dir: Path) -> None:
-    seed = json.loads(seed_report_context(_report()))
+    report = _report()
+    report["human_review"] = {
+        "manual_frames": [{"id": "m-1", "timestamp": 30.0, "notes": "compatibility alias"}]
+    }
+    seed = json.loads(seed_report_context(report))
+    assert seed["counts"] == {
+        "finding_count": 1,
+        "manual_marker_count": 1,
+        "available_moment_count": 2,
+        "total_count": 2,
+    }
+    assert seed["findings"][0]["kind"] == "finding"
     assert seed["findings"][0]["screenshot"] == "01_bug_09-22.jpg"
     assert seed["findings"][0]["merged_frames"] == 1
+    assert seed["manual_markers"] == [
+        {
+            "kind": "manual_marker",
+            "id": "m-1",
+            "marker_id": "m-1",
+            "category": None,
+            "timestamp": 30.0,
+            "timestamp_formatted": None,
+            "severity": None,
+            "summary": "reviewer mark",
+            "notes": "reviewer mark",
+            "frame_path": "manual_frames/m-1.png",
+            "screenshot": "manual_frames/m-1.png",
+        }
+    ]
     turn = prepare_turn(report=_report(), message="co widać na klatce?")
     assert "view_frame" in turn.instructions
     assert "get_finding" in turn.instructions

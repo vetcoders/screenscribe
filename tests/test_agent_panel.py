@@ -1095,11 +1095,167 @@ def test_review_plan_card_apply_selected_ops() -> None:
             if (!hist.some((m) => m.role === 'user' && /^review_applied:/.test(m.content))) {
                 throw new Error('history missing review_applied confirmation');
             }
+            if (card.getAttribute('data-state') !== 'applied' || !apply.disabled) {
+                throw new Error('saved plan still asks for approval');
+            }
+            if (!card.querySelector('.ss-agent-plan-cancel').hidden) {
+                throw new Error('completed plan still offers Cancel');
+            }
+            if (!checks.every((check) => check.disabled)) {
+                throw new Error('completed plan choices remain editable');
+            }
+            apply.click();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            if (applied.length !== 1) throw new Error('completed plan executed again');
             process.stdout.write('plan:ok');
             """
         )
     )
     assert "plan:ok" in output
+
+
+def test_review_plan_save_retry_settles_without_reapplying() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            let applications = 0;
+            let saves = 0;
+            let finishSave;
+            window.__screenscribeAgentHost = {
+                applyReviewPatch(ops) {
+                    applications += 1;
+                    return ops.map((op) => ({ op: op.op, findingId: '3', skipped: false }));
+                },
+                async saveReview() {
+                    saves += 1;
+                    if (saves < 3) return { ok: false, status: 409, message: 'not saved' };
+                    return new Promise((resolve) => { finishSave = resolve; });
+                },
+            };
+            api.init();
+            const card = api.renderPlanCard({
+                type: 'review_plan',
+                ops: [{ op: 'set_severity', finding_id: '3', severity: 'high' }],
+            }, 'raise priority');
+            const apply = card.querySelector('.ss-agent-plan-apply');
+            apply.click();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            if (card.getAttribute('data-state') !== 'save_failed' || !apply.disabled) {
+                throw new Error('failed save permits a second application');
+            }
+            if (api.getState().history.some((m) => /^review_applied/.test(m.content))) {
+                throw new Error('failed save falsely confirmed');
+            }
+            const log = document.getElementById('ss-agent-log');
+            log.querySelectorAll('.ss-agent-retry').slice(-1)[0].click();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            if (card.getAttribute('data-state') === 'applied') {
+                throw new Error('second failed save falsely settled plan');
+            }
+            log.querySelectorAll('.ss-agent-retry').slice(-1)[0].click();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            // An older Retry is still visible while the latest save is pending.
+            // It must not issue a concurrent save or remain actionable afterward.
+            const oldRetry = log.querySelectorAll('.ss-agent-retry')[0];
+            oldRetry.click();
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            if (saves !== 3) throw new Error('stale Retry started a parallel save');
+            finishSave({ ok: true, status: 200 });
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            if (card.getAttribute('data-state') !== 'applied' || !apply.disabled) {
+                throw new Error('successful save retry did not settle plan');
+            }
+            apply.click();
+            oldRetry.click();
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            if (applications !== 1 || saves !== 3) {
+                throw new Error('retry reapplied edits or resaved completed plan');
+            }
+            if (!log.querySelectorAll('.ss-agent-retry').every((button) => button.disabled && button.hidden)) {
+                throw new Error('successful save left a stale Retry active');
+            }
+            if (!api.getState().history.some((m) => /^review_applied/.test(m.content))) {
+                throw new Error('successful save has no receipt');
+            }
+            process.stdout.write('plan-save-retry:ok');
+            """
+        )
+    )
+    assert "plan-save-retry:ok" in output
+
+
+def test_activity_shows_phase_elapsed_and_actual_server_freshness() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const encoder = new TextEncoder();
+            const originalNow = Date.now;
+            let now = 100000;
+            Date.now = () => now;
+            let receive;
+            const reader = {
+                read() { return new Promise((resolve) => { receive = resolve; }); },
+                cancel() { if (receive) receive({ done: true }); },
+            };
+            fetch = async () => ({ ok: true, body: { getReader: () => reader } });
+            window.fetch = fetch;
+            api.init();
+            const turn = api.send('check the recording');
+            const flush = () => new Promise((resolve) => setTimeout(resolve, 5));
+            const push = async (text) => {
+                receive({ done: false, value: encoder.encode(text) });
+                await flush();
+            };
+            try {
+                await flush();
+                const activity = document.getElementById('ss-agent-activity');
+                const label = document.getElementById('ss-agent-activity-text');
+                const detail = document.getElementById('ss-agent-activity-detail');
+                if (activity.hidden || !label.textContent) {
+                    throw new Error('no visible activity before the first token');
+                }
+                if (detail.getAttribute('aria-hidden') !== 'true') {
+                    throw new Error('the ticking clock would be announced every second');
+                }
+                now += 7000;
+                await push(': keepalive\\n\\n');
+                if (!/0:07/.test(detail.textContent) || !/receiving/.test(detail.textContent)) {
+                    throw new Error('keepalive not reflected: ' + detail.textContent);
+                }
+                await push('event: tool_call\\ndata: {"name":"view_frame","arguments":{}}\\n\\n');
+                if (!/frames/.test(label.textContent)) {
+                    throw new Error('frame inspection phase missing: ' + label.textContent);
+                }
+                now += 16000;
+                await new Promise((resolve) => setTimeout(resolve, 1050));
+                if (!/0:23/.test(detail.textContent) || !/no new server data/.test(detail.textContent)) {
+                    throw new Error('local clock falsely suggests fresh data: ' + detail.textContent);
+                }
+                await push('event: status\\ndata: {"phase":"finalizing"}\\n\\n');
+                if (!/Summarizing/.test(label.textContent)) {
+                    throw new Error('budget finalization phase missing');
+                }
+                await push('event: token\\ndata: {"text":"Checked."}\\n\\n');
+                if (!/Writing/.test(label.textContent)) throw new Error('writing phase missing');
+                await push('event: done\\ndata: {}\\n\\n');
+                receive({ done: true });
+                await turn;
+                if (!activity.hidden || api.getState().activityTimer !== null) {
+                    throw new Error('completed turn left an activity timer running');
+                }
+            } finally {
+                api.stop();
+                if (receive) receive({ done: true });
+                await turn;
+                Date.now = originalNow;
+            }
+            process.stdout.write('activity-progress:ok');
+            """
+        )
+    )
+    assert "activity-progress:ok" in output
 
 
 _GLOBAL_CORRECTION_HOST = """

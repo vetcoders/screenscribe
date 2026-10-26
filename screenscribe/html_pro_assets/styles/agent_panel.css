@@ -432,6 +432,16 @@ html.ss-agent-sheet .app-container {
     gap: var(--space-sm);
 }
 
+.ss-agent-plan[data-state="applied"] {
+    border-color: var(--border-accent);
+}
+
+.ss-agent-plan[data-state="applied"] .ss-agent-plan-apply {
+    color: var(--text-secondary);
+    opacity: 1;
+    cursor: default;
+}
+
 .ss-reviewer-overrides {
     margin: 0 0 var(--space-sm);
     padding: var(--space-sm);
@@ -622,16 +632,37 @@ html.ss-agent-sheet .app-container {
     display: none;
 }
 
-.ss-agent-activity-text {
+.ss-agent-activity-copy {
     flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.ss-agent-activity-text {
+    color: var(--text-primary);
+}
+
+.ss-agent-activity-detail {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
 }
 
 .ss-agent-pulse {
-    width: 8px;
-    height: 8px;
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
     border-radius: var(--radius-full);
-    background: var(--ss-accent);
-    animation: ss-agent-rec 1.2s ease-in-out infinite;
+    border: 2px solid var(--border-accent);
+    border-top-color: var(--ss-accent-hi);
+    animation: ss-agent-spin 1s linear infinite;
+}
+
+@keyframes ss-agent-spin {
+    to { transform: rotate(360deg); }
 }
 
 .ss-agent-stop {

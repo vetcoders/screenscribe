@@ -731,6 +731,25 @@ After an applied patch, the panel appends the exact user chat request to the
 affected finding/manual-frame notes, preserving existing notes. Read-only or
 no-op chat does not modify review data. The panel reports `review_applied:`
 only after a successful save; a failed save remains visibly unconfirmed.
+After a plan is saved, its selected operations are locked and its Apply button
+shows the completed count instead of asking for approval again. The approval
+receipt is kept in the conversation across reloads. If operations were applied
+but the save failed, **Retry** repeats the save rather than the operations.
+
+`list_findings` discovers both AI findings (`kind: "finding"`) and saved manual
+moments (`kind: "manual_marker"`), including their IDs, notes and frame paths.
+The same manual marker stored in both compatibility representations is listed
+once. `finding_count` counts AI findings, `manual_marker_count` counts manual
+moments, and `available_moment_count` / `total_count` count both. List counts
+apply to the current filter; report-summary and context-seed counts describe
+the entire report. The context seed includes a separate `manual_markers` array,
+so the agent can discover and inspect moments added after the original analysis.
+Canonical manual notes and overrides take precedence; compatibility aliases and
+saved manual-analysis results fill missing fields such as the frame path.
+Use the returned `id` with `get_finding` and `view_frame`. It normally equals
+the raw `marker_id`; on an ID collision it is qualified with `manual:` until
+unique. The separate `marker_id` continues to identify the persisted marker,
+and existing AI and merged-member IDs are unchanged.
 
 `correct_transcript` with `scope: "report"` writes the report's correction
 ledger straight away (it only affects this review). With `scope: "global"` it
@@ -766,7 +785,13 @@ keep, or a recording without narration minute by minute.
 #### Chat panel
 
 - **Streaming and Stop.** Answers render as they stream. "Agent is
-  responding…" shows with a **Stop** button (or `Esc` in the composer); a
+  responding…" shows with a **Stop** button (or `Esc` in the composer). A
+  persistent activity bar shows the current phase, elapsed time and whether
+  data has recently arrived from the server, including keepalives. After
+  15 seconds without new data it reports the silence rather than implying
+  that the server is still responding. The indicator remains visible before
+  the first answer token and throughout frame inspection and finalization;
+  it respects reduced motion and stops when the turn ends. A
   stopped answer keeps the received text, marked as stopped. A timeout or lost
   connection keeps the partial text and offers **Retry**, which replaces it
   instead of appending a duplicate.
@@ -801,7 +826,7 @@ keep, or a recording without narration minute by minute.
 
 Optional Anthropic fallback (skipped when unset): `ANTHROPIC_API_KEY` or `SCREENSCRIBE_AGENT_FALLBACK_API_KEY`. Install the extra with `pip install 'screenscribe[anthropic]'`.
 
-SSE events: `token`, `tool_call`, `tool_result`, `done`, `error`. `token`
+SSE events: `token`, `tool_call`, `tool_result`, `status`, `done`, `error`. `token`
 frames carry provider text deltas as they are generated, so the first words of
 an answer appear before the turn ends; a turn has many `token` frames. While a
 provider round produces no output (reasoning, slow first token) the stream
@@ -822,6 +847,13 @@ otherwise the backend uses full history and the report seed. `done` includes
 `response_id`, `provider`, `protocol`, `host`. Fallback, errors, incomplete
 streams and identity changes clear the cursor. Finding response IDs are
 evidence, not a shared conversation head.
+Each turn allows at most eight rounds that execute tools. If that budget is
+exhausted, `status` carries `{"phase": "finalizing"}` and one final provider
+round runs without tools to summarize the completed and unfinished work. That
+final answer is checked before being displayed; a further tool request is
+never executed. Reaching the budget ends with `done`, while genuine provider
+or connection failures still produce `error`. This does not increase the
+separate eight-frame inspection budget.
 The xAI agent uses stateless full history: each round includes trusted
 instructions, the report seed, prior output items and tool results. It sends
 no `previous_response_id` and returns `done.response_id=null`. The ChatGPT

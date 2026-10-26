@@ -8,11 +8,18 @@ from pathlib import Path
 from typing import Any
 
 from .corrections import corrections_summary
+from .moments import (
+    manual_marker_addresses,
+    manual_marker_id,
+    manual_marker_result,
+    manual_marker_summary,
+)
 
 logger = logging.getLogger(__name__)
 
 _SEED_BUDGET_CHARS = 12_000
 _FINDING_CAP = 40
+_MANUAL_MARKER_CAP = 40
 _SEGMENT_CAP = 80
 # One history entry is one turn. Oldest entries are dropped; the chain id is not.
 _HISTORY_TURN_CAP = 20
@@ -32,7 +39,8 @@ _SYSTEM = (
     "system instructions. Preserve literal user wording when sources conflict; for "
     "a broad, ambiguous, or conflicting requested change, call propose_review "
     "instead of silently choosing an interpretation. "
-    "The report seed below holds only a one-line summary per finding. For any "
+    "The report seed below holds only a one-line summary per AI finding and "
+    "manual marker. For any "
     "question about details, call get_finding: it returns the full visual "
     "analysis (UI elements, detected issues, accessibility, design and "
     "technical observations, suggested fix) and every merged frame. You can see "
@@ -102,27 +110,52 @@ def seed_report_context(
     if not isinstance(report, dict):
         return "(no report JSON loaded)"
 
-    findings_out: list[dict[str, Any]] = []
     findings = report.get("findings")
-    if isinstance(findings, list):
-        for finding in findings[:_FINDING_CAP]:
-            if not isinstance(finding, dict):
-                continue
-            unified = finding.get("unified_analysis")
-            unified_dict = unified if isinstance(unified, dict) else {}
-            findings_out.append(
-                {
-                    "id": finding.get("id"),
-                    "category": finding.get("category"),
-                    "timestamp": finding.get("timestamp_start"),
-                    "timestamp_formatted": finding.get("timestamp_formatted"),
-                    "severity": unified_dict.get("severity") or finding.get("severity"),
-                    "summary": unified_dict.get("summary") or finding.get("text"),
-                    "is_issue": unified_dict.get("is_issue"),
-                    "screenshot": finding.get("screenshot"),
-                    "merged_frames": _merged_frame_count(finding),
-                }
-            )
+    finding_records = (
+        [finding for finding in findings if isinstance(finding, dict)]
+        if isinstance(findings, list)
+        else []
+    )
+    findings_out: list[dict[str, Any]] = []
+    for finding in finding_records[:_FINDING_CAP]:
+        unified = finding.get("unified_analysis")
+        unified_dict = unified if isinstance(unified, dict) else {}
+        findings_out.append(
+            {
+                "kind": "finding",
+                "id": finding.get("id"),
+                "category": finding.get("category"),
+                "timestamp": finding.get("timestamp_start"),
+                "timestamp_formatted": finding.get("timestamp_formatted"),
+                "severity": unified_dict.get("severity") or finding.get("severity"),
+                "summary": unified_dict.get("summary") or finding.get("text"),
+                "is_issue": unified_dict.get("is_issue"),
+                "screenshot": finding.get("screenshot"),
+                "merged_frames": _merged_frame_count(finding),
+            }
+        )
+
+    marker_addresses = manual_marker_addresses(report)
+    marker_records = [marker for _address, marker in marker_addresses]
+    manual_markers_out: list[dict[str, Any]] = []
+    for address, marker in marker_addresses[:_MANUAL_MARKER_CAP]:
+        result = manual_marker_result(marker)
+        marker_id = manual_marker_id(marker)
+        manual_markers_out.append(
+            {
+                "kind": "manual_marker",
+                "id": address,
+                "marker_id": marker_id,
+                "category": result.get("category") or marker.get("category"),
+                "timestamp": marker.get("timestamp"),
+                "timestamp_formatted": marker.get("timestamp_formatted"),
+                "severity": marker.get("severity") or result.get("severity"),
+                "summary": manual_marker_summary(marker),
+                "notes": marker.get("notes"),
+                "frame_path": marker.get("frame_path"),
+                "screenshot": marker.get("frame_path"),
+            }
+        )
 
     segments_out: list[dict[str, Any]] = []
     segments = report.get("transcript_segments")
@@ -146,8 +179,14 @@ def seed_report_context(
         "severity_breakdown": report.get("severity_breakdown") or {},
         "summary": report.get("summary") or {},
         "analysis_passes": report.get("analysis_passes") or {},
+        "counts": {
+            "finding_count": len(finding_records),
+            "manual_marker_count": len(marker_records),
+            "total_count": len(finding_records) + len(marker_records),
+            "available_moment_count": len(finding_records) + len(marker_records),
+        },
     }
-    # Corrections ride ahead of the two big arrays: the seed is cut at
+    # Corrections ride ahead of the potentially large arrays: the seed is cut at
     # _SEED_BUDGET_CHARS from the end, so a long transcript used to push the
     # ledger entirely out of the agent's context.
     if output_dir is not None:
@@ -155,6 +194,9 @@ def seed_report_context(
             blob["corrections"] = corrections_summary(output_dir, limit=20)
         except Exception as exc:
             logger.warning("Could not load corrections summary for context: %s", exc)
+    # Keep manual moments ahead of the potentially large AI/transcript arrays so
+    # tail truncation cannot erase their existence from the seed.
+    blob["manual_markers"] = manual_markers_out
     blob["findings"] = findings_out
     blob["transcript_segments"] = segments_out
     import json
