@@ -203,6 +203,103 @@ def test_manual_marker_normalization_merges_compat_sources_without_mutation() ->
     assert report == original
 
 
+def test_manual_marker_normalization_preserves_canonical_text_clears() -> None:
+    report = {
+        "findings": [],
+        "manual_review": {
+            "markers": [
+                {
+                    "marker_id": "cleared",
+                    "timestamp": 21.0,
+                    "notes": "",
+                    "transcript": "   ",
+                    "frame_path": "",
+                },
+                {
+                    "marker_id": "cleared",
+                    "timestamp": 777.0,
+                    "notes": "later canonical duplicate",
+                    "transcript": "later canonical transcript",
+                    "frame_path": "",
+                },
+                {
+                    "marker_id": "missing",
+                    "timestamp": 22.0,
+                    "transcript": None,
+                    "frame_path": "",
+                },
+            ],
+            "results": [
+                {
+                    "marker_id": "cleared",
+                    "summary": "Independent AI summary",
+                    "category": "ui",
+                    "issues_detected": ["Legitimate analysis remains"],
+                }
+            ],
+        },
+        "human_review": {
+            "manual_frames": [
+                {
+                    "marker_id": "cleared",
+                    "timestamp": 999.0,
+                    "notes": "stale user note",
+                    "transcript": "stale transcript",
+                    "frame_path": "manual_frames/cleared.png",
+                },
+                {
+                    "marker_id": "missing",
+                    "timestamp": 998.0,
+                    "notes": "alias note",
+                    "transcript": "alias transcript",
+                    "frame_path": "manual_frames/missing.png",
+                },
+            ]
+        },
+    }
+    original = deepcopy(report)
+
+    normalized = {marker["marker_id"]: marker for marker in manual_markers(report)}
+    assert normalized["cleared"]["timestamp"] == 21.0
+    assert normalized["cleared"]["notes"] == ""
+    assert normalized["cleared"]["transcript"] == "   "
+    assert normalized["cleared"]["frame_path"] == "manual_frames/cleared.png"
+    assert normalized["cleared"]["result"]["summary"] == "Independent AI summary"
+    assert normalized["cleared"]["result"]["issues_detected"] == ["Legitimate analysis remains"]
+    assert normalized["missing"]["notes"] == "alias note"
+    assert normalized["missing"]["transcript"] == "alias transcript"
+    assert normalized["missing"]["frame_path"] == "manual_frames/missing.png"
+
+    belt = ReportToolbelt(report)
+    rows = {
+        row["marker_id"]: row
+        for row in belt.list_findings()["findings"]
+        if row["kind"] == "manual_marker"
+    }
+    assert rows["cleared"]["timestamp"] == 21.0
+    assert rows["cleared"]["notes"] == ""
+    assert rows["cleared"]["summary"] == "Independent AI summary"
+    assert rows["cleared"]["frame_path"] == "manual_frames/cleared.png"
+    assert rows["missing"]["notes"] == "alias note"
+
+    cleared_detail = belt.get_finding(rows["cleared"]["id"])
+    assert cleared_detail["notes"] == ""
+    assert cleared_detail["transcript"] == "   "
+    assert cleared_detail["result"]["summary"] == "Independent AI summary"
+    missing_detail = belt.get_finding(rows["missing"]["id"])
+    assert missing_detail["notes"] == "alias note"
+    assert missing_detail["transcript"] == "alias transcript"
+
+    seed_rows = {
+        row["marker_id"]: row for row in json.loads(seed_report_context(report))["manual_markers"]
+    }
+    assert seed_rows["cleared"]["notes"] == ""
+    assert seed_rows["cleared"]["summary"] == "Independent AI summary"
+    assert seed_rows["cleared"]["frame_path"] == "manual_frames/cleared.png"
+    assert seed_rows["missing"]["notes"] == "alias note"
+    assert report == original
+
+
 def test_get_transcript_window() -> None:
     result = _toolbelt().get_transcript(start=3.0, end=8.0)
     assert result["count"] >= 1

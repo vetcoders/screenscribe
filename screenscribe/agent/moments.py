@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 _MANUAL_ADDRESS_PREFIX = "manual:"
+_CANONICAL_CLEARABLE_FIELDS = frozenset({"notes", "transcript"})
 
 
 def manual_marker_id(marker: dict[str, Any]) -> Any:
@@ -27,16 +28,17 @@ def manual_markers(report: dict[str, Any]) -> list[dict[str, Any]]:
     """
     markers: list[dict[str, Any]] = []
     marker_indexes: dict[str, int] = {}
+    canonical_clear_fields: dict[str, set[str]] = {}
 
-    sources: list[object] = []
+    sources: list[tuple[bool, object]] = []
     manual = report.get("manual_review")
     if isinstance(manual, dict):
-        sources.append(manual.get("markers"))
+        sources.append((True, manual.get("markers")))
     human = report.get("human_review")
     if isinstance(human, dict):
-        sources.append(human.get("manual_frames"))
+        sources.append((False, human.get("manual_frames")))
 
-    for source in sources:
+    for is_canonical, source in sources:
         if not isinstance(source, list):
             continue
         for marker in source:
@@ -47,9 +49,26 @@ def manual_markers(report: dict[str, Any]) -> list[dict[str, Any]]:
                 identity = str(marker_id)
                 existing_index = marker_indexes.get(identity)
                 if existing_index is not None:
-                    markers[existing_index] = _fill_missing(markers[existing_index], marker)
+                    primary = markers[existing_index]
+                    merged = _fill_missing(primary, marker)
+                    protected = canonical_clear_fields.setdefault(identity, set())
+                    for key in protected:
+                        merged[key] = deepcopy(primary[key])
+                    if is_canonical:
+                        for key in _CANONICAL_CLEARABLE_FIELDS - protected:
+                            value = marker.get(key)
+                            if isinstance(value, str):
+                                merged[key] = deepcopy(value)
+                                protected.add(key)
+                    markers[existing_index] = merged
                     continue
                 marker_indexes[identity] = len(markers)
+                if is_canonical:
+                    canonical_clear_fields[identity] = {
+                        key
+                        for key in _CANONICAL_CLEARABLE_FIELDS
+                        if isinstance(marker.get(key), str)
+                    }
             markers.append(deepcopy(marker))
 
     results_by_id: dict[str, dict[str, Any]] = {}
