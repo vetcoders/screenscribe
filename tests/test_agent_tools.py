@@ -11,7 +11,11 @@ import pytest
 
 from screenscribe.agent.context import seed_report_context
 from screenscribe.agent.moments import manual_markers
-from screenscribe.agent.tools import ReportToolbelt, responses_tool_schemas
+from screenscribe.agent.tools import (
+    _MAX_LIST_FINDINGS_RESULT_CHARS,
+    ReportToolbelt,
+    responses_tool_schemas,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "agent_report_synthetic.json"
 
@@ -24,6 +28,9 @@ def _toolbelt(repo_root: Path | None = None) -> ReportToolbelt:
 def test_list_findings_returns_fixture_rows() -> None:
     result = _toolbelt().list_findings()
     assert result["count"] == 13
+    assert result["returned_count"] == 13
+    assert result["omitted_count"] == 0
+    assert result["truncated"] is False
     ids = {row["id"] for row in result["findings"]}
     assert 0 in ids
     assert result["findings"][0]["summary"]
@@ -116,6 +123,66 @@ def test_manual_markers_are_discoverable_deduplicated_and_round_trip_by_id() -> 
     assert summary["manual_marker_count"] == 2
     assert summary["available_moment_count"] == 3
     assert summary["total_count"] == 3
+
+
+def test_list_findings_bounds_multi_megabyte_rows_without_changing_filter_truth() -> None:
+    long_note = "manual beginning " + ("x" * 2_000_000) + " unique-tail-target"
+    long_id = "manual-id-" + ("z" * 60_000)
+    marker_ids = ["manual-tail", *(f"manual-{index}" for index in range(80)), long_id]
+    report: dict[str, Any] = {
+        "findings": [
+            {
+                "id": "ai-long",
+                "category": "bug",
+                "timestamp_start": 1.0,
+                "text": "a" * 100_000,
+                "unified_analysis": {"summary": "a" * 100_000, "severity": "high"},
+            }
+        ],
+        "manual_review": {
+            "markers": [
+                {
+                    "marker_id": marker_id,
+                    "timestamp": float(index + 2),
+                    "frame_path": f"manual_frames/frame-{index}.jpg",
+                    "notes": (long_note if index == 0 else f"manual row {index} " + ("n" * 20_000)),
+                }
+                for index, marker_id in enumerate(marker_ids)
+            ]
+        },
+    }
+    belt = ReportToolbelt(report)
+
+    result = belt.list_findings()
+    encoded = json.dumps(result, ensure_ascii=False)
+    assert len(encoded) <= _MAX_LIST_FINDINGS_RESULT_CHARS
+    assert json.loads(encoded) == result
+    assert result["count"] == 1 + len(marker_ids)
+    assert result["filtered_count"] == result["count"]
+    assert result["finding_count"] == 1
+    assert result["manual_marker_count"] == len(marker_ids)
+    assert result["returned_count"] == len(result["findings"])
+    assert result["omitted_count"] == result["count"] - result["returned_count"]
+    assert result["truncated"] is True
+    assert result["coverage"]["matched"] == result["count"]
+    assert result["coverage"]["returned"] == result["returned_count"]
+    assert result["coverage"]["omitted"] == result["omitted_count"]
+    assert result["coverage"]["fields_truncated"] is True
+    returned_manual = [row for row in result["findings"] if row["kind"] == "manual_marker"]
+    assert returned_manual
+    assert all(row["id"] in marker_ids for row in returned_manual)
+    first_manual = next(row for row in returned_manual if row["id"] == "manual-tail")
+    assert first_manual["summary"].endswith("…(truncated)")
+    assert first_manual["notes"].endswith("…(truncated)")
+
+    filtered = belt.list_findings("unique-tail-target")
+    assert filtered["count"] == 1
+    assert filtered["returned_count"] == 1
+    assert filtered["findings"][0]["id"] == "manual-tail"
+    assert "unique-tail-target" not in filtered["findings"][0]["notes"]
+    assert report["manual_review"]["markers"][0]["notes"] == long_note
+    detail = belt.get_finding("manual-tail")
+    assert len(detail["notes"]) > len(filtered["findings"][0]["notes"])
 
 
 def test_manual_marker_normalization_merges_compat_sources_without_mutation() -> None:

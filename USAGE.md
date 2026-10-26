@@ -745,7 +745,12 @@ The same manual marker stored in both compatibility representations is listed
 once. `finding_count` counts AI findings, `manual_marker_count` counts manual
 moments, and `available_moment_count` / `total_count` count both. List counts
 apply to the current filter; report-summary and context-seed counts describe
-the entire report. The context seed includes a separate `manual_markers` array,
+the entire report. List fields are compact and the serialized result is bounded
+to 48,000 characters. `returned_count`, `omitted_count`, `truncated` and
+`coverage` distinguish the returned sample from all matching records. Filtering
+still searches complete source text; narrow the filter to inspect omitted
+matches. IDs retain their original values.
+The context seed includes a separate `manual_markers` array,
 so the agent can discover and inspect moments added after the original analysis.
 The seed is valid JSON within a 12,000-character budget: long fields are
 shortened and space is shared between AI findings, manual moments and
@@ -758,10 +763,14 @@ saved manual-analysis results fill missing fields such as the frame path.
 An explicitly cleared canonical note or transcript stays cleared, including an
 empty or whitespace-only string. A missing or null field may still be filled
 from its compatibility representation; independent AI analysis remains visible.
-Use the returned `id` with `get_finding` and `view_frame`. It normally equals
+Use the returned `id` with `get_finding`, `view_frame` and `show_frame`. It normally equals
 the raw `marker_id`; on an ID collision it is qualified with `manual:` until
 unique. The separate `marker_id` continues to identify the persisted marker,
 and existing AI and merged-member IDs are unchanged.
+`show_frame` presents the resolved manual or AI card after the server's
+successful tool result. Timestamp-only requests select the nearest logical
+moment, including manual markers. An unknown explicit ID produces an error;
+it does not highlight a different card by timestamp.
 
 `correct_transcript` with `scope: "report"` writes the report's correction
 ledger straight away (it only affects this review). With `scope: "global"` it

@@ -213,12 +213,100 @@ def test_manual_addresses_round_trip_through_ai_collisions_and_prefix_ids(
         viewed = belt.view_frame(finding_id=row["id"])
         assert viewed["attached"] == 1
         assert viewed["frames"][0]["frame"] == row["frame_path"]
+        shown = belt.show_frame(finding_id=row["id"])
+        assert shown == {
+            "action": "show_frame",
+            "kind": "manual_marker",
+            "finding_id": row["id"],
+            "marker_id": marker_id,
+            "timestamp": row["timestamp"],
+            "screenshot": row["frame_path"],
+        }
+
+    assert belt.show_frame(finding_id="m2")["kind"] == "finding"
+    assert belt.show_frame(finding_id="member") == {
+        "action": "show_frame",
+        "kind": "finding",
+        "finding_id": "m2",
+        "timestamp": 2.0,
+        "screenshot": "03_bug_11-59.jpg",
+        "matched_member_id": "member",
+    }
 
     seed = json.loads(seed_report_context(report))
     assert {row["marker_id"]: row["id"] for row in seed["manual_markers"]} == {
         marker_id: row["id"] for marker_id, row in manual_rows.items()
     }
     assert len(belt.drain_images()) == len(manual_rows)
+
+
+def test_show_frame_timestamp_resolves_manual_and_mixed_logical_moments() -> None:
+    manual_only = ReportToolbelt(
+        {
+            "findings": [],
+            "manual_review": {
+                "markers": [
+                    {
+                        "marker_id": "manual-only",
+                        "timestamp": 30.0,
+                        "frame_path": "manual_frames/manual-only.png",
+                    }
+                ]
+            },
+        }
+    )
+    assert manual_only.show_frame(timestamp=31.0) == {
+        "action": "show_frame",
+        "kind": "manual_marker",
+        "finding_id": "manual-only",
+        "marker_id": "manual-only",
+        "timestamp": 30.0,
+        "screenshot": "manual_frames/manual-only.png",
+    }
+    numeric_manual = ReportToolbelt(
+        {
+            "findings": [],
+            "manual_review": {
+                "markers": [
+                    {
+                        "marker_id": 7,
+                        "timestamp": 7.0,
+                        "frame_path": "manual_frames/7.png",
+                    }
+                ]
+            },
+        }
+    )
+    assert numeric_manual.show_frame(finding_id="7")["finding_id"] == 7
+
+    mixed = ReportToolbelt(
+        {
+            "findings": [
+                {
+                    "id": "ai",
+                    "timestamp_start": 10.0,
+                    "screenshot": "ai.jpg",
+                    "merged_frames": [
+                        {"id": "member", "timestamp_start": 20.0, "screenshot": "member.jpg"}
+                    ],
+                }
+            ],
+            "manual_review": {
+                "markers": [
+                    {
+                        "marker_id": "manual",
+                        "timestamp": 30.0,
+                        "frame_path": "manual_frames/manual.jpg",
+                    }
+                ]
+            },
+        }
+    )
+    assert mixed.show_frame(timestamp=9.0)["finding_id"] == "ai"
+    assert mixed.show_frame(timestamp=21.0)["matched_member_id"] == "member"
+    assert mixed.show_frame(timestamp=29.0)["marker_id"] == "manual"
+    unknown = mixed.show_frame(finding_id="manual:missing", timestamp=10.0)
+    assert unknown == {"error": "Unknown finding_id: manual:missing"}
 
 
 def test_view_frame_refuses_escape_missing_and_non_images(report_dir: Path) -> None:

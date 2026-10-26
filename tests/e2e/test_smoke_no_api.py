@@ -37,10 +37,16 @@ C4.2; this file only delivers the smoke.
 from __future__ import annotations
 
 import html as _html
+import json
+from urllib.parse import urlparse
 
 import pytest
 
-from .test_review_layout_manual_frame import LONG_TRANSCRIPT, _inject_long_manual_frame
+from .test_review_layout_manual_frame import (
+    LONG_TRANSCRIPT,
+    TINY_JPEG_B64,
+    _inject_long_manual_frame,
+)
 
 pytestmark = [pytest.mark.e2e, pytest.mark.browser, pytest.mark.requires_playwright]
 
@@ -114,6 +120,107 @@ def _install_console_capture(page) -> tuple[list, list]:
 
 
 # --- REVIEW surface --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("marker_id", "with_ai"),
+    [("manual-only", False), ("1", True), ('manual"][odd="id', True)],
+)
+def test_agent_show_frame_highlights_resolved_manual_moment(
+    tmp_path, browser_context, marker_id: str, with_ai: bool
+) -> None:
+    """Real backend result -> SSE parser -> host -> rendered manual card."""
+    from screenscribe.agent.chat import format_sse
+    from screenscribe.agent.tools import ReportToolbelt
+    from screenscribe.html_pro.renderer import render_html_report_pro
+
+    findings = (
+        [
+            {
+                "id": 1,
+                "category": "ui",
+                "timestamp_start": 12.0,
+                "timestamp": 12.0,
+                "timestamp_formatted": "00:12",
+                "text": "Nearby AI finding must not be selected.",
+                "screenshot": "",
+                "unified_analysis": {
+                    "summary": "Nearby AI finding.",
+                    "severity": "low",
+                    "is_issue": True,
+                },
+            }
+        ]
+        if with_ai
+        else []
+    )
+    marker = {"marker_id": marker_id, "timestamp": 12.5, "notes": "Selected manual moment."}
+    belt = ReportToolbelt({"findings": findings, "manual_review": {"markers": [marker]}})
+    listed = next(row for row in belt.list_findings()["findings"] if row["kind"] == "manual_marker")
+    result = json.loads(belt.execute("show_frame", {"finding_id": listed["id"]}))
+    assert result.get("kind") == "manual_marker", result
+    assert result["marker_id"] == marker_id
+    stream = "".join(
+        [
+            format_sse("tool_call", {"name": "show_frame", "input": {"finding_id": listed["id"]}}),
+            format_sse("tool_result", {"name": "show_frame", "result": result}),
+            format_sse("token", {"text": "Shown."}),
+            format_sse("done", {"response_id": None}),
+        ]
+    )
+    html = render_html_report_pro(
+        video_name="manual-agent-smoke.mov",
+        video_path=None,
+        generated_at="2026-01-01T00:00:00",
+        executive_summary="Neutral manual navigation fixture.",
+        findings=findings,
+        language="en",
+    )
+    requests = []
+
+    def serve_fixture(route) -> None:
+        path = urlparse(route.request.url).path
+        if path == "/review_report.html":
+            route.fulfill(status=200, content_type="text/html", body=html)
+        elif path == "/api/agent/chat/stream":
+            requests.append(json.loads(route.request.post_data))
+            route.fulfill(status=200, content_type="text/event-stream", body=stream)
+        elif path == "/api/review-state":
+            route.fulfill(status=200, content_type="application/json", body="{}")
+        else:
+            route.fulfill(status=404, body="No external resource in this fixture.")
+
+    page = browser_context.new_page()
+    page.route("**/*", serve_fixture)
+    page.goto("http://localhost:9876/review_report.html", wait_until="networkidle")
+    page.evaluate(
+        """([marker, pixels]) => {
+            reportState.manualFrames = [{
+                ...marker,
+                timestamp_formatted: '00:12.500',
+                frameBase64: pixels,
+                frameDataUrl: 'data:image/jpeg;base64,' + pixels,
+                severity: 'medium',
+                result: { summary: 'Manual fixture.', issues_detected: [] },
+            }];
+            renderManualFrames();
+            activateTab('summary', { persist: false });
+        }""",
+        [marker, TINY_JPEG_B64],
+    )
+    page.click("#ss-agent-fab")
+    page.fill("#ss-agent-input", "Show the saved manual moment.")
+    page.click("#ss-agent-send")
+    page.locator(".ss-agent-msg-assistant").filter(has_text="Shown.").wait_for()
+    highlighted = page.locator(".manual-frame-item.ss-agent-highlight")
+    assert highlighted.count() == 1
+    assert highlighted.get_attribute("data-manual-marker-id") == marker_id
+    assert highlighted.is_visible()
+    assert page.locator(".finding.ss-agent-highlight").count() == 0
+    assert page.locator("#tab-findings.active").count() == 1
+    assert len(requests) == 1
+    page.screenshot(path=str(tmp_path / "agent-shown-manual-moment.png"))
+    page.close()
 
 
 def test_review_tabs_present(review_url, browser_context) -> None:

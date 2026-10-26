@@ -13,6 +13,9 @@
   notes and transcripts stay cleared when older compatibility data exists.
   Long notes no longer crowd AI findings, transcript segments or corrections
   out of the context seed; omitted records have explicit coverage counts.
+  Tool lists also bound long text and report omitted matches. `show_frame`
+  presents the correct manual card, including colliding IDs, only after the
+  server resolves its target.
 
 - **Fixed: the agent summarizes its progress when the tool budget is used.**
   After eight tool-execution rounds it gets one final round without tools

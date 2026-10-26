@@ -431,6 +431,66 @@ def test_sse_and_tools() -> None:
     assert "sse-tools:ok" in output
 
 
+def test_show_frame_sse_waits_for_normalized_result_and_deduplicates() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const frames = [];
+            window.__screenscribeAgentHost = {
+                showFrame(payload) {
+                    if (payload.kind !== 'manual_marker' || payload.marker_id !== 'm2') {
+                        throw new Error('raw show_frame reached host: ' + JSON.stringify(payload));
+                    }
+                    frames.push(payload);
+                },
+            };
+            const normalized = {
+                action: 'show_frame',
+                kind: 'manual_marker',
+                finding_id: 'manual:manual:m2',
+                marker_id: 'm2',
+                timestamp: 54,
+                screenshot: 'manual_frames/m2.jpg',
+            };
+            const stream = [
+                'event: tool_call',
+                'data: {"name":"show_frame","input":{"finding_id":"manual:manual:m2","timestamp":54}}',
+                '',
+                'event: tool_result',
+                'data: ' + JSON.stringify({ name: 'show_frame', result: normalized }),
+                '',
+                'event: tool_result',
+                'data: ' + JSON.stringify({ name: 'show_frame', result: normalized }),
+                '',
+                'event: tool_call',
+                'data: {"name":"show_frame","input":{"finding_id":"manual:missing","timestamp":60}}',
+                '',
+                'event: tool_result',
+                'data: {"name":"show_frame","result":{"error":"Unknown finding_id: manual:missing"}}',
+                '',
+                'event: done',
+                'data: {}',
+                '',
+            ].join('\\n');
+            fetch = async () => ({ ok: true, text: async () => stream });
+            window.fetch = fetch;
+            api.init();
+            await api.send('pokaż manualną klatkę');
+            if (frames.length !== 1) {
+                throw new Error('show_frame host calls: ' + frames.length);
+            }
+            if (frames[0].finding_id !== 'manual:manual:m2'
+                || frames[0].screenshot !== 'manual_frames/m2.jpg') {
+                throw new Error('normalized show_frame lost fields: ' + JSON.stringify(frames[0]));
+            }
+            process.stdout.write('show-frame-normalized:ok');
+            """
+        )
+    )
+    assert "show-frame-normalized:ok" in output
+
+
 def test_streaming_sse_accepts_crlf_delimiters() -> None:
     output = _run_agent_panel(
         textwrap.dedent(

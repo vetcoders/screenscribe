@@ -3518,15 +3518,23 @@ function seekToTimestamp(seconds) {
 function showAgentFrame(input) {
     const payload = input && typeof input === 'object' ? input : {};
     const findingId = payload.finding_id != null ? String(payload.finding_id) : '';
-    const timestamp = Number(payload.timestamp);
+    const markerId = payload.marker_id != null ? String(payload.marker_id) : '';
+    const isManualMarker = payload.kind === 'manual_marker';
+    const hasTimestamp = payload.timestamp != null
+        && !(typeof payload.timestamp === 'string' && payload.timestamp.trim() === '');
+    const timestamp = hasTimestamp ? Number(payload.timestamp) : NaN;
     document.querySelectorAll('.ss-agent-highlight').forEach((node) => {
         node.classList.remove('ss-agent-highlight');
     });
     let target = null;
-    if (findingId) {
+    if (isManualMarker) {
+        if (markerId) {
+            target = manualFrameArticle(markerId);
+        }
+    } else if (findingId) {
         target = findingArticle(findingId);
     }
-    if (!target && Number.isFinite(timestamp)) {
+    if (!isManualMarker && !target && Number.isFinite(timestamp)) {
         const metas = document.querySelectorAll('.finding .finding-meta[data-timestamp]');
         let bestDelta = Infinity;
         metas.forEach((meta) => {
@@ -3546,7 +3554,9 @@ function showAgentFrame(input) {
         const thumb = target.querySelector('.annotation-container');
         if (thumb) thumb.classList.add('ss-agent-highlight');
         if (typeof target.scrollIntoView === 'function') {
-            target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            const reduceMotion = typeof window.matchMedia === 'function'
+                && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'nearest' });
         }
     }
     if (Number.isFinite(timestamp)) {
@@ -3568,6 +3578,14 @@ function findingArticle(findingId) {
     if (!id) return null;
     return Array.from(document.querySelectorAll('.finding')).find(
         (article) => normId(article?.dataset?.findingId) === id
+    ) || null;
+}
+
+function manualFrameArticle(markerId) {
+    const id = normId(markerId);
+    if (!id) return null;
+    return Array.from(document.querySelectorAll('.manual-frame-item')).find(
+        (article) => normId(article?.dataset?.manualMarkerId) === id
     ) || null;
 }
 

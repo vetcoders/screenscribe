@@ -685,6 +685,10 @@
             appendSystemLine(String(payload.reason || payload.unsupported), 'ss-agent-msg-warn');
             return;
         }
+        if (name === 'show_frame' && payload.action === 'show_frame') {
+            applyToolCall('show_frame', payload);
+            return;
+        }
         if (payload.type === 'review_plan') {
             renderPlanCard(payload, userInstruction);
             return;
@@ -1855,10 +1859,16 @@
                     if (log && typeof log.scrollTop === 'number') log.scrollTop = log.scrollHeight || 0;
                 } else if (evt.event === 'tool_call') {
                     setAgentActivityPhase(toolActivityPhase(evt.data && evt.data.name));
-                    applyToolCall(
-                        evt.data && evt.data.name,
-                        evt.data && (evt.data.input != null ? evt.data.input : evt.data.arguments)
-                    );
+                    // show_frame needs the server-normalized result: only that
+                    // payload carries kind + raw marker_id for manual moments.
+                    // Calling the host with raw arguments can highlight a
+                    // colliding AI card before the tool result arrives.
+                    if (evt.data && evt.data.name !== 'show_frame') {
+                        applyToolCall(
+                            evt.data.name,
+                            evt.data.input != null ? evt.data.input : evt.data.arguments
+                        );
+                    }
                 } else if (evt.event === 'tool_result') {
                     await ingestToolResult(
                         evt.data && evt.data.name,
