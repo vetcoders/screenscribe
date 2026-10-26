@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+- **Fixed: approved review plans no longer remain actionable.** A successful
+  save locks the plan and keeps its approval receipt across reloads. A failed
+  save can be retried without applying the operations again. Approvals made
+  during a streaming answer retain the completed state after that answer.
+
+- **Fixed: the review agent can discover saved manual moments.** Tool lists,
+  report summaries and context seeds include manual moments with stable IDs
+  and explicit counts, while keeping AI findings separate. Explicitly cleared
+  notes and transcripts stay cleared when older compatibility data exists.
+  Long notes no longer crowd AI findings, transcript segments or corrections
+  out of the context seed; omitted records have explicit coverage counts.
+  Tool lists also bound long text and report omitted matches. `show_frame`
+  presents the correct manual card, including colliding IDs, only after the
+  server resolves its target.
+
+- **Fixed: the agent summarizes its progress when the tool budget is used.**
+  After eight tool-execution rounds it gets one final round without tools
+  instead of ending with a bare limit error. Anthropic keeps the definitions
+  required by prior tool-use history while disabling further tool calls.
+
+- **Added: visible review-agent activity.** The chat shows its current phase,
+  elapsed time and the freshness of server data before the first response
+  text and during tool use, with reduced-motion support. The standalone public
+  demo embeds the same current panel assets.
+
 - **Added: a signed-in ChatGPT account runs LLM + vision.** After
   `screenscribe auth login openai` (device flow),
   `screenscribe config auth chatgpt` (or `config auth openai --login`, or

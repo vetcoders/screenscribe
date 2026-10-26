@@ -3518,15 +3518,23 @@ function seekToTimestamp(seconds) {
 function showAgentFrame(input) {
     const payload = input && typeof input === 'object' ? input : {};
     const findingId = payload.finding_id != null ? String(payload.finding_id) : '';
-    const timestamp = Number(payload.timestamp);
+    const markerId = payload.marker_id != null ? String(payload.marker_id) : '';
+    const isManualMarker = payload.kind === 'manual_marker';
+    const hasTimestamp = payload.timestamp != null
+        && !(typeof payload.timestamp === 'string' && payload.timestamp.trim() === '');
+    const timestamp = hasTimestamp ? Number(payload.timestamp) : NaN;
     document.querySelectorAll('.ss-agent-highlight').forEach((node) => {
         node.classList.remove('ss-agent-highlight');
     });
     let target = null;
-    if (findingId) {
+    if (isManualMarker) {
+        if (markerId) {
+            target = manualFrameArticle(markerId);
+        }
+    } else if (findingId) {
         target = findingArticle(findingId);
     }
-    if (!target && Number.isFinite(timestamp)) {
+    if (!isManualMarker && !target && Number.isFinite(timestamp)) {
         const metas = document.querySelectorAll('.finding .finding-meta[data-timestamp]');
         let bestDelta = Infinity;
         metas.forEach((meta) => {
@@ -3546,7 +3554,9 @@ function showAgentFrame(input) {
         const thumb = target.querySelector('.annotation-container');
         if (thumb) thumb.classList.add('ss-agent-highlight');
         if (typeof target.scrollIntoView === 'function') {
-            target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            const reduceMotion = typeof window.matchMedia === 'function'
+                && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'nearest' });
         }
     }
     if (Number.isFinite(timestamp)) {
@@ -3568,6 +3578,14 @@ function findingArticle(findingId) {
     if (!id) return null;
     return Array.from(document.querySelectorAll('.finding')).find(
         (article) => normId(article?.dataset?.findingId) === id
+    ) || null;
+}
+
+function manualFrameArticle(markerId) {
+    const id = normId(markerId);
+    if (!id) return null;
+    return Array.from(document.querySelectorAll('.manual-frame-item')).find(
+        (article) => normId(article?.dataset?.manualMarkerId) === id
     ) || null;
 }
 
@@ -3923,6 +3941,12 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function escapeHtmlAttribute(text) {
+    return escapeHtml(text)
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function formatPreciseTime(seconds) {
     const safe = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
     const m = Math.floor(safe / 60);
@@ -4239,7 +4263,8 @@ function renderManualFrames() {
             return `<option value="${escapeHtml(value)}"${sel}>${escapeHtml(t(key))}</option>`;
         }).join('');
         const findingId = manualFindingId(frame.marker_id);
-        const markerIdAttr = escapeHtml(frame.marker_id);
+        const findingIdAttr = escapeHtmlAttribute(findingId);
+        const markerIdAttr = escapeHtmlAttribute(frame.marker_id);
         const transcript = frame.transcript ? `
             <div class="manual-frame-human-entry">
                 <div class="manual-frame-source-label" data-i18n="media.manualFrameSpokenDescription">${escapeHtml(t('media.manualFrameSpokenDescription'))}</div>
@@ -4294,7 +4319,7 @@ function renderManualFrames() {
         return `
             <article class="manual-frame-item" data-manual-marker-id="${markerIdAttr}">
                 <div class="manual-frame-preview-card">
-                    <div class="annotation-container" data-finding-id="${escapeHtml(findingId)}">
+                    <div class="annotation-container" data-finding-id="${findingIdAttr}">
                         <img class="thumbnail"
                              src="${escapeHtml(frame.frameDataUrl)}"
                              data-full="${escapeHtml(frame.frameDataUrl)}"

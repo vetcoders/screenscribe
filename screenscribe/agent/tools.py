@@ -18,6 +18,13 @@ from typing import Any
 
 from ..work_item import VERDICT_VALUES
 from .corrections import CorrectionRejected, append_correction, validate_correction_fields
+from .moments import (
+    manual_marker_addresses,
+    manual_marker_id,
+    manual_marker_result,
+    manual_marker_summary,
+    manual_markers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +37,11 @@ _MAX_FRAME_BYTES = 8_000_000
 _MAX_FRAMES_PER_CALL = 4
 _MAX_FRAMES_PER_TURN = 8
 _MAX_DETAIL_STRING_CHARS = 6_000
+_MAX_LIST_FINDINGS_RESULT_CHARS = 48_000
+_MAX_LIST_TEXT_CHARS = 800
+_MAX_LIST_PATH_CHARS = 512
+_MAX_LIST_LABEL_CHARS = 256
+_LIST_TRUNCATION_MARKER = "…(truncated)"
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _JPEG_MAGIC = b"\xff\xd8\xff"
 _SCREENSHOTS_DIRNAME = "screenshots"
@@ -129,8 +141,12 @@ def responses_tool_schemas(*, include_repo: bool) -> list[dict[str, Any]]:
     tools = [
         _function_tool(
             "list_findings",
-            "List findings from the current review. Optional filter matches "
-            "severity, category, id, or text (case-insensitive substring).",
+            "List AI findings and manually saved review moments from the current "
+            "review. Each row has kind=finding or kind=manual_marker. Optional "
+            "filter matches severity, category, id, text, notes, or frame path "
+            "(case-insensitive substring). Results are compact and bounded; "
+            "counts describe all matches, while returned_count and coverage "
+            "identify omitted records. Narrow the filter to inspect omitted matches.",
             {
                 "filter": {
                     "type": "string",
@@ -219,10 +235,12 @@ def responses_tool_schemas(*, include_repo: bool) -> list[dict[str, Any]]:
         ),
         _function_tool(
             "show_frame",
-            "Ask the review UI to show the frame for a finding id or timestamp.",
+            "Ask the review UI to show the frame for an AI finding, merged member, "
+            "or manual marker id returned by list_findings. When finding_id is "
+            "omitted, timestamp picks the nearest logical review moment.",
             {
                 "finding_id": {
-                    "description": "Finding id from the report.",
+                    "description": "AI finding/member id or qualified manual marker id.",
                 },
                 "timestamp": {
                     "type": "number",
@@ -535,10 +553,14 @@ class ReportToolbelt:
 
     def list_findings(self, filter_text: str = "") -> dict[str, Any]:
         needle = filter_text.strip().lower()
-        rows: list[dict[str, Any]] = []
+        candidates: dict[str, list[tuple[dict[str, Any], bool]]] = {
+            "finding": [],
+            "manual_marker": [],
+        }
         for finding in self._findings():
             unified = _unified(finding)
-            row = {
+            raw_row = {
+                "kind": "finding",
                 "id": finding.get("id"),
                 "category": finding.get("category"),
                 "timestamp": finding.get("timestamp_start"),
@@ -549,12 +571,37 @@ class ReportToolbelt:
                 "screenshot": finding.get("screenshot"),
                 "frame_count": len(self._finding_frames(finding)),
             }
-            hay_values = [*row.values(), finding.get("text"), finding.get("context")]
+            hay_values = [*raw_row.values(), finding.get("text"), finding.get("context")]
             hay = " ".join(str(v) for v in hay_values if v is not None).lower()
             if needle and needle not in hay:
                 continue
-            rows.append(row)
-        return {"count": len(rows), "findings": rows, "filter": filter_text}
+            candidates["finding"].append(_compact_list_finding_row(raw_row))
+        for address, marker in self._manual_marker_addresses():
+            result = manual_marker_result(marker)
+            marker_id = manual_marker_id(marker)
+            frame_path = marker.get("frame_path")
+            raw_row = {
+                "kind": "manual_marker",
+                "id": address,
+                "marker_id": marker_id,
+                "category": result.get("category") or marker.get("category"),
+                "timestamp": marker.get("timestamp"),
+                "timestamp_formatted": marker.get("timestamp_formatted")
+                or _format_ts(_as_float(marker.get("timestamp"))),
+                "severity": marker.get("severity") or result.get("severity"),
+                "is_issue": result.get("is_issue"),
+                "summary": manual_marker_summary(marker),
+                "notes": marker.get("notes"),
+                "frame_path": frame_path,
+                "screenshot": frame_path,
+                "frame_count": 1 if isinstance(frame_path, str) and frame_path.strip() else 0,
+            }
+            hay_values = [*raw_row.values(), marker.get("transcript"), result]
+            hay = " ".join(str(value) for value in hay_values if value is not None).lower()
+            if needle and needle not in hay:
+                continue
+            candidates["manual_marker"].append(_compact_list_finding_row(raw_row))
+        return _bounded_list_findings_result(candidates, filter_text)
 
     def get_transcript(self, start: object = None, end: object = None) -> dict[str, Any]:
         start_s = _as_float(start)
@@ -597,21 +644,26 @@ class ReportToolbelt:
         return {"action": "seek", "timestamp": ts}
 
     def show_frame(self, *, finding_id: object = None, timestamp: object = None) -> dict[str, Any]:
-        finding = self._finding_by_id(finding_id)
-        if finding is None:
-            ts = _as_float(timestamp)
-            if ts is not None:
-                finding = self._finding_nearest(ts)
-        if finding is None:
-            return {"error": "No finding matched finding_id or timestamp."}
-        ts = _as_float(finding.get("timestamp_start"))
-        screenshot = finding.get("screenshot")
-        return {
-            "action": "show_frame",
-            "finding_id": finding.get("id"),
-            "timestamp": ts,
-            "screenshot": screenshot,
-        }
+        if finding_id not in (None, ""):
+            target = self._frame_target(finding_id)
+            if target is None:
+                return _unknown_or_missing_finding(finding_id)
+            manual_address = finding_id
+            if target[0] == "manual_marker":
+                wanted = str(finding_id)
+                for address, _marker in self._manual_marker_addresses():
+                    if address is not None and str(address) == wanted:
+                        manual_address = address
+                        break
+            return self._show_frame_result(target, manual_address=manual_address)
+        ts = _as_float(timestamp)
+        if ts is None:
+            return {"error": "show_frame requires finding_id or a finite timestamp."}
+        target_with_address = self._show_frame_nearest(ts)
+        if target_with_address is None:
+            return {"error": "This report has no timestamped review moments."}
+        target, address = target_with_address
+        return self._show_frame_result(target, manual_address=address)
 
     def get_finding(self, finding_id: object) -> dict[str, Any]:
         target = self._frame_target(finding_id)
@@ -621,6 +673,8 @@ class ReportToolbelt:
         if kind == "manual_marker":
             detail: dict[str, Any] = dict(_detail_copy(record))
             detail["kind"] = "manual_marker"
+            detail["id"] = finding_id
+            detail["marker_id"] = manual_marker_id(record)
             detail["frames"] = [
                 {"frame": record.get("frame_path"), "timestamp": record.get("timestamp")}
             ]
@@ -782,13 +836,18 @@ class ReportToolbelt:
 
     def get_report_summary(self) -> dict[str, Any]:
         passes = self.report.get("analysis_passes")
+        finding_count = len(self._findings())
+        manual_marker_count = len(self._manual_markers())
         return {
             "video": self.report.get("video"),
             "executive_summary": self.report.get("executive_summary") or "",
             "severity_breakdown": self.report.get("severity_breakdown") or {},
             "summary": self.report.get("summary") or {},
             "analysis_passes": passes if isinstance(passes, dict) else {},
-            "finding_count": len(self._findings()),
+            "finding_count": finding_count,
+            "manual_marker_count": manual_marker_count,
+            "total_count": finding_count + manual_marker_count,
+            "available_moment_count": finding_count + manual_marker_count,
         }
 
     def open_repo_file(self, path: str) -> dict[str, Any]:
@@ -1094,18 +1153,10 @@ class ReportToolbelt:
         return wanted
 
     def _manual_markers(self) -> list[dict[str, Any]]:
-        markers: list[dict[str, Any]] = []
-        manual = self.report.get("manual_review")
-        if isinstance(manual, dict):
-            for marker in manual.get("markers") or []:
-                if isinstance(marker, dict):
-                    markers.append(marker)
-        human = self.report.get("human_review")
-        if isinstance(human, dict):
-            for frame in human.get("manual_frames") or []:
-                if isinstance(frame, dict):
-                    markers.append(frame)
-        return markers
+        return manual_markers(self.report)
+
+    def _manual_marker_addresses(self) -> list[tuple[object, dict[str, Any]]]:
+        return manual_marker_addresses(self.report)
 
     def _frame_target(
         self, finding_id: object
@@ -1128,9 +1179,8 @@ class ReportToolbelt:
             for member in members:
                 if isinstance(member, dict) and str(member.get("id")) == wanted:
                     return ("member", member, parent)
-        for marker in self._manual_markers():
-            marker_id = marker.get("marker_id", marker.get("id"))
-            if marker_id is not None and str(marker_id) == wanted:
+        for address, marker in self._manual_marker_addresses():
+            if address is not None and str(address) == wanted:
                 return ("manual_marker", marker, None)
         return None
 
@@ -1175,7 +1225,7 @@ class ReportToolbelt:
             ref = marker.get("frame_path")
             if isinstance(ref, str) and ref.strip():
                 ts = _as_float(marker.get("timestamp"))
-                marker_id = marker.get("marker_id", marker.get("id"))
+                marker_id = manual_marker_id(marker)
                 frames.append(
                     {
                         "ref": ref,
@@ -1247,18 +1297,68 @@ class ReportToolbelt:
             return "stored file is not a JPEG or PNG image"
         return "frame file is missing from the report directory"
 
-    def _finding_nearest(self, timestamp: float) -> dict[str, Any] | None:
-        best: dict[str, Any] | None = None
-        best_delta = None
+    def _show_frame_nearest(
+        self, timestamp: float
+    ) -> tuple[tuple[str, dict[str, Any], dict[str, Any] | None], object | None] | None:
+        best: tuple[tuple[str, dict[str, Any], dict[str, Any] | None], object | None] | None = None
+        best_delta: float | None = None
         for finding in self._findings():
-            ts = _as_float(finding.get("timestamp_start"))
-            if ts is None:
+            finding_ts = _as_float(finding.get("timestamp_start"))
+            if finding_ts is not None:
+                delta = abs(finding_ts - timestamp)
+                if best_delta is None or delta < best_delta:
+                    best = (("finding", finding, None), finding.get("id"))
+                    best_delta = delta
+            members = finding.get("merged_frames")
+            if not isinstance(members, list):
                 continue
-            delta = abs(ts - timestamp)
+            for member in members:
+                if not isinstance(member, dict):
+                    continue
+                member_ts = _as_float(member.get("timestamp_start"))
+                if member_ts is None:
+                    continue
+                delta = abs(member_ts - timestamp)
+                if best_delta is None or delta < best_delta:
+                    best = (("member", member, finding), member.get("id"))
+                    best_delta = delta
+        for address, marker in self._manual_marker_addresses():
+            marker_ts = _as_float(marker.get("timestamp"))
+            if marker_ts is None:
+                continue
+            delta = abs(marker_ts - timestamp)
             if best_delta is None or delta < best_delta:
-                best = finding
+                best = (("manual_marker", marker, None), address)
                 best_delta = delta
         return best
+
+    def _show_frame_result(
+        self,
+        target: tuple[str, dict[str, Any], dict[str, Any] | None],
+        *,
+        manual_address: object,
+    ) -> dict[str, Any]:
+        kind, record, parent = target
+        if kind == "manual_marker":
+            return {
+                "action": "show_frame",
+                "kind": "manual_marker",
+                "finding_id": manual_address,
+                "marker_id": manual_marker_id(record),
+                "timestamp": _as_float(record.get("timestamp")),
+                "screenshot": record.get("frame_path"),
+            }
+        finding = parent if parent is not None else record
+        payload: dict[str, Any] = {
+            "action": "show_frame",
+            "kind": "finding",
+            "finding_id": finding.get("id"),
+            "timestamp": _as_float(record.get("timestamp_start")),
+            "screenshot": record.get("screenshot"),
+        }
+        if parent is not None:
+            payload["matched_member_id"] = record.get("id")
+        return payload
 
 
 def _mmss(seconds: float) -> str:
@@ -1342,6 +1442,130 @@ def _detail_copy(value: Any, *, key: str = "") -> Any:
         if len(value) > _MAX_DETAIL_STRING_CHARS:
             return value[:_MAX_DETAIL_STRING_CHARS] + "…(truncated)"
     return value
+
+
+def _compact_list_finding_row(row: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Compact display fields while keeping actionable ids byte-for-value intact."""
+    compact = dict(row)
+    truncated = False
+    budgets = {
+        "summary": _MAX_LIST_TEXT_CHARS,
+        "notes": _MAX_LIST_TEXT_CHARS,
+        "category": _MAX_LIST_LABEL_CHARS,
+        "timestamp_formatted": _MAX_LIST_LABEL_CHARS,
+        "severity": _MAX_LIST_LABEL_CHARS,
+        "frame_path": _MAX_LIST_PATH_CHARS,
+        "screenshot": _MAX_LIST_PATH_CHARS,
+    }
+    for key, budget in budgets.items():
+        value = compact.get(key)
+        if not isinstance(value, str) or len(value) <= budget:
+            continue
+        compact[key] = value[: budget - len(_LIST_TRUNCATION_MARKER)] + _LIST_TRUNCATION_MARKER
+        truncated = True
+    return compact, truncated
+
+
+def _bounded_list_findings_result(
+    candidates: dict[str, list[tuple[dict[str, Any], bool]]],
+    filter_text: str,
+) -> dict[str, Any]:
+    """Return a bounded, fair sample plus full filtered-result coverage metadata."""
+    finding_count = len(candidates["finding"])
+    manual_marker_count = len(candidates["manual_marker"])
+    full_count = finding_count + manual_marker_count
+    compact_filter, filter_truncated = _compact_list_filter(filter_text)
+    result: dict[str, Any] = {
+        "count": full_count,
+        "filtered_count": full_count,
+        "total_count": full_count,
+        "available_moment_count": full_count,
+        "finding_count": finding_count,
+        "manual_marker_count": manual_marker_count,
+        "returned_count": 0,
+        "omitted_count": full_count,
+        "returned_finding_count": 0,
+        "returned_manual_marker_count": 0,
+        "truncated": filter_truncated or full_count > 0,
+        "findings": [],
+        "filter": compact_filter,
+        "coverage": {
+            "matched": full_count,
+            "returned": 0,
+            "omitted": full_count,
+            "fields_truncated": filter_truncated,
+            "findings": {
+                "matched": finding_count,
+                "returned": 0,
+                "omitted": finding_count,
+            },
+            "manual_markers": {
+                "matched": manual_marker_count,
+                "returned": 0,
+                "omitted": manual_marker_count,
+            },
+        },
+    }
+    indexes = dict.fromkeys(candidates, 0)
+    included_field_truncation = False
+    while any(indexes[kind] < len(rows) for kind, rows in candidates.items()):
+        for kind, rows in candidates.items():
+            index = indexes[kind]
+            if index >= len(rows):
+                continue
+            row, row_truncated = rows[index]
+            indexes[kind] += 1
+            result["findings"].append(row)
+            result["returned_count"] += 1
+            returned_key = (
+                "returned_finding_count" if kind == "finding" else "returned_manual_marker_count"
+            )
+            result[returned_key] += 1
+            result["omitted_count"] = full_count - result["returned_count"]
+            coverage_key = "findings" if kind == "finding" else "manual_markers"
+            result["coverage"]["returned"] = result["returned_count"]
+            result["coverage"]["omitted"] = result["omitted_count"]
+            result["coverage"]["fields_truncated"] = (
+                filter_truncated or included_field_truncation or row_truncated
+            )
+            result["coverage"][coverage_key]["returned"] = result[returned_key]
+            result["coverage"][coverage_key]["omitted"] -= 1
+            result["truncated"] = (
+                filter_truncated
+                or included_field_truncation
+                or row_truncated
+                or result["omitted_count"] > 0
+            )
+            if _list_findings_result_size(result) <= _MAX_LIST_FINDINGS_RESULT_CHARS:
+                included_field_truncation = included_field_truncation or row_truncated
+                continue
+            result["findings"].pop()
+            result["returned_count"] -= 1
+            result[returned_key] -= 1
+            result["omitted_count"] = full_count - result["returned_count"]
+            result["coverage"]["returned"] = result["returned_count"]
+            result["coverage"]["omitted"] = result["omitted_count"]
+            result["coverage"]["fields_truncated"] = filter_truncated or included_field_truncation
+            result["coverage"][coverage_key]["returned"] = result[returned_key]
+            result["coverage"][coverage_key]["omitted"] += 1
+            result["truncated"] = (
+                filter_truncated or included_field_truncation or result["omitted_count"] > 0
+            )
+    return result
+
+
+def _compact_list_filter(filter_text: str) -> tuple[str, bool]:
+    if len(filter_text) <= _MAX_LIST_LABEL_CHARS:
+        return filter_text, False
+    compact = (
+        filter_text[: _MAX_LIST_LABEL_CHARS - len(_LIST_TRUNCATION_MARKER)]
+        + _LIST_TRUNCATION_MARKER
+    )
+    return compact, True
+
+
+def _list_findings_result_size(result: dict[str, Any]) -> int:
+    return len(json.dumps(result, ensure_ascii=False))
 
 
 def _format_ts(seconds: float | None) -> str:
