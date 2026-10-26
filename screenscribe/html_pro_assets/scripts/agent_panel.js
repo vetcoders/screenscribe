@@ -69,6 +69,7 @@
         activityStartedAt: 0,
         activityLastReceivedAt: 0,
         activityPhase: 'agentResponding',
+        turnAppliedReceipts: [],
         retryRows: [],
         mic: { status: 'idle', transport: null, timer: null, startedAt: 0, message: '' },
         attachments: [],
@@ -448,7 +449,9 @@
         var message = 'review_applied' + (explain ? ': ' + explain : '');
         var last = state.history.length ? state.history[state.history.length - 1] : null;
         if (!last || last.role !== 'user' || last.content !== message) {
-            state.history.push({ role: 'user', content: message });
+            var receipt = { role: 'user', content: message };
+            state.history.push(receipt);
+            if (state.streaming) state.turnAppliedReceipts.push(receipt);
         }
     }
 
@@ -1787,6 +1790,7 @@
         state.stopRequested = false;
         state.timedOut = false;
         state.streaming = true;
+        state.turnAppliedReceipts = [];
         startAgentActivity();
         var assistantRow = appendMessage('assistant', '');
         if (assistantRow && assistantRow.classList) {
@@ -1926,6 +1930,15 @@
         } finally {
             clearIdleTimer();
             finishAgentActivity();
+            // The answer was generated from the pre-approval report. Keep
+            // successful saves made during that answer after it in persisted
+            // history, matching the completed card and the current report.
+            state.turnAppliedReceipts.forEach(function (receipt) {
+                var index = state.history.indexOf(receipt);
+                if (index >= 0) state.history.splice(index, 1);
+                state.history.push(receipt);
+            });
+            state.turnAppliedReceipts = [];
             state.abort = null;
             state.streaming = false;
             state.stopRequested = false;

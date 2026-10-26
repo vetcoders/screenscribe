@@ -735,6 +735,9 @@ After a plan is saved, its selected operations are locked and its Apply button
 shows the completed count instead of asking for approval again. The approval
 receipt is kept in the conversation across reloads. If operations were applied
 but the save failed, **Retry** repeats the save rather than the operations.
+When approval finishes while an answer is still streaming, its successful-save
+receipt follows that answer in the restored conversation: the answer was
+generated from the earlier report state.
 
 `list_findings` discovers both AI findings (`kind: "finding"`) and saved manual
 moments (`kind: "manual_marker"`), including their IDs, notes and frame paths.

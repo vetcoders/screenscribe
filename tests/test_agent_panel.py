@@ -1258,6 +1258,85 @@ def test_activity_shows_phase_elapsed_and_actual_server_freshness() -> None:
     assert "activity-progress:ok" in output
 
 
+def test_approval_during_stream_follows_the_preapproval_answer_in_history() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const encoder = new TextEncoder();
+            let reads = 0;
+            let releaseAnswer;
+            let applications = 0;
+            let saves = 0;
+            const plan = {
+                type: 'review_plan',
+                ops: [{ op: 'set_severity', finding_id: '3', severity: 'high' }],
+            };
+            window.__screenscribeAgentHost = {
+                applyReviewPatch(ops) {
+                    applications += 1;
+                    return ops.map((op) => ({ op: op.op, findingId: '3', skipped: false }));
+                },
+                async saveReview() { saves += 1; return { ok: true, status: 200 }; },
+            };
+            fetch = async () => ({
+                ok: true,
+                body: { getReader() { return {
+                    async read() {
+                        reads += 1;
+                        if (reads === 1) return {
+                            done: false,
+                            value: encoder.encode(
+                                'event: tool_result\\ndata: '
+                                + JSON.stringify({ name: 'propose_review', result: plan }) + '\\n\\n'
+                            ),
+                        };
+                        if (reads === 2) return new Promise((resolve) => { releaseAnswer = resolve; });
+                        return { done: true };
+                    },
+                    cancel() { if (releaseAnswer) releaseAnswer({ done: true }); },
+                }; } },
+            });
+            window.fetch = fetch;
+            api.init();
+            const turn = api.send('prepare a plan');
+            try {
+                await new Promise((resolve) => setTimeout(resolve, 10));
+                const card = document.querySelector('.ss-agent-plan');
+                if (!card || !api.getState().streaming) throw new Error('plan must arrive before final answer');
+                card.querySelector('.ss-agent-plan-apply').click();
+                await new Promise((resolve) => setTimeout(resolve, 20));
+                if (card.getAttribute('data-state') !== 'applied') throw new Error('approval did not finish');
+                if (!api.getState().history.some((m) => /^review_applied/.test(m.content))) {
+                    throw new Error('successful save has no immediate receipt');
+                }
+                releaseAnswer({
+                    done: false,
+                    value: encoder.encode(
+                        'event: token\\ndata: {"text":"The plan is ready for approval."}\\n\\n'
+                        + 'event: done\\ndata: {}\\n\\n'
+                    ),
+                });
+                await turn;
+                const history = api.getState().history;
+                if (history[history.length - 2].role !== 'assistant'
+                    || !/^review_applied/.test(history[history.length - 1].content)) {
+                    throw new Error('pre-approval answer superseded the successful-save receipt');
+                }
+                if (applications !== 1 || saves !== 1) throw new Error('reordering replayed a write');
+                if (api.getState().turnAppliedReceipts.length) throw new Error('receipts leaked into next turn');
+            } finally {
+                api.stop();
+                if (releaseAnswer) releaseAnswer({ done: true });
+                await turn;
+            }
+            process.stdout.write('approval-during-stream:ok');
+            """
+        )
+    )
+    assert "approval-during-stream:ok" in output
+
+
 _GLOBAL_CORRECTION_HOST = """
             const fetches = [];
             fetch = async (url, opts) => {

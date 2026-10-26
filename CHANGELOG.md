@@ -4,7 +4,8 @@
 
 - **Fixed: approved review plans no longer remain actionable.** A successful
   save locks the plan and keeps its approval receipt across reloads. A failed
-  save can be retried without applying the operations again.
+  save can be retried without applying the operations again. Approvals made
+  during a streaming answer retain the completed state after that answer.
 
 - **Fixed: the review agent can discover saved manual moments.** Tool lists,
   report summaries and context seeds include manual moments with stable IDs

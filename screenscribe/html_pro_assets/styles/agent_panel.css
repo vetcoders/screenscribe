@@ -437,7 +437,9 @@ html.ss-agent-sheet .app-container {
 }
 
 .ss-agent-plan[data-state="applied"] .ss-agent-plan-apply {
-    color: var(--text-secondary);
+    color: var(--text-primary);
+    background: var(--surface-sunken);
+    border-color: var(--border-default);
     opacity: 1;
     cursor: default;
 }
@@ -656,6 +658,7 @@ html.ss-agent-sheet .app-container {
     width: 14px;
     height: 14px;
     border-radius: var(--radius-full);
+    background: transparent;
     border: 2px solid var(--border-accent);
     border-top-color: var(--ss-accent-hi);
     animation: ss-agent-spin 1s linear infinite;
