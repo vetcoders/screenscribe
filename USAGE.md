@@ -747,8 +747,17 @@ moments, and `available_moment_count` / `total_count` count both. List counts
 apply to the current filter; report-summary and context-seed counts describe
 the entire report. The context seed includes a separate `manual_markers` array,
 so the agent can discover and inspect moments added after the original analysis.
+The seed is valid JSON within a 12,000-character budget: long fields are
+shortened and space is shared between AI findings, manual moments and
+transcript segments. Corrections and analysis provenance remain in its metadata.
+`seed_coverage` records included, available and omitted counts for each
+collection; the report counts still describe all records. Tools return the
+larger detail view for records omitted or shortened in the seed.
 Canonical manual notes and overrides take precedence; compatibility aliases and
 saved manual-analysis results fill missing fields such as the frame path.
+An explicitly cleared canonical note or transcript stays cleared, including an
+empty or whitespace-only string. A missing or null field may still be filled
+from its compatibility representation; independent AI analysis remains visible.
 Use the returned `id` with `get_finding` and `view_frame`. It normally equals
 the raw `marker_id`; on an ID collision it is qualified with `manual:` until
 unique. The separate `marker_id` continues to identify the persisted marker,
@@ -857,6 +866,8 @@ final answer is checked before being displayed; a further tool request is
 never executed. Reaching the budget ends with `done`, while genuine provider
 or connection failures still produce `error`. This does not increase the
 separate eight-frame inspection budget.
+For Anthropic, finalization keeps the tool definitions needed by earlier
+tool-use history and sets `tool_choice` to `none` to prevent new calls.
 The xAI agent uses stateless full history: each round includes trusted
 instructions, the report seed, prior output items and tool results. It sends
 no `previous_response_id` and returns `done.response_id=null`. The ChatGPT

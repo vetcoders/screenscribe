@@ -688,6 +688,11 @@ async def _run_provider(
             "model": provider.model,
             "instructions": final_instructions,
             "input": current_input,
+            # Anthropic validates historical tool_use/tool_result blocks against
+            # the request's definitions. Keep the schemas for history while
+            # forbidding any new call in this final synthesis round.
+            "tools": anthropic_tool_schemas(include_repo=include_repo),
+            "tool_choice": {"type": "none"},
         }
     else:
         final_payload = _build_responses_payload(
@@ -1141,6 +1146,7 @@ async def _anthropic_round(
     messages = _anthropic_messages_from_input(payload.get("input") or [])
     system = str(payload.get("instructions") or "")
     tools = payload.get("tools") or []
+    tool_choice = payload.get("tool_choice")
     kwargs: dict[str, Any] = {
         "model": provider.model,
         "max_tokens": 4096,
@@ -1148,6 +1154,8 @@ async def _anthropic_round(
     }
     if tools:
         kwargs["tools"] = tools
+    if isinstance(tool_choice, dict):
+        kwargs["tool_choice"] = tool_choice
     if system:
         kwargs["system"] = system
 

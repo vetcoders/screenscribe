@@ -9,11 +9,15 @@
 
 - **Fixed: the review agent can discover saved manual moments.** Tool lists,
   report summaries and context seeds include manual moments with stable IDs
-  and explicit counts, while keeping AI findings separate.
+  and explicit counts, while keeping AI findings separate. Explicitly cleared
+  notes and transcripts stay cleared when older compatibility data exists.
+  Long notes no longer crowd AI findings, transcript segments or corrections
+  out of the context seed; omitted records have explicit coverage counts.
 
 - **Fixed: the agent summarizes its progress when the tool budget is used.**
   After eight tool-execution rounds it gets one final round without tools
-  instead of ending with a bare limit error.
+  instead of ending with a bare limit error. Anthropic keeps the definitions
+  required by prior tool-use history while disabling further tool calls.
 
 - **Added: visible review-agent activity.** The chat shows its current phase,
   elapsed time and the freshness of server data before the first response

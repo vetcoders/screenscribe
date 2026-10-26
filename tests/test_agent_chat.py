@@ -26,7 +26,12 @@ from screenscribe.agent.chat import (
     format_sse,
     stream_agent_chat,
 )
-from screenscribe.agent.context import prepare_turn, report_chain_response_id
+from screenscribe.agent.context import (
+    _SEED_BUDGET_CHARS,
+    prepare_turn,
+    report_chain_response_id,
+    seed_report_context,
+)
 from screenscribe.agent.corrections import append_correction
 from screenscribe.agent.tools import ReportToolbelt
 from screenscribe.config import ScreenScribeConfig
@@ -507,7 +512,12 @@ def test_tool_round_limit_gets_one_toolless_finalization(
     assert len(payloads) == 9
     assert len(executed) == 8
     assert all(payload.get("tools") for payload in payloads[:8])
-    assert "tools" not in payloads[8]
+    if protocol == "anthropic":
+        assert payloads[8]["tools"] == payloads[0]["tools"]
+        assert payloads[8]["tool_choice"] == {"type": "none"}
+    else:
+        assert "tools" not in payloads[8]
+        assert "tool_choice" not in payloads[8]
     assert "FINALIZATION MODE" in payloads[8]["instructions"]
     assert "unverified or unexecuted" in payloads[8]["instructions"]
     assert 'event: status\ndata: {"phase": "finalizing"}' in body
@@ -1351,8 +1361,10 @@ def test_responses_fallback_drops_primary_chain_id(monkeypatch: pytest.MonkeyPat
     assert "ground truth" in payloads[0]["instructions"]
 
 
-def test_anthropic_client_uses_configured_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, Any] = {}
+def test_anthropic_client_forwards_tool_history_schemas_and_none_choice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {"stream_kwargs": []}
 
     class FakeStream:
         async def __aenter__(self) -> FakeStream:
@@ -1372,7 +1384,7 @@ def test_anthropic_client_uses_configured_base_url(monkeypatch: pytest.MonkeyPat
 
     class FakeMessages:
         def stream(self, **kwargs: Any) -> FakeStream:
-            captured["stream_kwargs"] = kwargs
+            captured["stream_kwargs"].append(kwargs)
             return FakeStream()
 
     class FakeAnthropic:
@@ -1399,16 +1411,75 @@ def test_anthropic_client_uses_configured_base_url(monkeypatch: pytest.MonkeyPat
         slot="fallback",
         host="proxy.example",
     )
-    result = asyncio.run(
+    tool_schemas = [
+        {
+            "name": "get_report_summary",
+            "description": "Summarize the report.",
+            "input_schema": {"type": "object", "properties": {}},
+        }
+    ]
+    historical_input = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "get_report_summary",
+                    "input": {},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1", "content": '{"ok":true}'}
+            ],
+        },
+    ]
+    final_result = asyncio.run(
         agent_chat._anthropic_round(
             provider,
-            {"instructions": "system", "input": [], "tools": []},
+            {
+                "instructions": "finalize",
+                "input": historical_input,
+                "tools": tool_schemas,
+                "tool_choice": {"type": "none"},
+            },
+        )
+    )
+    normal_result = asyncio.run(
+        agent_chat._anthropic_round(
+            provider,
+            {
+                "instructions": "normal",
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}],
+                "tools": tool_schemas,
+            },
         )
     )
     assert captured["client_kwargs"]["base_url"] == "https://proxy.example/custom"
     assert captured["client_kwargs"]["http_client"].follow_redirects is False
     assert captured["closed"] is True
-    assert result.response_id is None
+    final_kwargs, normal_kwargs = captured["stream_kwargs"]
+    assert final_kwargs["tools"] == tool_schemas
+    assert final_kwargs["tool_choice"] == {"type": "none"}
+    assert any(
+        block.get("type") == "tool_use"
+        for message in final_kwargs["messages"]
+        for block in message.get("content", [])
+        if isinstance(block, dict)
+    )
+    assert any(
+        block.get("type") == "tool_result"
+        for message in final_kwargs["messages"]
+        for block in message.get("content", [])
+        if isinstance(block, dict)
+    )
+    assert normal_kwargs["tools"] == tool_schemas
+    assert "tool_choice" not in normal_kwargs
+    assert final_result.response_id is None
+    assert normal_result.response_id is None
 
 
 def test_responses_function_events_keep_one_call_id() -> None:
@@ -2040,9 +2111,8 @@ def test_config_file_loads_agent_egress(tmp_path: Path) -> None:
 def test_corrections_survive_seed_truncation_of_a_long_report(tmp_path: Path) -> None:
     """R2-04: a long transcript must not push the ledger out of the seed.
 
-    The seed is cut at its character budget from the end; corrections used to
-    be the last key of the JSON blob, so 80 long segments silently removed
-    them from the agent's context.
+    Corrections stay in the bounded base while long segment fields and excess
+    collection rows receive explicit structured truncation metadata.
     """
     report = {
         "executive_summary": "Layout is broken.",
@@ -2060,10 +2130,75 @@ def test_corrections_survive_seed_truncation_of_a_long_report(tmp_path: Path) ->
         scope="report",
         report_stem="test",
     )
+    seed_text = seed_report_context(report, output_dir=tmp_path)
+    seed = json.loads(seed_text)
+    assert seed["seed_coverage"]["transcript_segments"]["omitted"] > 0
+    assert seed["corrections"]
+    assert "sign-in" in seed_text
     turn = prepare_turn(report=report, message="podsumuj", output_dir=tmp_path)
-    assert "…(truncated)" in turn.instructions
-    assert '"corrections"' in turn.instructions
-    assert "sign-in" in turn.instructions
+    assert seed_text in turn.instructions
+
+
+def test_seed_budget_keeps_all_moment_kinds_and_full_counts_with_long_manual_notes() -> None:
+    long_note = "manual detail " + ("x" * 6_000)
+    report: dict[str, Any] = {
+        "executive_summary": "Compact report summary.",
+        "analysis_passes": {"unified_analysis": {"provider": "current-provenance"}},
+        "findings": [
+            {
+                "id": 1,
+                "category": "bug",
+                "timestamp_start": 1.0,
+                "text": "AI context survives",
+                "unified_analysis": {"summary": "AI context survives", "severity": "high"},
+            }
+        ],
+        "manual_review": {
+            "markers": [
+                {
+                    "marker_id": f"manual-{index}",
+                    "timestamp": float(index + 2),
+                    "frame_path": f"manual_frames/manual-{index}.jpg",
+                    "notes": long_note,
+                }
+                for index in range(60)
+            ]
+        },
+        "transcript_segments": [
+            {"id": "segment-1", "start": 3.0, "end": 4.0, "text": "segment context survives"}
+        ],
+    }
+
+    seed_text = seed_report_context(report)
+    assert len(seed_text) <= _SEED_BUDGET_CHARS
+    seed = json.loads(seed_text)
+    assert seed["counts"] == {
+        "finding_count": 1,
+        "manual_marker_count": 60,
+        "total_count": 61,
+        "available_moment_count": 61,
+    }
+    assert seed["analysis_passes"] == {"unified_analysis": {"provider": "current-provenance"}}
+    assert seed["findings"][0]["summary"] == "AI context survives"
+    assert seed["transcript_segments"][0]["text"] == "segment context survives"
+    assert seed["manual_markers"]
+    first_manual = seed["manual_markers"][0]
+    assert first_manual["summary"].endswith("…(truncated)")
+    assert first_manual["notes"].endswith("…(truncated)")
+    assert len(first_manual["summary"]) < 500
+    assert len(first_manual["notes"]) < 500
+    manual_coverage = seed["seed_coverage"]["manual_markers"]
+    assert manual_coverage["available"] == 60
+    assert 1 <= manual_coverage["included"] < 60
+    assert manual_coverage["omitted"] == 60 - manual_coverage["included"]
+
+    # Seed compaction is representational only. The loaded report stays complete,
+    # and get_finding exposes a much larger, explicitly truncated detail field.
+    assert report["manual_review"]["markers"][0]["notes"] == long_note
+    detail = ReportToolbelt(report).get_finding("manual-0")
+    assert detail["notes"].startswith("manual detail ")
+    assert detail["notes"].endswith("…(truncated)")
+    assert len(detail["notes"]) > len(first_manual["notes"])
 
 
 def test_responses_round_refuses_a_stream_cut_before_completion(
