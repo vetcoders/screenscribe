@@ -473,6 +473,200 @@ def test_non_tty_does_not_prompt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
 
 # --------------------------------------------------------------------------- #
+# --resume on a review that already FINISHED: reuse it, never re-run or bump.  #
+# --------------------------------------------------------------------------- #
+
+
+def _completed_review_harness(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[CliRunner, Path, Path, list[int], list[int]]:
+    """Land a finished review and return counters for the paid stages.
+
+    ``analyze_calls`` records every unified-analysis call (sizes), ``stt_calls``
+    every transcription call. After the first run both hold exactly one entry.
+    """
+    runner = CliRunner()
+    video_path = tmp_path / "demo.mov"
+    video_path.write_bytes(b"video")
+    extracted_audio = tmp_path / "audio.mp3"
+    extracted_audio.write_bytes(b"audio")
+    output_dir = tmp_path / "demo_review"
+    config = ScreenScribeConfig(
+        llm_api_key="test-key",  # pragma: allowlist secret
+        vision_api_key="test-vision-key",  # pragma: allowlist secret
+    )
+    _install_real_report_stubs(monkeypatch, config, extracted_audio)
+
+    stt_calls: list[int] = []
+
+    def counting_stt(*a: object, **kw: object) -> TranscriptionResult:
+        stt_calls.append(1)
+        return _three_segment_transcription()
+
+    monkeypatch.setattr("screenscribe.transcribe.transcribe_audio", counting_stt)
+
+    analyze_calls: list[int] = []
+
+    def counting_unified(screenshots: list[object], *a: object, **kw: object) -> list[object]:
+        analyze_calls.append(len(screenshots))
+        return [_finding_for(d) for (d, _p) in screenshots]
+
+    monkeypatch.setattr(
+        "screenscribe.review_pipeline.analyze_all_findings_unified", counting_unified
+    )
+
+    assert _run(runner, video_path, output_dir, resume=False).exit_code == 0
+    assert (output_dir / "demo_report.json").exists()
+    assert load_checkpoint(output_dir) is None, "a finished run leaves no checkpoint"
+    assert stt_calls == [1] and analyze_calls == [3]
+    return runner, video_path, output_dir, stt_calls, analyze_calls
+
+
+def test_resume_on_completed_review_reuses_it_without_rerunning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The 2026-10-30 regression: ``--resume`` on a review that already finished
+    (checkpoint deleted on success) used to fall through to the version-bump
+    path and re-run the WHOLE pipeline into ``demo_review_2`` -- paying STT,
+    detection and every VLM call again for a report that already existed.
+
+    ``--resume`` must reuse the finished review: no second directory, no paid
+    stage runs again, the report bytes are untouched, and the console names the
+    existing bundle.
+    """
+    runner, video_path, output_dir, stt_calls, analyze_calls = _completed_review_harness(
+        monkeypatch, tmp_path
+    )
+    snapshot = _snapshot(output_dir)
+
+    result = _run(runner, video_path, output_dir, resume=True)
+    assert result.exit_code == 0, result.output
+
+    assert not (tmp_path / "demo_review_2").exists(), (
+        "--resume on a finished review must not create a numbered copy"
+    )
+    assert stt_calls == [1], "transcription must not run again"
+    assert analyze_calls == [3], "visual analysis must not run again"
+    assert _snapshot(output_dir) == snapshot, "the finished review must stay byte-identical"
+    assert load_checkpoint(output_dir) is None
+    assert "already has a finished review" in result.output
+    assert "demo_review" in result.output
+    assert "demo_report.html" in result.output
+
+
+def test_resume_on_completed_review_serves_the_existing_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With --serve (the default), ``--resume`` on a finished review opens THAT
+    review instead of a freshly generated one."""
+    runner, video_path, output_dir, _stt, _analyze = _completed_review_harness(
+        monkeypatch, tmp_path
+    )
+    served: list[tuple[Path, Path, int]] = []
+    monkeypatch.setattr(
+        "screenscribe.cli._serve_report",
+        lambda out, video, port, *a, **kw: served.append((out, video, port)),
+    )
+
+    result = runner.invoke(
+        cli_module.app,
+        ["review", str(video_path), "-o", str(output_dir), "--skip-validation", "--resume"],
+    )
+    assert result.exit_code == 0, result.output
+    assert served == [(output_dir, video_path, 8765)], served
+    assert not (tmp_path / "demo_review_2").exists()
+
+
+def test_resume_on_completed_review_on_tty_does_not_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit ``--resume`` already says what to do with the finished review:
+    on a real terminal it must neither ask Overwrite/New nor bump."""
+    runner, video_path, output_dir, stt_calls, analyze_calls = _completed_review_harness(
+        monkeypatch, tmp_path
+    )
+    monkeypatch.setattr("screenscribe.review_pipeline._stdin_is_tty", lambda: True)
+
+    def _boom(*a: object, **kw: object) -> str:
+        raise AssertionError("--resume on a finished review must not prompt")
+
+    monkeypatch.setattr("screenscribe.review_pipeline.Prompt.ask", _boom)
+
+    result = _run(runner, video_path, output_dir, resume=True)
+    assert result.exit_code == 0, result.output
+    assert not (tmp_path / "demo_review_2").exists()
+    assert stt_calls == [1] and analyze_calls == [3]
+
+
+def test_resume_on_completed_review_default_output_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Same contract without ``-o``: the default ``<video>_review`` next to the
+    recording is the finished review -- the exact shape of the reported run."""
+    runner, video_path, output_dir, stt_calls, analyze_calls = _completed_review_harness(
+        monkeypatch, tmp_path
+    )
+    assert output_dir == video_path.parent / "demo_review"
+
+    result = runner.invoke(
+        cli_module.app,
+        ["review", str(video_path), "--no-serve", "--skip-validation", "--resume"],
+    )
+    assert result.exit_code == 0, result.output
+    assert not (tmp_path / "demo_review_2").exists()
+    assert stt_calls == [1] and analyze_calls == [3]
+
+
+def test_completed_review_without_resume_still_versions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Guard the boundary: the reuse applies to ``--resume`` only. A plain
+    re-run (non-TTY) keeps the historical numbered copy, so nobody loses the
+    ability to review the same recording twice."""
+    runner, video_path, output_dir, _stt, analyze_calls = _completed_review_harness(
+        monkeypatch, tmp_path
+    )
+    assert _run(runner, video_path, output_dir, resume=False).exit_code == 0
+    assert (tmp_path / "demo_review_2").exists()
+    assert analyze_calls == [3, 3]
+
+
+def test_is_completed_review_requires_bundle_and_no_cache_dir(tmp_path: Path) -> None:
+    """The finished state is 'bundle present AND no .screenscribe_cache dir'
+    (``delete_checkpoint`` removes the file and the emptied directory). A
+    bundle beside a checkpoint is a partial run (the pre-AI JSON snapshot lands
+    before Step 5), a leftover empty cache dir is not proof of completion, and
+    a checkpoint-only folder is unfinished too."""
+    from screenscribe.review_pipeline import _is_completed_review
+
+    folder = tmp_path / "demo_review"
+    folder.mkdir()
+    assert not _is_completed_review(folder, "demo")  # empty folder
+
+    (folder / "demo_report.json").write_text("{}")
+    assert _is_completed_review(folder, "demo")  # bundle, no cache dir
+
+    cache = folder / ".screenscribe_cache"
+    cache.mkdir()
+    (cache / "checkpoint.json").write_text("{}")
+    assert not _is_completed_review(folder, "demo")  # bundle + checkpoint = partial
+
+    (cache / "checkpoint.json").unlink()
+    assert not _is_completed_review(folder, "demo")  # orphan cache dir = unknown
+
+    cache.rmdir()
+    assert _is_completed_review(folder, "demo")  # back to the finished shape
+
+    (folder / "demo_report.json").unlink()
+    assert not _is_completed_review(folder, "demo")  # nothing left
+
+    other = tmp_path / "other_review"
+    other.mkdir()
+    (other / "other_report.json").write_text("{}")
+    assert not _is_completed_review(other, "demo")  # a different video's review
+
+
+# --------------------------------------------------------------------------- #
 # -o PATH resolution: an existing ORDINARY folder is a parent, not a review.   #
 # --------------------------------------------------------------------------- #
 

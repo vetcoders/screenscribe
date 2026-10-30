@@ -37,6 +37,7 @@ from .checkpoint import (
     deserialize_screenshot,
     deserialize_transcription,
     deserialize_unified_finding,
+    get_checkpoint_dir,
     get_checkpoint_path,
     load_checkpoint,
     save_checkpoint,
@@ -54,9 +55,12 @@ from .cli_messages import (
     _build_versions_exhausted_message,
 )
 from .cli_paths import (
+    LEGACY_REVIEW_REPORT_MARKERS,
+    REVIEW_REPORT_EXTENSIONS,
     OutputSlotError,
     OutputVersionsExhaustedError,
     _is_dir,
+    _is_file,
     classify_review_slot,
     is_review_directory,
     reserve_review_output_slot,
@@ -226,6 +230,50 @@ def _has_valid_checkpoint(base_output: Path, video: Path, language: str) -> bool
         return False
     checkpoint = load_checkpoint(base_output)
     return bool(checkpoint and checkpoint_valid_for_video(checkpoint, video, base_output, language))
+
+
+def _completed_review_artifacts(base_output: Path, video_stem: str) -> list[Path]:
+    """Report files a finished review left in ``base_output`` for ``video_stem``."""
+    candidates = [base_output / f"{video_stem}_report.{ext}" for ext in REVIEW_REPORT_EXTENSIONS]
+    candidates += [base_output / marker for marker in LEGACY_REVIEW_REPORT_MARKERS]
+    return [path for path in candidates if _is_file(path)]
+
+
+def _is_completed_review(base_output: Path, video_stem: str) -> bool:
+    """Whether ``base_output`` is a review of ``video_stem`` that already finished.
+
+    A run deletes its checkpoint only on success (``delete_checkpoint`` at the
+    end of Step 6) and removes the then-empty ``.screenscribe_cache`` directory
+    with it, while every failed or partial run keeps both -- even when a pre-AI
+    ``*_report.json`` snapshot already sits next to them. So "report bundle
+    present AND no cache directory" is exactly the finished state. A bundle
+    beside a checkpoint (valid or not) is unfinished work for the resume or
+    version-bump paths, and a leftover cache directory without a checkpoint is
+    an unknown state that keeps the historical (preserve-and-version) handling.
+    """
+    return classify_review_slot(base_output, video_stem) == "own_complete" and not _is_dir(
+        get_checkpoint_dir(base_output)
+    )
+
+
+def _announce_completed_review(console: Any, base_output: Path, video_stem: str) -> None:
+    """Tell the operator that ``--resume`` found a finished review and reused it."""
+    artifacts = _completed_review_artifacts(base_output, video_stem)
+    listed = "\n".join(f"  [link=file://{path}]{escape(path.name)}[/link]" for path in artifacts)
+    console.print()
+    console.print(
+        Panel(
+            f"[green]This recording already has a finished review:[/] "
+            f"{escape(base_output.name)}\n\n"
+            "Nothing is left to resume, so no stage runs again and no numbered "
+            f"copy is created.\n{listed}\n\n"
+            "[dim]Re-run without --resume for a new numbered copy, or with --force "
+            "to redo this one in place.[/]",
+            title="[bold]Review Already Complete[/]",
+            border_style="green",
+        )
+    )
+    console.print()
 
 
 def _exit_output_dir_error(console: Any, message: str) -> NoReturn:
@@ -472,6 +520,19 @@ def run_review(
                 "[dim]Resume: reusing existing review directory with checkpoint "
                 f"({base_output.name})[/]"
             )
+        elif effective_resume and _is_completed_review(base_output, video_stem):
+            # --resume on a review that already finished: there is no checkpoint
+            # because the run completed and deleted it. Letting this fall through
+            # to the version-bump path re-ran the WHOLE pipeline into a fresh
+            # `_2` directory -- re-paying STT, detection and every VLM call for
+            # a report that already exists -- which is the opposite of what
+            # "resume" asked for. Reuse the finished review as it is (and serve
+            # it when --serve is on); a new copy needs no --resume, a redo needs
+            # --force.
+            _announce_completed_review(console, base_output, video_stem)
+            last_video = video
+            last_output = base_output
+            continue
         else:
             base_state = classify_review_slot(base_output, video_stem)
             try:

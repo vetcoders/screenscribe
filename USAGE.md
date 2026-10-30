@@ -96,7 +96,7 @@ uv run screenscribe review VIDEOS... [OPTIONS]
 | `--embed-video` | off | Embed the video as base64 in the HTML report (only for files < 50 MB). |
 | `--keywords-file`, `-k` | global file | Per-run keywords YAML. Keywords are always-on AI hints (never replace the LLM, safe when empty); overrides the global `~/.config/screenscribe/keywords.yaml`. |
 | `--preset` | `programming` | Analysis preset: `programming`, `casual`, `medical`, `veterinary`, or `custom`. Switches the keyword dictionary, finding categories, and prompt focus. `custom` requires `--keywords-file`. |
-| `--resume` | off | Resume from a previous checkpoint if available. |
+| `--resume` | off | Resume from a previous checkpoint if available. A review that already finished (its checkpoint is deleted on success) is reused as it is: nothing runs again, no numbered copy is created, and `--serve` opens that report. Drop `--resume` for a new numbered copy, or add `--force` to redo it in place. |
 | `--force` | off | Force reprocessing and overwrite the existing review instead of versioning. Only a screenscribe review folder (or a missing target) can be overwritten; if the target is a file or a folder screenscribe does not own, `review` stops with an error and changes nothing. |
 | `--estimate` | off | Show a time estimate (from video duration) without processing. Read-only: it skips output-folder handling entirely (no rerun prompt, no `--force` check, nothing created). |
 | `--dry-run` | off | **Not free.** Still runs paid transcription (STT, unless `--local`) and LLM issue detection, then stops before writing reports. For a zero-cost preview use `--estimate` instead. |

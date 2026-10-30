@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+- **Fixed: `--resume` no longer re-runs a finished review.** A completed run
+  deletes its checkpoint, so `review --resume` on the same recording fell
+  through to the version-bump path and processed the whole video again into
+  `<video>_review_2` -- paying transcription, detection and every vision call
+  for a report that already existed. `--resume` now reuses the finished
+  review: it names the existing report files, runs no stage, creates no
+  numbered copy, and `--serve` opens that report. A plain re-run still makes
+  a numbered copy and `--force` still redoes the review in place. A bundle
+  that sits beside a checkpoint is unfinished work and keeps resuming as
+  before.
+
 - **Fixed: approved review plans no longer remain actionable.** A successful
   save locks the plan and keeps its approval receipt across reloads. A failed
   save can be retried without applying the operations again. Approvals made
