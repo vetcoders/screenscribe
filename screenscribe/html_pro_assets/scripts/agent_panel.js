@@ -674,6 +674,14 @@
             try { payload = JSON.parse(payload); } catch (_err) { payload = { error: payload }; }
         }
         if (typeof payload !== 'object') return;
+        // Navigation can intentionally revisit a frame in the same turn.
+        // Content deduplication belongs to review edits and plan cards, not
+        // successful show_frame results (A -> B -> A must end on A).
+        if (name === 'show_frame' && payload.action === 'show_frame'
+            && !payload.error && !payload.unsupported) {
+            applyToolCall('show_frame', payload);
+            return;
+        }
         var fp = fingerprintToolResult(name, payload);
         if (seen && seen.has(fp)) return;
         if (seen) seen.add(fp);
@@ -683,10 +691,6 @@
         }
         if (payload.unsupported) {
             appendSystemLine(String(payload.reason || payload.unsupported), 'ss-agent-msg-warn');
-            return;
-        }
-        if (name === 'show_frame' && payload.action === 'show_frame') {
-            applyToolCall('show_frame', payload);
             return;
         }
         if (payload.type === 'review_plan') {

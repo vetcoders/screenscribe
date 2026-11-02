@@ -431,7 +431,7 @@ def test_sse_and_tools() -> None:
     assert "sse-tools:ok" in output
 
 
-def test_show_frame_sse_waits_for_normalized_result_and_deduplicates() -> None:
+def test_show_frame_sse_waits_for_each_normalized_successful_result() -> None:
     output = _run_agent_panel(
         textwrap.dedent(
             """
@@ -477,7 +477,7 @@ def test_show_frame_sse_waits_for_normalized_result_and_deduplicates() -> None:
             window.fetch = fetch;
             api.init();
             await api.send('pokaż manualną klatkę');
-            if (frames.length !== 1) {
+            if (frames.length !== 2) {
                 throw new Error('show_frame host calls: ' + frames.length);
             }
             if (frames[0].finding_id !== 'manual:manual:m2'
@@ -489,6 +489,91 @@ def test_show_frame_sse_waits_for_normalized_result_and_deduplicates() -> None:
         )
     )
     assert "show-frame-normalized:ok" in output
+
+
+def test_show_frame_sse_can_return_to_an_earlier_frame_in_the_same_turn() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const frames = [];
+            window.__screenscribeAgentHost = {
+                showFrame(payload) { frames.push(payload.finding_id); },
+            };
+            const frameA = {
+                action: 'show_frame', kind: 'finding', finding_id: 'A', timestamp: 10,
+            };
+            const frameB = {
+                action: 'show_frame', kind: 'manual_marker', finding_id: 'manual:B',
+                marker_id: 'B', timestamp: 20,
+            };
+            const stream = [frameA, frameB, frameA,
+                { action: 'show_frame', error: 'Unknown finding_id: missing' },
+                { action: 'show_frame', unsupported: true, reason: 'Unavailable frame' },
+            ].map((result) => (
+                'event: tool_call\\ndata: '
+                + JSON.stringify({ name: 'show_frame', input: { finding_id: result.finding_id } })
+                + '\\n\\nevent: tool_result\\ndata: '
+                + JSON.stringify({ name: 'show_frame', result }) + '\\n\\n'
+            )).join('') + 'event: done\\ndata: {}\\n\\n';
+            fetch = async () => ({ ok: true, text: async () => stream });
+            api.init();
+            await api.send('Show A, then B, then A again.');
+            if (JSON.stringify(frames) !== JSON.stringify(['A', 'manual:B', 'A'])) {
+                throw new Error('repeated navigation lost or failed result dispatched: '
+                    + JSON.stringify(frames));
+            }
+            process.stdout.write('show-frame-return:ok');
+            """
+        )
+    )
+    assert "show-frame-return:ok" in output
+
+
+def test_show_frame_sse_can_return_after_a_seek_in_the_same_turn() -> None:
+    output = _run_agent_panel(
+        textwrap.dedent(
+            """
+            const api = screenscribeAgentPanel;
+            const navigation = [];
+            let position = null;
+            window.__screenscribeAgentHost = {
+                showFrame(payload) {
+                    if (payload.action !== 'show_frame' || payload.kind !== 'finding') {
+                        throw new Error('raw show_frame reached host');
+                    }
+                    navigation.push('show:' + payload.finding_id);
+                    position = payload.timestamp;
+                },
+                seek(timestamp) {
+                    navigation.push('seek:' + timestamp);
+                    position = timestamp;
+                },
+            };
+            const normalized = {
+                action: 'show_frame', kind: 'finding', finding_id: 'A', timestamp: 10,
+            };
+            const show = 'event: tool_call\\ndata: '
+                + JSON.stringify({ name: 'show_frame', input: { finding_id: 'A' } })
+                + '\\n\\nevent: tool_result\\ndata: '
+                + JSON.stringify({ name: 'show_frame', result: normalized }) + '\\n\\n';
+            const stream = show
+                + 'event: tool_call\\ndata: {"name":"seek","input":{"timestamp":90}}\\n\\n'
+                + 'event: tool_result\\ndata: {"name":"seek","result":{"action":"seek","timestamp":90}}\\n\\n'
+                + show + 'event: done\\ndata: {}\\n\\n';
+            fetch = async () => ({ ok: true, text: async () => stream });
+            api.init();
+            await api.send('Show A, seek away, then show A again.');
+            if (JSON.stringify(navigation) !== JSON.stringify(['show:A', 'seek:90', 'show:A'])
+                || position !== 10) {
+                throw new Error('return after seek lost: ' + JSON.stringify(navigation)
+                    + ', position=' + position);
+            }
+            process.stdout.write('show-frame-after-seek:ok');
+            """
+        )
+    )
+    assert "show-frame-after-seek:ok" in output
 
 
 def test_streaming_sse_accepts_crlf_delimiters() -> None:
