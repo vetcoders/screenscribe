@@ -349,7 +349,7 @@ def test_chatgpt_selection_never_persists_environment_only_secrets(
     )
     config_env.chmod(0o600)
     monkeypatch.setattr("screenscribe.config.CONFIG_PATHS", [config_env])
-    monkeypatch.setenv("LIBRAXIS_API_KEY", "sk-vista-env-only-secret")
+    monkeypatch.setenv("LIBRAXIS_API_KEY", "test-libraxis-env-only")
     monkeypatch.setenv("SCREENSCRIBE_TTS_API_KEY", "xai-env-only-tts")
     monkeypatch.setenv("SCREENSCRIBE_API_KEY", "sk-env-only-generic")
     _signed_in_openai(monkeypatch)
@@ -359,10 +359,10 @@ def test_chatgpt_selection_never_persists_environment_only_secrets(
     assert result.exit_code == 0, result.output
     text = config_env.read_text(encoding="utf-8")
     assert "SCREENSCRIBE_PROVIDER=chatgpt" in text
-    for secret in ("sk-vista-env-only-secret", "xai-env-only-tts", "sk-env-only-generic"):
+    for secret in ("test-libraxis-env-only", "xai-env-only-tts", "sk-env-only-generic"):
         assert secret not in text
     # The environment still supplies the STT key at run time.
-    assert ScreenScribeConfig.load().get_stt_api_key() == "sk-vista-env-only-secret"
+    assert ScreenScribeConfig.load().get_stt_api_key() == "test-libraxis-env-only"
 
 
 def test_chatgpt_switch_keeps_vision_off_and_the_egress_policy() -> None:

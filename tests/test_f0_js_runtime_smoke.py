@@ -2394,8 +2394,182 @@ def test_f0_agent_finding_lookup_does_not_build_css_from_report_ids() -> None:
     assert 'querySelectorAll(`input[name="verdict-${' not in source
     assert 'querySelector(`.finding[data-finding-id="${' not in runtime
     assert 'querySelector(`[data-finding-id="${' not in runtime
+    assert 'querySelector(`.manual-frame-item[data-manual-marker-id="${' not in runtime
     assert 'querySelector(`.notes-mic-status[data-finding-id="${' not in runtime
     assert "dataset?.findingId" in runtime
+    assert "dataset?.manualMarkerId" in runtime
+
+
+def _agent_frame_dom_stubs() -> str:
+    return textwrap.dedent(
+        """
+        function testClassList() {
+            const values = new Set();
+            return {
+                add(name) { values.add(name); },
+                remove(name) { values.delete(name); },
+                contains(name) { return values.has(name); },
+            };
+        }
+        function testFrameNode(dataset) {
+            const thumb = { classList: testClassList() };
+            return {
+                dataset,
+                classList: testClassList(),
+                thumb,
+                scrollCalls: [],
+                querySelector(selector) {
+                    return selector === '.annotation-container' ? thumb : null;
+                },
+                scrollIntoView(options) { this.scrollCalls.push(options); },
+            };
+        }
+
+        const agentAi = testFrameNode({ findingId: 'ai-1' });
+        const agentManual = testFrameNode({ manualMarkerId: 'manual-1' });
+        const agentMeta = {
+            dataset: { timestamp: '20' },
+            closest(selector) { return selector === '.finding' ? agentAi : null; },
+        };
+        let testFindingNodes = [agentAi];
+        let testManualNodes = [agentManual];
+        let testMetas = [agentMeta];
+        document.querySelectorAll = (selector) => {
+            if (selector === '.ss-agent-highlight') {
+                return [agentAi, agentAi.thumb, agentManual, agentManual.thumb];
+            }
+            if (selector === '.finding') return testFindingNodes;
+            if (selector === '.manual-frame-item') return testManualNodes;
+            if (selector === '.finding .finding-meta[data-timestamp]') return testMetas;
+            return [];
+        };
+        const activatedTabs = [];
+        const soughtTimestamps = [];
+        activateTab = (tabId) => { activatedTabs.push(tabId); };
+        seekToTimestamp = (timestamp) => { soughtTimestamps.push(timestamp); };
+        """
+    )
+
+
+def test_f0_agent_show_frame_manual_only_activates_card_and_seeks() -> None:
+    _run_review_app_smoke(
+        _agent_frame_dom_stubs()
+        + textwrap.dedent(
+            """
+            testFindingNodes = [];
+            testMetas = [];
+            window.matchMedia = (query) => ({
+                matches: query === '(prefers-reduced-motion: reduce)'
+            });
+
+            showAgentFrame({
+                action: 'show_frame',
+                kind: 'manual_marker',
+                finding_id: 'manual-1',
+                marker_id: 'manual-1',
+                timestamp: 12.5,
+            });
+
+            if (!agentManual.classList.contains('ss-agent-highlight')) {
+                console.error('manual card was not highlighted'); process.exitCode = 1;
+            }
+            if (!agentManual.thumb.classList.contains('ss-agent-highlight')) {
+                console.error('manual thumbnail was not highlighted'); process.exitCode = 1;
+            }
+            if (activatedTabs.join(',') !== 'findings') {
+                console.error('wrong tab: ' + activatedTabs.join(',')); process.exitCode = 1;
+            }
+            if (agentManual.scrollCalls.length !== 1
+                || agentManual.scrollCalls[0].behavior !== 'auto') {
+                console.error('manual scroll did not honor reduced motion'); process.exitCode = 1;
+            }
+            if (soughtTimestamps.length !== 1 || soughtTimestamps[0] !== 12.5) {
+                console.error('manual seek mismatch: ' + soughtTimestamps); process.exitCode = 1;
+            }
+            """
+        )
+    )
+
+
+def test_f0_agent_show_frame_manual_collision_uses_raw_marker_id() -> None:
+    _run_review_app_smoke(
+        _agent_frame_dom_stubs()
+        + textwrap.dedent(
+            """
+            const rawMarkerId = 'm2\"]#strange:id';
+            const qualifiedAddress = 'manual:m2\"]#strange:id';
+            agentAi.dataset.findingId = qualifiedAddress;
+            agentManual.dataset.manualMarkerId = rawMarkerId;
+
+            showAgentFrame({
+                action: 'show_frame',
+                kind: 'manual_marker',
+                finding_id: qualifiedAddress,
+                marker_id: rawMarkerId,
+                timestamp: 42,
+            });
+
+            if (!agentManual.classList.contains('ss-agent-highlight')) {
+                console.error('qualified manual address missed raw marker'); process.exitCode = 1;
+            }
+            if (agentAi.classList.contains('ss-agent-highlight') || agentAi.scrollCalls.length) {
+                console.error('qualified manual address hijacked AI card'); process.exitCode = 1;
+            }
+            if (agentManual.scrollCalls.length !== 1) {
+                console.error('manual collision card was not scrolled'); process.exitCode = 1;
+            }
+            """
+        )
+    )
+
+
+def test_f0_agent_show_frame_missing_manual_does_not_fall_back_to_ai() -> None:
+    _run_review_app_smoke(
+        _agent_frame_dom_stubs()
+        + textwrap.dedent(
+            """
+            showAgentFrame({
+                action: 'show_frame',
+                kind: 'manual_marker',
+                finding_id: 'manual:missing',
+                marker_id: 'missing',
+                timestamp: 20,
+            });
+            if (agentAi.classList.contains('ss-agent-highlight') || agentAi.scrollCalls.length) {
+                console.error('missing manual card fell back to nearby AI'); process.exitCode = 1;
+            }
+            if (activatedTabs.length !== 0) {
+                console.error('missing manual card activated a tab'); process.exitCode = 1;
+            }
+            if (soughtTimestamps.length !== 1 || soughtTimestamps[0] !== 20) {
+                console.error('missing manual card lost its valid seek'); process.exitCode = 1;
+            }
+
+            soughtTimestamps.length = 0;
+            showAgentFrame({
+                action: 'show_frame',
+                kind: 'finding',
+                finding_id: 'ai-1',
+                timestamp: null,
+            });
+            if (!agentAi.classList.contains('ss-agent-highlight')) {
+                console.error('existing AI lookup regressed'); process.exitCode = 1;
+            }
+            if (soughtTimestamps.length !== 0) {
+                console.error('null timestamp implicitly sought zero'); process.exitCode = 1;
+            }
+
+            agentAi.classList.remove('ss-agent-highlight');
+            showAgentFrame({ finding_id: 'missing-ai', timestamp: 20 });
+            if (!agentAi.classList.contains('ss-agent-highlight')) {
+                console.error('legacy AI timestamp fallback regressed'); process.exitCode = 1;
+            }
+            if (soughtTimestamps.length !== 1 || soughtTimestamps[0] !== 20) {
+                console.error('legacy AI seek regressed'); process.exitCode = 1;
+            }
+            """
+        )
+    )
 
 
 def test_f0_apply_review_patch_add_finding_local_and_merge_unsupported() -> None:

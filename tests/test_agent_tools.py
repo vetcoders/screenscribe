@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from screenscribe.agent.tools import ReportToolbelt, responses_tool_schemas
+from screenscribe.agent.context import seed_report_context
+from screenscribe.agent.moments import manual_markers
+from screenscribe.agent.tools import (
+    _MAX_LIST_FINDINGS_RESULT_CHARS,
+    ReportToolbelt,
+    responses_tool_schemas,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "agent_report_synthetic.json"
 
@@ -21,6 +28,9 @@ def _toolbelt(repo_root: Path | None = None) -> ReportToolbelt:
 def test_list_findings_returns_fixture_rows() -> None:
     result = _toolbelt().list_findings()
     assert result["count"] == 13
+    assert result["returned_count"] == 13
+    assert result["omitted_count"] == 0
+    assert result["truncated"] is False
     ids = {row["id"] for row in result["findings"]}
     assert 0 in ids
     assert result["findings"][0]["summary"]
@@ -46,6 +56,315 @@ def test_list_findings_filter_includes_raw_text_and_context() -> None:
     belt = ReportToolbelt(report)
     assert belt.list_findings("literal-user-wording")["count"] == 1
     assert belt.list_findings("later-correction")["count"] == 1
+
+
+def test_manual_markers_are_discoverable_deduplicated_and_round_trip_by_id() -> None:
+    report = {
+        "findings": [
+            {
+                "id": 7,
+                "category": "bug",
+                "timestamp_start": 12.0,
+                "text": "AI finding",
+                "screenshot": "screenshots/ai.jpg",
+                "unified_analysis": {"severity": "high", "summary": "AI summary"},
+            }
+        ],
+        "manual_review": {
+            "markers": [
+                {
+                    "marker_id": "manual-54",
+                    "timestamp": 54.0,
+                    "frame_path": "manual_frames/manual-54.jpg",
+                    "notes": "First manual note",
+                },
+                {
+                    "marker_id": "manual-63",
+                    "timestamp": 63.0,
+                    "frame_path": "manual_frames/manual-63.jpg",
+                    "notes": "Second manual note",
+                },
+            ]
+        },
+        "human_review": {
+            "manual_frames": [
+                {"marker_id": "manual-54", "timestamp": 54.0, "notes": "UI alias"},
+                {"id": "manual-63", "timestamp": 63.0, "notes": "legacy id alias"},
+            ]
+        },
+    }
+    belt = ReportToolbelt(report)
+
+    result = belt.list_findings()
+    assert result["count"] == 3
+    assert result["finding_count"] == 1
+    assert result["manual_marker_count"] == 2
+    assert result["available_moment_count"] == 3
+    assert result["total_count"] == 3
+    assert result["findings"][0]["kind"] == "finding"
+    manual_rows = [row for row in result["findings"] if row["kind"] == "manual_marker"]
+    assert [row["id"] for row in manual_rows] == ["manual-54", "manual-63"]
+    assert manual_rows[1]["frame_path"] == "manual_frames/manual-63.jpg"
+    assert manual_rows[1]["notes"] == "Second manual note"
+
+    filtered = belt.list_findings("manual_frames/manual-63")
+    assert filtered["count"] == 1
+    assert filtered["finding_count"] == 0
+    assert filtered["manual_marker_count"] == 1
+    discovered_id = filtered["findings"][0]["id"]
+    detail = belt.get_finding(discovered_id)
+    assert detail["kind"] == "manual_marker"
+    assert detail["marker_id"] == "manual-63"
+    assert detail["notes"] == "Second manual note"
+    assert detail["frames"] == [{"frame": "manual_frames/manual-63.jpg", "timestamp": 63.0}]
+
+    summary = belt.get_report_summary()
+    assert summary["finding_count"] == 1
+    assert summary["manual_marker_count"] == 2
+    assert summary["available_moment_count"] == 3
+    assert summary["total_count"] == 3
+
+
+def test_list_findings_bounds_multi_megabyte_rows_without_changing_filter_truth() -> None:
+    long_note = "manual beginning " + ("x" * 2_000_000) + " unique-tail-target"
+    long_id = "manual-id-" + ("z" * 60_000)
+    marker_ids = ["manual-tail", *(f"manual-{index}" for index in range(80)), long_id]
+    report: dict[str, Any] = {
+        "findings": [
+            {
+                "id": "ai-long",
+                "category": "bug",
+                "timestamp_start": 1.0,
+                "text": "a" * 100_000,
+                "unified_analysis": {"summary": "a" * 100_000, "severity": "high"},
+            }
+        ],
+        "manual_review": {
+            "markers": [
+                {
+                    "marker_id": marker_id,
+                    "timestamp": float(index + 2),
+                    "frame_path": f"manual_frames/frame-{index}.jpg",
+                    "notes": (long_note if index == 0 else f"manual row {index} " + ("n" * 20_000)),
+                }
+                for index, marker_id in enumerate(marker_ids)
+            ]
+        },
+    }
+    belt = ReportToolbelt(report)
+
+    result = belt.list_findings()
+    encoded = json.dumps(result, ensure_ascii=False)
+    assert len(encoded) <= _MAX_LIST_FINDINGS_RESULT_CHARS
+    assert json.loads(encoded) == result
+    assert result["count"] == 1 + len(marker_ids)
+    assert result["filtered_count"] == result["count"]
+    assert result["finding_count"] == 1
+    assert result["manual_marker_count"] == len(marker_ids)
+    assert result["returned_count"] == len(result["findings"])
+    assert result["omitted_count"] == result["count"] - result["returned_count"]
+    assert result["truncated"] is True
+    assert result["coverage"]["matched"] == result["count"]
+    assert result["coverage"]["returned"] == result["returned_count"]
+    assert result["coverage"]["omitted"] == result["omitted_count"]
+    assert result["coverage"]["fields_truncated"] is True
+    returned_manual = [row for row in result["findings"] if row["kind"] == "manual_marker"]
+    assert returned_manual
+    assert all(row["id"] in marker_ids for row in returned_manual)
+    first_manual = next(row for row in returned_manual if row["id"] == "manual-tail")
+    assert first_manual["summary"].endswith("…(truncated)")
+    assert first_manual["notes"].endswith("…(truncated)")
+
+    filtered = belt.list_findings("unique-tail-target")
+    assert filtered["count"] == 1
+    assert filtered["returned_count"] == 1
+    assert filtered["findings"][0]["id"] == "manual-tail"
+    assert "unique-tail-target" not in filtered["findings"][0]["notes"]
+    assert report["manual_review"]["markers"][0]["notes"] == long_note
+    detail = belt.get_finding("manual-tail")
+    assert len(detail["notes"]) > len(filtered["findings"][0]["notes"])
+
+
+def test_manual_marker_normalization_merges_compat_sources_without_mutation() -> None:
+    report = {
+        "findings": [],
+        "manual_review": {
+            "markers": [
+                {
+                    "marker_id": "m2",
+                    "timestamp": 54.0,
+                    "notes": "user note",
+                    "severity": "critical",
+                }
+            ],
+            "results": [
+                {
+                    "marker_id": "m2",
+                    "timestamp": 54.0,
+                    "category": "bug",
+                    "severity": "high",
+                    "summary": "saved result summary",
+                    "issues_detected": ["Contrast is too low"],
+                    "suggested_fix": "Raise contrast",
+                }
+            ],
+        },
+        "human_review": {
+            "manual_frames": [
+                {
+                    "marker_id": "m2",
+                    "timestamp": 999.0,
+                    "notes": "",
+                    "severity": "",
+                    "frame_path": "manual_frames/m2.jpg",
+                    "result": {
+                        "category": "ui",
+                        "summary": "analysis from compatibility frame",
+                    },
+                }
+            ]
+        },
+    }
+    original = deepcopy(report)
+
+    normalized = manual_markers(report)
+    assert normalized == [
+        {
+            "marker_id": "m2",
+            "timestamp": 54.0,
+            "notes": "user note",
+            "severity": "critical",
+            "frame_path": "manual_frames/m2.jpg",
+            "result": {
+                "marker_id": "m2",
+                "timestamp": 54.0,
+                "category": "ui",
+                "severity": "high",
+                "summary": "analysis from compatibility frame",
+                "issues_detected": ["Contrast is too low"],
+                "suggested_fix": "Raise contrast",
+            },
+        }
+    ]
+
+    belt = ReportToolbelt(report)
+    row = belt.list_findings()["findings"][0]
+    assert row["id"] == "m2"
+    assert row["marker_id"] == "m2"
+    assert row["timestamp"] == 54.0
+    assert row["notes"] == "user note"
+    assert row["severity"] == "critical"
+    assert row["frame_path"] == "manual_frames/m2.jpg"
+    assert row["summary"] == "analysis from compatibility frame"
+
+    detail = belt.get_finding(row["id"])
+    assert detail["marker_id"] == "m2"
+    assert detail["result"]["category"] == "ui"
+    assert detail["result"]["issues_detected"] == ["Contrast is too low"]
+    assert detail["result"]["suggested_fix"] == "Raise contrast"
+
+    seed = json.loads(seed_report_context(report))
+    assert seed["manual_markers"][0]["id"] == row["id"]
+    assert seed["manual_markers"][0]["summary"] == row["summary"]
+    assert seed["manual_markers"][0]["frame_path"] == row["frame_path"]
+    assert report == original
+
+
+def test_manual_marker_normalization_preserves_canonical_text_clears() -> None:
+    report = {
+        "findings": [],
+        "manual_review": {
+            "markers": [
+                {
+                    "marker_id": "cleared",
+                    "timestamp": 21.0,
+                    "notes": "",
+                    "transcript": "   ",
+                    "frame_path": "",
+                },
+                {
+                    "marker_id": "cleared",
+                    "timestamp": 777.0,
+                    "notes": "later canonical duplicate",
+                    "transcript": "later canonical transcript",
+                    "frame_path": "",
+                },
+                {
+                    "marker_id": "missing",
+                    "timestamp": 22.0,
+                    "transcript": None,
+                    "frame_path": "",
+                },
+            ],
+            "results": [
+                {
+                    "marker_id": "cleared",
+                    "summary": "Independent AI summary",
+                    "category": "ui",
+                    "issues_detected": ["Legitimate analysis remains"],
+                }
+            ],
+        },
+        "human_review": {
+            "manual_frames": [
+                {
+                    "marker_id": "cleared",
+                    "timestamp": 999.0,
+                    "notes": "stale user note",
+                    "transcript": "stale transcript",
+                    "frame_path": "manual_frames/cleared.png",
+                },
+                {
+                    "marker_id": "missing",
+                    "timestamp": 998.0,
+                    "notes": "alias note",
+                    "transcript": "alias transcript",
+                    "frame_path": "manual_frames/missing.png",
+                },
+            ]
+        },
+    }
+    original = deepcopy(report)
+
+    normalized = {marker["marker_id"]: marker for marker in manual_markers(report)}
+    assert normalized["cleared"]["timestamp"] == 21.0
+    assert normalized["cleared"]["notes"] == ""
+    assert normalized["cleared"]["transcript"] == "   "
+    assert normalized["cleared"]["frame_path"] == "manual_frames/cleared.png"
+    assert normalized["cleared"]["result"]["summary"] == "Independent AI summary"
+    assert normalized["cleared"]["result"]["issues_detected"] == ["Legitimate analysis remains"]
+    assert normalized["missing"]["notes"] == "alias note"
+    assert normalized["missing"]["transcript"] == "alias transcript"
+    assert normalized["missing"]["frame_path"] == "manual_frames/missing.png"
+
+    belt = ReportToolbelt(report)
+    rows = {
+        row["marker_id"]: row
+        for row in belt.list_findings()["findings"]
+        if row["kind"] == "manual_marker"
+    }
+    assert rows["cleared"]["timestamp"] == 21.0
+    assert rows["cleared"]["notes"] == ""
+    assert rows["cleared"]["summary"] == "Independent AI summary"
+    assert rows["cleared"]["frame_path"] == "manual_frames/cleared.png"
+    assert rows["missing"]["notes"] == "alias note"
+
+    cleared_detail = belt.get_finding(rows["cleared"]["id"])
+    assert cleared_detail["notes"] == ""
+    assert cleared_detail["transcript"] == "   "
+    assert cleared_detail["result"]["summary"] == "Independent AI summary"
+    missing_detail = belt.get_finding(rows["missing"]["id"])
+    assert missing_detail["notes"] == "alias note"
+    assert missing_detail["transcript"] == "alias transcript"
+
+    seed_rows = {
+        row["marker_id"]: row for row in json.loads(seed_report_context(report))["manual_markers"]
+    }
+    assert seed_rows["cleared"]["notes"] == ""
+    assert seed_rows["cleared"]["summary"] == "Independent AI summary"
+    assert seed_rows["cleared"]["frame_path"] == "manual_frames/cleared.png"
+    assert seed_rows["missing"]["notes"] == "alias note"
+    assert report == original
 
 
 def test_get_transcript_window() -> None:

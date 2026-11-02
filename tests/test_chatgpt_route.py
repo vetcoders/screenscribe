@@ -69,7 +69,7 @@ OPENAI_ISSUER = "https://auth.openai.test"
 ACCOUNT_ID = "acct-fixture-1"
 REFRESHED_ACCOUNT_ID = "acct-fixture-2"
 SK_OPENAI = "sk-proj-fixture-openai"  # pragma: allowlist secret
-SK_VISTA = "sk-vista-fixture-libraxis"  # pragma: allowlist secret
+LIBRAXIS_KEY = "test-libraxis-key"  # pragma: allowlist secret
 SK_GENERIC = "sk-fixture-generic"  # pragma: allowlist secret
 XAI_KEY = "xai-fixture-key"  # pragma: allowlist secret
 REFRESH_TOKEN = "rt-fixture"  # pragma: allowlist secret
@@ -1009,9 +1009,9 @@ def _sign_in(token: str = TOKEN) -> None:
     "keys",
     [
         {"llm_api_key": SK_OPENAI, "vision_api_key": SK_OPENAI},
-        {"llm_api_key": SK_VISTA, "vision_api_key": SK_VISTA},
+        {"llm_api_key": LIBRAXIS_KEY, "vision_api_key": LIBRAXIS_KEY},
         {"api_key": SK_GENERIC},
-        {"api_key": SK_VISTA, "llm_api_key": SK_OPENAI, "vision_api_key": XAI_KEY},
+        {"api_key": LIBRAXIS_KEY, "llm_api_key": SK_OPENAI, "vision_api_key": XAI_KEY},
     ],
     ids=["openai-keys", "libraxis-keys", "generic-key", "mixed"],
 )
@@ -1026,7 +1026,7 @@ def test_explicit_keys_never_reach_chatgpt_only_the_account_token(keys: dict[str
 
 
 def test_unsigned_chatgpt_config_asks_for_the_openai_sign_in() -> None:
-    config = _chatgpt_config(llm_api_key=SK_OPENAI, stt_api_key=SK_VISTA)
+    config = _chatgpt_config(llm_api_key=SK_OPENAI, stt_api_key=LIBRAXIS_KEY)
     assert config.uses_chatgpt_account()
     assert config.validate() == []
     status = config.configuration_status()
@@ -1036,9 +1036,9 @@ def test_unsigned_chatgpt_config_asks_for_the_openai_sign_in() -> None:
 
 def test_signed_in_chatgpt_config_is_ready_with_an_stt_key() -> None:
     _sign_in()
-    config = _chatgpt_config(stt_api_key=SK_VISTA)
+    config = _chatgpt_config(stt_api_key=LIBRAXIS_KEY)
     assert config.configuration_status() == "READY"
-    assert config.get_stt_api_key() == SK_VISTA
+    assert config.get_stt_api_key() == LIBRAXIS_KEY
 
 
 def test_disabled_account_yields_no_bearer_for_chatgpt() -> None:
@@ -1083,14 +1083,14 @@ def test_account_only_hosts_cover_chatgpt() -> None:
 def test_chatgpt_preset_carries_stt_and_ignores_api_key() -> None:
     source = ScreenScribeConfig(
         provider="libraxis",
-        api_key=SK_VISTA,
+        api_key=LIBRAXIS_KEY,
         stt_model="whisper-large-fixture",
         language="pl",
         stt_fallback_endpoint=OPENAI_STT_ENDPOINT,
         stt_fallback_api_key=SK_OPENAI,
         stt_fallback_model="whisper-1",
     )
-    source._libraxis_key_values = {SK_VISTA}
+    source._libraxis_key_values = {LIBRAXIS_KEY}
 
     preset = ScreenScribeConfig.provider_preset(
         "chatgpt", SK_GENERIC, llm_model="gpt-5.6", stt_from=source
@@ -1103,27 +1103,27 @@ def test_chatgpt_preset_carries_stt_and_ignores_api_key() -> None:
     assert preset.llm_model == "gpt-5.6"
     assert preset.stt_endpoint == LIBRAXIS_STT_ENDPOINT
     assert preset.stt_model == "whisper-large-fixture"
-    assert preset.stt_api_key == SK_VISTA
+    assert preset.stt_api_key == LIBRAXIS_KEY
     assert preset.language == "pl"
     assert preset.stt_fallback_endpoint == OPENAI_STT_ENDPOINT
     assert preset.stt_fallback_api_key == SK_OPENAI
-    assert preset._libraxis_key_values == {SK_VISTA}
-    assert preset.get_stt_api_key() == SK_VISTA
+    assert preset._libraxis_key_values == {LIBRAXIS_KEY}
+    assert preset.get_stt_api_key() == LIBRAXIS_KEY
     assert preset.validate() == []
 
 
 def test_chatgpt_preset_saves_a_carried_libraxis_key_as_libraxis_api_key(
     tmp_path: Path,
 ) -> None:
-    source = ScreenScribeConfig(provider="libraxis", api_key=SK_VISTA)
-    source._libraxis_key_values = {SK_VISTA}
+    source = ScreenScribeConfig(provider="libraxis", api_key=LIBRAXIS_KEY)
+    source._libraxis_key_values = {LIBRAXIS_KEY}
     preset = ScreenScribeConfig.provider_preset("chatgpt", "", stt_from=source)
 
     path = preset.save_default_config()
 
     assert path == tmp_path / ".config" / "screenscribe" / "config.env"
     lines = path.read_text().splitlines()
-    assert f"LIBRAXIS_API_KEY={SK_VISTA}" in lines
+    assert f"LIBRAXIS_API_KEY={LIBRAXIS_KEY}" in lines
     assert "SCREENSCRIBE_API_KEY=" in lines
     assert not any(line.startswith("SCREENSCRIBE_STT_API_KEY=") for line in lines)
     assert "SCREENSCRIBE_PROVIDER=chatgpt" in lines
@@ -1141,7 +1141,7 @@ def test_chatgpt_preset_without_stt_from_uses_builtin_libraxis_stt() -> None:
 
 @pytest.mark.parametrize("stt_provider", ["libraxis", "openai", "xai"])
 def test_validate_is_clean_for_chatgpt_with_any_stt(stt_provider: str) -> None:
-    key = {"libraxis": SK_VISTA, "openai": SK_OPENAI, "xai": XAI_KEY}[stt_provider]
+    key = {"libraxis": LIBRAXIS_KEY, "openai": SK_OPENAI, "xai": XAI_KEY}[stt_provider]
     source = ScreenScribeConfig.provider_preset(stt_provider, key)
     if stt_provider == "libraxis":
         source._libraxis_key_values = {key}
@@ -1160,8 +1160,8 @@ def test_validate_is_clean_for_chatgpt_with_any_stt(stt_provider: str) -> None:
 
 
 def test_libraxis_key_carried_into_chatgpt_is_fenced_from_a_foreign_stt_host() -> None:
-    source = ScreenScribeConfig(provider="libraxis", api_key=SK_VISTA)
-    source._libraxis_key_values = {SK_VISTA}
+    source = ScreenScribeConfig(provider="libraxis", api_key=LIBRAXIS_KEY)
+    source._libraxis_key_values = {LIBRAXIS_KEY}
     preset = ScreenScribeConfig.provider_preset("chatgpt", "", stt_from=source)
     preset.stt_endpoint = OPENAI_STT_ENDPOINT
     assert preset.get_stt_api_key() == ""
