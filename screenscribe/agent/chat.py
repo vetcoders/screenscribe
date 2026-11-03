@@ -729,8 +729,13 @@ async def _run_provider(
             "work is unfinished; no additional review edit was saved."
         )
     else:
-        if final_result.response_id and stateful_chain:
-            last_response_id = final_result.response_id
+        # The final round consumed the last tool result. Its predecessor is no
+        # longer a safe continuation if this response provides no cursor.
+        last_response_id = (
+            final_result.response_id
+            if stateful_chain and final_result.response_id and final_result.response_id.strip()
+            else None
+        )
         final_text = final_result.text.strip() or (
             f"Tool execution stopped after the hard limit of {_MAX_TOOL_ROUNDS} rounds. "
             "The provider returned no final summary. Results from completed tools remain "

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+from copy import deepcopy
+from itertools import permutations
 from pathlib import Path
 from typing import Any
 
@@ -238,6 +240,60 @@ def test_manual_addresses_round_trip_through_ai_collisions_and_prefix_ids(
         marker_id: row["id"] for marker_id, row in manual_rows.items()
     }
     assert len(belt.drain_images()) == len(manual_rows)
+
+
+def test_manual_collision_addresses_stay_bound_to_ids_across_source_reordering() -> None:
+    colliding = ["x", "manual:x", "manual:manual:x"]
+    expected: dict[object, object] | None = None
+    for order in permutations(colliding):
+        canonical = [
+            {"marker_id": marker_id, "timestamp": float(index), "notes": f"canonical {marker_id}"}
+            for index, marker_id in enumerate([*order, "ordinary", 7])
+        ]
+        aliases = [
+            {"id": marker_id, "notes": "stale alias", "frame_path": f"manual_frames/{index}.png"}
+            for index, marker_id in enumerate([*colliding, "ordinary", 7])
+        ]
+        for alias_order in (aliases, list(reversed(aliases))):
+            report = {
+                "findings": [
+                    {"id": "x", "timestamp_start": 10.0},
+                    {
+                        "id": "manual:x",
+                        "timestamp_start": 11.0,
+                        "merged_frames": [{"id": "manual:manual:x", "timestamp_start": 12.0}],
+                    },
+                ],
+                "manual_review": {"markers": canonical},
+                "human_review": {"manual_frames": alias_order},
+            }
+            original = deepcopy(report)
+            tools = ReportToolbelt(report)
+            rows = [
+                row for row in tools.list_findings()["findings"] if row["kind"] == "manual_marker"
+            ]
+            addresses = {row["marker_id"]: row["id"] for row in rows}
+            if expected is None:
+                expected = addresses
+            assert addresses == expected
+            assert len({str(address) for address in addresses.values()}) == len(canonical)
+            assert not {str(address) for address in addresses.values()}.intersection(colliding)
+            assert [row["marker_id"] for row in rows] == [
+                marker["marker_id"] for marker in canonical
+            ]
+            assert addresses["ordinary"] == "ordinary"
+            assert addresses[7] == 7
+            for row in rows:
+                detail = tools.get_finding(row["id"])
+                assert detail["marker_id"] == row["marker_id"]
+                assert detail["notes"] == f"canonical {row['marker_id']}"
+                assert detail["frame_path"] == row["frame_path"]
+                shown = tools.show_frame(finding_id=row["id"])
+                assert shown["marker_id"] == row["marker_id"]
+                assert shown["finding_id"] == row["id"]
+            seed = json.loads(seed_report_context(report))
+            assert {row["marker_id"]: row["id"] for row in seed["manual_markers"]} == addresses
+            assert report == original
 
 
 def test_show_frame_timestamp_resolves_manual_and_mixed_logical_moments() -> None:

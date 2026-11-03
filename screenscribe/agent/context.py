@@ -22,7 +22,6 @@ _SEED_BUDGET_CHARS = 12_000
 _FINDING_CAP = 40
 _MANUAL_MARKER_CAP = 40
 _SEGMENT_CAP = 80
-_SEED_ID_BUDGET = 160
 _SEED_LABEL_BUDGET = 180
 _SEED_TEXT_BUDGET = 480
 _SEED_PATH_BUDGET = 320
@@ -130,7 +129,7 @@ def seed_report_context(
         findings_out.append(
             {
                 "kind": "finding",
-                "id": _bounded_json_value(finding.get("id"), _SEED_ID_BUDGET),
+                "id": finding.get("id"),
                 "category": _bounded_json_value(finding.get("category"), _SEED_LABEL_BUDGET),
                 "timestamp": _bounded_json_value(
                     finding.get("timestamp_start"), _SEED_LABEL_BUDGET
@@ -161,8 +160,8 @@ def seed_report_context(
         manual_markers_out.append(
             {
                 "kind": "manual_marker",
-                "id": _bounded_json_value(address, _SEED_ID_BUDGET),
-                "marker_id": _bounded_json_value(marker_id, _SEED_ID_BUDGET),
+                "id": address,
+                "marker_id": marker_id,
                 "category": _bounded_json_value(
                     result.get("category") or marker.get("category"), _SEED_LABEL_BUDGET
                 ),
@@ -188,7 +187,7 @@ def seed_report_context(
     )
     segments_out = [
         {
-            "id": _bounded_json_value(segment.get("id"), _SEED_ID_BUDGET),
+            "id": segment.get("id"),
             "start": _bounded_json_value(segment.get("start"), _SEED_LABEL_BUDGET),
             "end": _bounded_json_value(segment.get("end"), _SEED_LABEL_BUDGET),
             "text": _bounded_json_value(segment.get("text"), _SEED_SEGMENT_TEXT_BUDGET),
@@ -264,41 +263,53 @@ def _budget_seed_collections(
             coverage[name] = {"included": 0, "available": available, "omitted": available}
         blob["seed_coverage"] = coverage
 
+    included: dict[str, dict[int, dict[str, Any]]] = {name: {} for name in collections}
+
+    def try_record(name: str, index: int, row: dict[str, Any]) -> bool:
+        proposed = {**included[name], index: row}
+        previous_rows = blob[name]
+        previous_coverage = dict(coverage[name])
+        blob[name] = [proposed[key] for key in sorted(proposed)]
+        coverage[name]["included"] = len(proposed)
+        coverage[name]["omitted"] = collections[name][1] - len(proposed)
+        if len(_seed_json(blob)) <= _SEED_BUDGET_CHARS:
+            included[name] = proposed
+            return True
+        blob[name] = previous_rows
+        coverage[name] = previous_coverage
+        return False
+
+    minimal_rows = {
+        name: [_minimal_seed_record(row) for row in rows]
+        for name, (rows, _available) in collections.items()
+    }
+    representatives: dict[str, int] = {}
+    # Reserve an exact, compact representative per collection before any rich
+    # fields can consume another collection's identity budget. Choosing its
+    # smallest candidate also avoids a huge first id hiding ordinary later ids.
+    for name, rows in minimal_rows.items():
+        if rows:
+            index = min(range(len(rows)), key=lambda key: len(_seed_json(rows[key])))
+            if try_record(name, index, rows[index]):
+                representatives[name] = index
+    for name, index in representatives.items():
+        try_record(name, index, collections[name][0][index])
+
     indexes = dict.fromkeys(collections, 0)
-    blocked: set[str] = set()
     while True:
         progressed = False
-        for name, (rows, available) in collections.items():
+        for name, (rows, _available) in collections.items():
             index = indexes[name]
-            if name in blocked or index >= len(rows):
+            if index >= len(rows):
                 continue
-            row = rows[index]
-            included_rows = blob[name]
-            included_rows.append(row)
-            coverage[name]["included"] += 1
-            coverage[name]["omitted"] = available - coverage[name]["included"]
-            if len(_seed_json(blob)) <= _SEED_BUDGET_CHARS:
-                indexes[name] += 1
-                progressed = True
+            indexes[name] += 1
+            progressed = True
+            if index in included[name]:
                 continue
-
-            included_rows.pop()
-            coverage[name]["included"] -= 1
-            coverage[name]["omitted"] = available - coverage[name]["included"]
-            if index == 0:
-                minimal = _minimal_seed_record(row)
-                included_rows.append(minimal)
-                coverage[name]["included"] += 1
-                coverage[name]["omitted"] = available - coverage[name]["included"]
-                if len(_seed_json(blob)) <= _SEED_BUDGET_CHARS:
-                    indexes[name] += 1
-                    progressed = True
-                    blocked.add(name)
-                    continue
-                included_rows.pop()
-                coverage[name]["included"] -= 1
-                coverage[name]["omitted"] = available - coverage[name]["included"]
-            blocked.add(name)
+            if not try_record(name, index, rows[index]):
+                # Omit an identity honestly if even its compact record cannot
+                # fit, then continue considering the remaining capped records.
+                try_record(name, index, minimal_rows[name][index])
         if not progressed:
             break
 
@@ -309,7 +320,7 @@ def _minimal_seed_record(row: dict[str, Any]) -> dict[str, Any]:
     """Last-resort representative that keeps address, time and a short summary."""
     keep = ("kind", "id", "marker_id", "timestamp", "start", "end", "summary", "text")
     minimal = {
-        key: _bounded_json_value(row[key], 120)
+        key: row[key] if key in {"id", "marker_id"} else _bounded_json_value(row[key], 120)
         for key in keep
         if key in row and row[key] is not None
     }

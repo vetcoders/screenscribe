@@ -112,32 +112,39 @@ def manual_marker_addresses(
     A raw marker id remains its address unless an AI finding or merged member
     already owns that string. Collisions receive a ``manual:`` prefix; the
     prefix is repeated when needed so a real marker id such as ``manual:m2``
-    remains independently addressable.
+    remains independently addressable. Allocation follows sorted raw identities,
+    so reordering source records cannot reassign a qualified address. Returned
+    rows retain their original normalized order.
     """
     markers = manual_markers(report)
-    raw_ids = {
-        str(marker_id) for marker in markers if (marker_id := manual_marker_id(marker)) is not None
+    ids = {
+        str(marker_id): marker_id
+        for marker in markers
+        if (marker_id := manual_marker_id(marker)) is not None
     }
     reserved = _ai_addresses(report)
     assigned: set[str] = set()
-    addressed: list[tuple[object, dict[str, Any]]] = []
+    addresses: dict[str, object] = {}
 
-    for marker in markers:
-        marker_id = manual_marker_id(marker)
-        if marker_id is None:
-            addressed.append((None, marker))
-            continue
-        raw = str(marker_id)
+    for raw, marker_id in sorted(ids.items()):
         if raw not in reserved and raw not in assigned:
             address: object = marker_id
         else:
             candidate = f"{_MANUAL_ADDRESS_PREFIX}{raw}"
-            while candidate in reserved or candidate in raw_ids or candidate in assigned:
+            while candidate in reserved or candidate in ids or candidate in assigned:
                 candidate = f"{_MANUAL_ADDRESS_PREFIX}{candidate}"
             address = candidate
         assigned.add(str(address))
-        addressed.append((address, marker))
-    return addressed
+        addresses[raw] = address
+    return [
+        (
+            addresses.get(str(marker_id))
+            if (marker_id := manual_marker_id(marker)) is not None
+            else None,
+            marker,
+        )
+        for marker in markers
+    ]
 
 
 def manual_marker_result(marker: dict[str, Any]) -> dict[str, Any]:

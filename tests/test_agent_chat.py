@@ -6,6 +6,7 @@ import asyncio
 import json
 import sys
 import threading
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -654,6 +655,71 @@ def test_stateful_finalization_tool_violation_clears_cursor_and_separates_preamb
         "Inspecting completed steps\n\nTool execution stopped after the hard limit"
     )
     assert "I saved another change." not in result["text"]
+
+
+@pytest.mark.parametrize("final_id", [None, "", "   ", "resp-final", " resp-final "])
+@pytest.mark.parametrize(
+    ("protocol", "host", "stateful"),
+    [
+        ("responses", "api.libraxis.cloud", True),
+        ("responses", "api.x.ai", False),
+        ("anthropic", "anthropic.example", False),
+    ],
+)
+def test_finalization_cursor_requires_its_own_response_id(
+    monkeypatch: pytest.MonkeyPatch,
+    final_id: str | None,
+    protocol: str,
+    host: str,
+    stateful: bool,
+) -> None:
+    monkeypatch.setattr(agent_chat, "_MAX_TOOL_ROUNDS", 1)
+    payloads: list[dict[str, Any]] = []
+
+    async def fake_round(_provider: AgentProvider, payload: dict[str, Any]) -> ProviderRound:
+        payloads.append(payload)
+        if len(payloads) == 1:
+            return ProviderRound(
+                text="",
+                response_id="resp-tool-round",
+                function_calls=[
+                    FunctionCall(name="get_report_summary", call_id="call-1", arguments={})
+                ],
+            )
+        return ProviderRound(text="Completed summary.", response_id=final_id, function_calls=[])
+
+    monkeypatch.setattr(agent_chat, "round_tripper", fake_round)
+    report = _load_fixture()
+    provider = AgentProvider(
+        name="primary",
+        protocol=protocol,
+        key="fake",  # pragma: allowlist secret
+        model="test-model",
+        url=f"https://{host}/v1/{'messages' if protocol == 'anthropic' else 'responses'}",
+        trust="internal",
+        slot="primary",
+        host=host,
+    )
+
+    async def collect() -> list[dict[str, Any]]:
+        done = []
+        async for frame in agent_chat._run_provider(
+            config=_xai_config(),
+            provider=provider,
+            turn=prepare_turn(report=report, message="Inspect every step."),
+            tools=ReportToolbelt(report),
+        ):
+            if frame.startswith("event: done\n"):
+                done.append(json.loads(frame.split("data: ", 1)[1]))
+        return done
+
+    done = asyncio.run(collect())
+    assert len(payloads) == 2
+    assert len(done) == 1
+    assert done[0]["response_id"] == (
+        final_id if stateful and final_id and final_id.strip() else None
+    )
+    assert payloads[1].get("previous_response_id") == ("resp-tool-round" if stateful else None)
 
 
 def test_finalization_provider_failure_is_not_swallowed(
@@ -2199,6 +2265,106 @@ def test_seed_budget_keeps_all_moment_kinds_and_full_counts_with_long_manual_not
     assert detail["notes"].startswith("manual detail ")
     assert detail["notes"].endswith("…(truncated)")
     assert len(detail["notes"]) > len(first_manual["notes"])
+
+
+def test_seed_preserves_long_actionable_ids_and_transcript_references() -> None:
+    finding_id = 'finding-"' + ("界" * 200)
+    segment_id = "segment-" + ("s" * 200)
+    report = {
+        "findings": [{"id": finding_id, "timestamp_start": 1.0, "text": "AI moment"}],
+        "manual_review": {
+            "markers": [{"marker_id": finding_id, "timestamp": 2.0, "notes": "Manual moment"}]
+        },
+        "transcript_segments": [{"id": segment_id, "start": 0.0, "end": 1.0, "text": "Words"}],
+    }
+    original = deepcopy(report)
+
+    seed_text = seed_report_context(report)
+    seed = json.loads(seed_text)
+    assert len(seed_text) <= _SEED_BUDGET_CHARS
+    assert seed["findings"][0]["id"] == finding_id
+    manual = seed["manual_markers"][0]
+    assert manual["id"] == "manual:" + finding_id
+    assert manual["marker_id"] == finding_id
+    assert seed["transcript_segments"][0]["id"] == segment_id
+    tools = ReportToolbelt(report)
+    assert tools.get_finding(seed["findings"][0]["id"])["kind"] == "finding"
+    assert tools.get_finding(manual["id"])["marker_id"] == finding_id
+    assert tools.show_frame(finding_id=manual["id"])["marker_id"] == finding_id
+    assert report == original
+
+
+def test_seed_reserves_exact_minimal_ids_before_rich_fields() -> None:
+    finding_id = "a" * 1_800
+    marker_id = "m" * 1_800
+    segment_id = "s" * 1_800
+    report = {
+        "executive_summary": "e" * 600,
+        "analysis_passes": {"provenance": "p" * 800},
+        "summary": {"text": "t" * 600},
+        "severity_breakdown": {"notes": "b" * 600},
+        "findings": [{"id": finding_id, "text": "A" * 1_000, "timestamp_start": 1.0}],
+        "manual_review": {
+            "markers": [{"marker_id": marker_id, "notes": "M" * 1_000, "timestamp": 2.0}]
+        },
+        "transcript_segments": [{"id": segment_id, "text": "S" * 1_000, "start": 3.0, "end": 4.0}],
+    }
+    original = deepcopy(report)
+
+    seed_text = seed_report_context(report)
+    seed = json.loads(seed_text)
+    assert len(seed_text) <= _SEED_BUDGET_CHARS
+    assert [row["id"] for row in seed["findings"]] == [finding_id]
+    assert [row["id"] for row in seed["manual_markers"]] == [marker_id]
+    assert seed["manual_markers"][0]["marker_id"] == marker_id
+    assert [row["id"] for row in seed["transcript_segments"]] == [segment_id]
+    assert any(
+        row.get("record_truncated")
+        for name in ("findings", "manual_markers", "transcript_segments")
+        for row in seed[name]
+    )
+    assert all(
+        coverage == {"included": 1, "available": 1, "omitted": 0}
+        for coverage in seed["seed_coverage"].values()
+    )
+    tools = ReportToolbelt(report)
+    assert tools.get_finding(seed["findings"][0]["id"])["kind"] == "finding"
+    assert tools.get_finding(seed["manual_markers"][0]["id"])["marker_id"] == marker_id
+    assert report == original
+
+
+def test_seed_omits_oversized_ids_without_starving_later_records() -> None:
+    report = {
+        "findings": [
+            {"id": "a" * 20_000, "text": "Oversized identity"},
+            {"id": 7, "text": "Ordinary AI moment"},
+        ],
+        "manual_review": {
+            "markers": [
+                {"marker_id": "m" * 20_000, "notes": "Oversized identity"},
+                {"marker_id": "manual-ok", "timestamp": 3.0, "notes": "Ordinary manual moment"},
+            ]
+        },
+        "transcript_segments": [
+            {"id": "s" * 20_000, "start": 0.0, "end": 1.0, "text": "Oversized identity"},
+            {"id": "segment-ok", "start": 1.0, "end": 2.0, "text": "Ordinary segment"},
+        ],
+    }
+    original = deepcopy(report)
+
+    seed_text = seed_report_context(report)
+    seed = json.loads(seed_text)
+    assert len(seed_text) <= _SEED_BUDGET_CHARS
+    assert [row["id"] for row in seed["findings"]] == [7]
+    assert [row["id"] for row in seed["manual_markers"]] == ["manual-ok"]
+    assert [row["id"] for row in seed["transcript_segments"]] == ["segment-ok"]
+    for coverage in seed["seed_coverage"].values():
+        assert coverage == {"included": 1, "available": 2, "omitted": 1}
+    assert seed["counts"]["total_count"] == 4
+    tools = ReportToolbelt(report)
+    assert tools.get_finding(7)["kind"] == "finding"
+    assert tools.get_finding("manual-ok")["marker_id"] == "manual-ok"
+    assert report == original
 
 
 def test_responses_round_refuses_a_stream_cut_before_completion(
