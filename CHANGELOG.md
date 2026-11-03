@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## Unreleased
+
+## [0.1.21] - 2026-11-03
 
 - **Security: require a corrected certifi trust store.** Runtime package
   metadata now requires certifi 2026.10.19 or later, including ordinary wheel
@@ -23,6 +25,13 @@
   Tool lists also bound long text and report omitted matches. `show_frame`
   presents the correct manual card, including colliding IDs, only after the
   server resolves its target.
+
+- **Fixed: moment navigation and identity remain reliable across repeated calls.**
+  Returning to a previously shown frame now navigates again. Context seeds
+  preserve complete IDs, reserve compact representatives before enrichment,
+  and report omitted records honestly. Collision aliases remain bound to the
+  same IDs across source reorderings. A final provider response without a
+  usable response ID clears the consumed continuation cursor.
 
 - **Fixed: the agent summarizes its progress when the tool budget is used.**
   After eight tool-execution rounds it gets one final round without tools
