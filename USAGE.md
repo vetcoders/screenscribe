@@ -758,6 +758,10 @@ transcript segments. Corrections and analysis provenance remain in its metadata.
 `seed_coverage` records included, available and omitted counts for each
 collection; the report counts still describe all records. Tools return the
 larger detail view for records omitted or shortened in the seed.
+Actionable IDs and transcript segment references are never shortened. Records
+whose exact identities cannot fit are omitted with coverage counts; later,
+smaller records remain eligible. Compact representatives reserve space for
+each collection before richer display fields are added.
 Canonical manual notes and overrides take precedence; compatibility aliases and
 saved manual-analysis results fill missing fields such as the frame path.
 An explicitly cleared canonical note or transcript stays cleared, including an
@@ -767,6 +771,8 @@ Use the returned `id` with `get_finding`, `view_frame` and `show_frame`. It norm
 the raw `marker_id`; on an ID collision it is qualified with `manual:` until
 unique. The separate `marker_id` continues to identify the persisted marker,
 and existing AI and merged-member IDs are unchanged.
+For the same AI/manual identity sets, reordering source records or their
+compatibility aliases does not change the qualified addresses.
 `show_frame` presents the resolved manual or AI card after the server's
 successful tool result. Timestamp-only requests select the nearest logical
 moment, including manual markers. An unknown explicit ID produces an error;
@@ -877,6 +883,8 @@ or connection failures still produce `error`. This does not increase the
 separate eight-frame inspection budget.
 For Anthropic, finalization keeps the tool definitions needed by earlier
 tool-use history and sets `tool_choice` to `none` to prevent new calls.
+If finalization supplies no response ID, its predecessor is not reused as a
+continuation cursor. A later turn starts from the saved conversation instead.
 The xAI agent uses stateless full history: each round includes trusted
 instructions, the report seed, prior output items and tool results. It sends
 no `previous_response_id` and returns `done.response_id=null`. The ChatGPT
