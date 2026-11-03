@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- **Security: require a corrected certifi trust store.** Runtime package
+  metadata now requires certifi 2026.10.19 or later, including ordinary wheel
+  installs, and the lock uses 2026.10.23. Certifi-backed TLS clients no longer
+  trust the emSign ECC Root CA G3 described by GHSA-6q48-6c7w-9gw2, while
+  certificate and hostname verification remain enabled. Existing installations,
+  custom CA bundles and operating-system trust stores require their own update.
+
 - **Fixed: approved review plans no longer remain actionable.** A successful
   save locks the plan and keeps its approval receipt across reloads. A failed
   save can be retried without applying the operations again. Approvals made
