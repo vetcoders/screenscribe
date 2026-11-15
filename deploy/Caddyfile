@@ -1,0 +1,85 @@
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
+#
+# Screenscribe Cloud edge. Caddy terminates TLS (automatic ACME certificates,
+# HTTP->HTTPS redirect, HTTP/3) and proxies everything to the `web` service,
+# which trusts the X-Forwarded-* headers Caddy sets.
+#
+# Environment (provided by deploy/docker-compose.prod.yml):
+#   SCREENSCRIBE_DOMAIN  public hostname, e.g. cloud.example.com (required)
+#   ACME_EMAIL           ACME account contact (compose supplies a fallback)
+#
+# No Content-Security-Policy here on purpose: the application sets a per-route
+# CSP (portal pages, hosted review player, JSON API). An edge-wide policy would
+# be too loose for the API or break the review player.
+#
+# Access logging stays off (Caddy's default). Hosted review URLs (/r/<share_id>)
+# are capability links and device-flow URLs carry user codes; neither belongs in
+# proxy logs. The application logs requests itself.
+
+{
+	email {$ACME_EMAIL}
+
+	servers {
+		# No read_body and no write timeout: multi-GB uploads, long SSE streams
+		# and video playback are legitimately long-lived. Header reads stay tight.
+		timeouts {
+			read_header 30s
+			idle 5m
+		}
+	}
+}
+
+{$SCREENSCRIBE_DOMAIN} {
+	# Outer body cap. The largest legitimate body is a review publish: source
+	# video (SCREENSCRIBE_CLOUD_MAX_UPLOAD_BYTES, default 2 GiB) plus the review
+	# bundle (SCREENSCRIBE_CLOUD_MAX_BUNDLE_BYTES, default 512 MiB) plus multipart
+	# overhead. The application enforces the exact per-route limits and returns
+	# its own 413; keep this value a little above their sum.
+	request_body {
+		max_size 2600MiB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		# Default only: a stricter per-route policy from the app wins.
+		?Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+		-Via
+	}
+
+	# Compress everything except SSE and video. Caddy's default response
+	# matcher already limits encoding to compressible types (text/*, JSON,
+	# JS, SVG, ...), but text/event-stream is text/* too, and video Range
+	# responses must pass byte-exact. The request matcher keeps both out.
+	@compressible {
+		not path /api/v1/jobs/*/events
+		not path /r/*/api/agent/chat/stream
+		not path /r/*/video /api/v1/reviews/*/video
+		not header Accept *text/event-stream*
+	}
+	encode @compressible zstd gzip
+
+	# Stripe webhooks (/api/v1/billing/stripe/webhook) pass through untouched:
+	# no auth at the edge and no request rewriting, because the app verifies
+	# the Stripe-Signature HMAC over the raw body.
+	reverse_proxy web:8080 {
+		# Flush every write immediately: SSE job progress must not be buffered.
+		flush_interval -1
+
+		# Ride out short web restarts (upgrades) instead of returning 502.
+		lb_try_duration 15s
+		lb_try_interval 250ms
+
+		transport http {
+			dial_timeout 5s
+			# Per-read/per-write idle limits, not total durations: a 2 GiB upload
+			# or an hour of video streams fine as long as bytes keep moving.
+			read_timeout 15m
+			write_timeout 15m
+			# Time from fully sent request (incl. upload body) to response headers.
+			response_header_timeout 10m
+			keepalive 2m
+		}
+	}
+}

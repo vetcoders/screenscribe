@@ -1,0 +1,124 @@
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
+#
+# Screenscribe Cloud production stack:
+#   caddy   public edge: TLS (ACME), HTTP/3, security headers, reverse proxy
+#   web     API, portal and hosted reviews; no published port
+#   worker  durable pipeline worker; no ports at all
+#   init-db one-shot schema create/migrate; web and worker wait for it
+# web, worker and init-db share the screenscribe_data volume (SQLite WAL
+# database + uploads + review files). The worker writes reports that web serves.
+#
+# Run from the repository root (see docs/cloud-deployment.md):
+#   docker compose --env-file .env.cloud -f deploy/docker-compose.prod.yml up -d --build
+#
+# Interpolated variables (${...}) come from the shell or from --env-file:
+#   SCREENSCRIBE_DOMAIN  public hostname without scheme, e.g. cloud.example.com
+#   ACME_EMAIL           ACME account contact; falls back to ops@<domain>
+#   SCREENSCRIBE_IMAGE   image name:tag to build and run (optional)
+
+name: screenscribe-cloud
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  image: "${SCREENSCRIBE_IMAGE:-screenscribe-cloud:local}"
+  # Server-side secrets and settings. ../.env.cloud lives in the repository
+  # root, is covered by the `.env.*` rule in .gitignore and is NEVER committed.
+  env_file: ../.env.cloud
+  restart: unless-stopped
+  security_opt:
+    - "no-new-privileges:true"
+  cap_drop:
+    - ALL
+  logging: *logging
+  volumes:
+    - screenscribe_data:/var/lib/screenscribe/data
+
+services:
+  init-db:
+    <<: *app
+    command: ["init-db"]
+    restart: "no"
+    environment:
+      SCREENSCRIBE_CLOUD_STORAGE_DIR: /var/lib/screenscribe/data
+    healthcheck:
+      disable: true
+
+  web:
+    <<: *app
+    command: ["serve"]
+    # Values here override anything in .env.cloud. The bind is widened to all
+    # interfaces only inside the container network; the port is exposed to
+    # Caddy, never published on the host.
+    environment:
+      SCREENSCRIBE_CLOUD_HOST: "0.0.0.0"
+      SCREENSCRIBE_CLOUD_PORT: "8080"
+      SCREENSCRIBE_CLOUD_BASE_URL: "https://${SCREENSCRIBE_DOMAIN}"
+      SCREENSCRIBE_CLOUD_STORAGE_DIR: /var/lib/screenscribe/data
+      # The dedicated worker service runs the pipeline; never a second one in web.
+      SCREENSCRIBE_CLOUD_EMBEDDED_WORKER: "0"
+      # uvicorn trusts X-Forwarded-* only from these peers. web is reachable
+      # solely on the private compose network, where Caddy is the only client.
+      FORWARDED_ALLOW_IPS: "*"
+    expose:
+      - "8080"
+    stop_grace_period: 30s
+    depends_on:
+      init-db:
+        condition: service_completed_successfully
+    # Health: the image HEALTHCHECK probes http://127.0.0.1:8080/healthz.
+
+  worker:
+    <<: *app
+    command: ["worker"]
+    # Not read_only: ffmpeg/ffprobe need scratch space on the container layer.
+    environment:
+      SCREENSCRIBE_CLOUD_BASE_URL: "https://${SCREENSCRIBE_DOMAIN}"
+      SCREENSCRIBE_CLOUD_STORAGE_DIR: /var/lib/screenscribe/data
+    stop_grace_period: 60s
+    healthcheck:
+      disable: true
+    depends_on:
+      init-db:
+        condition: service_completed_successfully
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # `:?` aborts interpolation of the whole file when the domain is unset,
+      # which also guards the base URL on web and worker.
+      SCREENSCRIBE_DOMAIN: "${SCREENSCRIBE_DOMAIN:?set SCREENSCRIBE_DOMAIN to the public hostname}"
+      # Caddy rejects an empty `email` option, so an unset ACME_EMAIL falls
+      # back to ops@<domain>. Set a monitored mailbox in .env.cloud.
+      ACME_EMAIL: "${ACME_EMAIL:-ops@${SCREENSCRIBE_DOMAIN}}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    logging: *logging
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  screenscribe_data:
+  caddy_data:
+  caddy_config:
