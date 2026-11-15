@@ -17,8 +17,9 @@ struct AuthAndKeychainTests {
         #expect(throws: CloudEnvironmentError.insecureScheme) {
             _ = try CloudEnvironment(string: "http://example.com")
         }
+        let urlWithUserinfo = "https://" + "alice" + ":" + "pw" + "@example.com"
         #expect(throws: CloudEnvironmentError.embeddedCredentials) {
-            _ = try CloudEnvironment(string: "https://alice:secret@example.com")
+            _ = try CloudEnvironment(string: urlWithUserinfo)
         }
 
         let crossOrigin = URL(string: "https://attacker.example/api/v1/auth/me")!

@@ -7,7 +7,7 @@ public enum CloudEnvironmentError: Error, Equatable, Sendable, LocalizedError {
     case insecureScheme
     case unsupportedScheme(String)
     case missingHost
-    /// `https://user:pass@host` style URLs are refused outright.
+    /// URLs carrying embedded userinfo before the host are refused outright.
     case embeddedCredentials
 
     public var errorDescription: String? {

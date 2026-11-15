@@ -12,14 +12,14 @@ struct QueueAndCaptureTests {
         let store = UploadQueueStore(rootDirectory: root)
         try await store.prepare()
 
-        let recA = await store.recordingsDirectory.appendingPathComponent("recA.mp4")
-        let recB = await store.recordingsDirectory.appendingPathComponent("recB.mp4")
-        let orphan = await store.recordingsDirectory.appendingPathComponent("orphan_crash.mp4")
+        let recA = store.recordingsDirectory.appendingPathComponent("recA.mp4")
+        let recB = store.recordingsDirectory.appendingPathComponent("recB.mp4")
+        let orphan = store.recordingsDirectory.appendingPathComponent("orphan_crash.mp4")
         try Data("a".utf8).write(to: recA)
         try Data("b".utf8).write(to: recB)
         try Data("c".utf8).write(to: orphan)
 
-        let scratchLeftover = await store.scratchDirectory.appendingPathComponent("stale.multipart")
+        let scratchLeftover = store.scratchDirectory.appendingPathComponent("stale.multipart")
         try Data("stale".utf8).write(to: scratchLeftover)
 
         var itemUploadingNoJob = UploadQueueItem(
