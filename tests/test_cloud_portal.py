@@ -8,7 +8,8 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from screenscribe.cloud.__main__ import build_parser, main as cloud_main, run_init_db
+from screenscribe.cloud.__main__ import build_parser, run_init_db
+from screenscribe.cloud.__main__ import main as cloud_main
 from screenscribe.cloud.app import create_cloud_app
 from screenscribe.cloud.config import CloudSettings
 from screenscribe.cloud.portal import SIGNATURE
@@ -74,7 +75,13 @@ def test_portal_bilingual_negotiation_csp_zero_byok_and_health(tmp_path: Path) -
         assert form_reg.status_code == 303
 
         for lang in ("pl", "en"):
-            for route in ("/dashboard", "/upload", "/billing", "/account", "/activate?user_code=ABCD-EFGH"):
+            for route in (
+                "/dashboard",
+                "/upload",
+                "/billing",
+                "/account",
+                "/activate?user_code=ABCD-EFGH",
+            ):
                 sep = "&" if "?" in route else "?"
                 resp = client.get(f"{route}{sep}lang={lang}")
                 assert resp.status_code == 200

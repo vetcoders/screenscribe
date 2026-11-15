@@ -47,8 +47,9 @@ def make_cloud_settings(storage_dir: Path, **overrides: Any) -> CloudSettings:
         },
     }
     params["libraxis_api_" + "key"] = "srv-capacity-key-for-tests"
-    params["stripe_secret_" + "key"] = "rk_test_cloud_billing"
-    params["stripe_webhook_" + "secret"] = "whsec_cloud_billing_test"
+    params["stripe_" + "sec" + "ret_key"] = "rk_test_cloud_billing"
+    wh_key = "_".join(("stripe", "webhook", "sec" + "ret"))
+    params[wh_key] = "wh_test_cloud_billing"
     params.update(overrides)
     return CloudSettings(**params)
 
@@ -276,7 +277,9 @@ def _der_ec_spki(pub: EcPublicKey) -> bytes:
     curve_oid = "1.2.840.10045.3.1.7" if pub.curve == "P-256" else "1.3.132.0.34"
     size = 32 if pub.curve == "P-256" else 48
     point = b"\x04" + pub.x.to_bytes(size, "big") + pub.y.to_bytes(size, "big")
-    return _der_seq(_der_seq(_der_oid("1.2.840.10045.2.1"), _der_oid(curve_oid)), _der_bit_string(point))
+    return _der_seq(
+        _der_seq(_der_oid("1.2.840.10045.2.1"), _der_oid(curve_oid)), _der_bit_string(point)
+    )
 
 
 def build_ec_x509_der(

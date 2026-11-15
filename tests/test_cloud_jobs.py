@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from screenscribe.cloud.app import create_cloud_app
 from screenscribe.cloud.db import JobRecord
+from screenscribe.cloud.security import isoformat_z
 from screenscribe.cloud.worker import (
     JobContext,
     JobWorker,
@@ -43,8 +44,8 @@ def _seed_paid_user(client: TestClient, app: Any, email: str = "jobs@example.com
         status="active",
         minutes_limit=300.0,
         now=now,
-        period_start="2026-06-01T00:00:00Z",
-        period_end="2026-07-01T00:00:00Z",
+        period_start=isoformat_z(now - timedelta(days=1)),
+        period_end=isoformat_z(now + timedelta(days=30)),
     )
     return str(reg["access_token"])
 
@@ -282,16 +283,18 @@ def test_extract_job_audio_dual_track_amix_and_run_pipeline_stages(
         ),
     )
 
-    def fake_shots(
-        _video: Path, detections: list[Any], shots_dir: Path
-    ) -> list[tuple[Any, Path]]:
+    def fake_shots(_video: Path, detections: list[Any], shots_dir: Path) -> list[tuple[Any, Path]]:
         shots_dir.mkdir(parents=True, exist_ok=True)
         shot = shots_dir / "001.jpg"
-        shot.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9")
+        shot.write_bytes(
+            b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
+        )
         return [(detections[0], shot)]
 
     monkeypatch.setattr("screenscribe.screenshots.extract_screenshots_for_detections", fake_shots)
-    monkeypatch.setattr("screenscribe.unified_analysis.analyze_all_findings_unified", lambda *_a, **_kw: [])
+    monkeypatch.setattr(
+        "screenscribe.unified_analysis.analyze_all_findings_unified", lambda *_a, **_kw: []
+    )
     monkeypatch.setattr(
         "screenscribe.summary_fallback.generate_detection_executive_summary",
         lambda *_a, **_kw: "One UI overlap detected.",

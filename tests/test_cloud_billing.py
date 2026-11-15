@@ -173,9 +173,7 @@ def test_stripe_checkout_portal_and_signed_webhooks_with_replay_and_dedup(tmp_pa
                 },
             )
         if request.url.path == "/v1/billing_portal/sessions":
-            return httpx.Response(
-                200, json={"url": "https://billing.stripe.com/p/session/bps_123"}
-            )
+            return httpx.Response(200, json={"url": "https://billing.stripe.com/p/session/bps_123"})
         if request.url.path.startswith("/v1/subscriptions/"):
             return httpx.Response(
                 200,
