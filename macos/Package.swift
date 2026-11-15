@@ -32,5 +32,10 @@ let package = Package(
             dependencies: ["ScreenscribeCore"],
             path: "Sources/ScreenscribeApp"
         ),
+        .testTarget(
+            name: "ScreenscribeTests",
+            dependencies: ["ScreenscribeCore"],
+            path: "Tests/ScreenscribeTests"
+        ),
     ]
 )
