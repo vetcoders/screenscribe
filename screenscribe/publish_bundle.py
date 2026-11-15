@@ -181,7 +181,9 @@ def _package_version() -> str | None:
     try:
         return version("screenscribe")
     except PackageNotFoundError:
-        return None
+        from . import __version__
+
+        return __version__
 
 
 def video_content_type(path: Path) -> str:
@@ -869,7 +871,7 @@ def build_publish_bundle(source: ReviewSource, *, visibility: str) -> PublishBun
         "visibility": visibility,
         "video_stem": stem,
         "video_filename": video_filename,
-        "video_name": video_filename,
+        "video_name": video_filename or f"{stem}.mp4",
         "video_included": video is not None,
         "video_sha256": video.sha256 if video is not None else None,
         "video_size_bytes": video.size_bytes if video is not None else None,

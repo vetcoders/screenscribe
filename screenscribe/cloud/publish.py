@@ -27,7 +27,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .auth import CloudServices, CurrentAuth, get_services
 from .billing import require_active_subscription
@@ -74,17 +74,21 @@ class PublishManifest(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     schema_name: str | None = Field(default=None, alias="schema", max_length=64)
-    video_name: str = Field(..., min_length=1, max_length=255)
-    video_sha256: str = Field(..., min_length=64, max_length=64)
-    video_size_bytes: int = Field(..., ge=0)
-    duration_seconds: float = Field(..., ge=0)
-    language: str = Field(..., min_length=1, max_length=16)
-    generated_at: str = Field(..., min_length=1, max_length=64)
-    screenscribe_version: str = Field(..., min_length=1, max_length=64)
+    schema_version: str | None = Field(default=None, max_length=64)
+    video_name: str | None = Field(default=None, max_length=255)
+    video_filename: str | None = Field(default=None, max_length=255)
+    video_stem: str | None = Field(default=None, max_length=255)
+    video_included: bool | None = None
+    video_sha256: str | None = Field(default=None, min_length=64, max_length=64)
+    video_size_bytes: int | None = Field(default=None, ge=0)
+    duration_seconds: float = Field(default=0.0, ge=0)
+    language: str = Field(default="en", min_length=1, max_length=16)
+    generated_at: str | None = Field(default=None, max_length=64)
+    screenscribe_version: str | None = Field(default=None, max_length=64)
     visibility: str = Field(default="private", max_length=16)
     title: str | None = Field(default=None, max_length=200)
 
-    @field_validator("schema_name")
+    @field_validator("schema_name", "schema_version")
     @classmethod
     def _schema(cls, value: str | None) -> str | None:
         if value is not None and value != PUBLISH_MANIFEST_SCHEMA:
@@ -93,11 +97,18 @@ class PublishManifest(BaseModel):
 
     @field_validator("video_sha256")
     @classmethod
-    def _sha(cls, value: str) -> str:
+    def _sha(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         lowered = value.strip().lower()
         if len(lowered) != 64 or any(ch not in "0123456789abcdef" for ch in lowered):
             raise ValueError("video_sha256 must be 64 hex characters")
         return lowered
+
+    @field_validator("duration_seconds", mode="before")
+    @classmethod
+    def _coerce_duration(cls, value: object) -> object:
+        return 0.0 if value is None else value
 
     @field_validator("duration_seconds")
     @classmethod
@@ -114,17 +125,49 @@ class PublishManifest(BaseModel):
             raise ValueError("visibility must be private, unlisted, or team")
         return lowered
 
+    @field_validator("language", mode="before")
+    @classmethod
+    def _coerce_language(cls, value: object) -> object:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return "en"
+        return value
+
     @field_validator("language")
     @classmethod
     def _language(cls, value: str) -> str:
         return value.strip().lower()
 
+    @model_validator(mode="after")
+    def _check_video_identity(self) -> PublishManifest:
+        has_name = any(
+            item is not None and item.strip()
+            for item in (self.video_name, self.video_filename, self.video_stem)
+        )
+        if not has_name:
+            raise ValueError("manifest must specify video_name, video_filename, or video_stem")
+        if self.video_included is True and (
+            self.video_sha256 is None or self.video_size_bytes is None
+        ):
+            raise ValueError("video_sha256 and video_size_bytes are required when video_included is true")
+        return self
+
     @property
     def safe_video_name(self) -> str:
-        return safe_filename(Path(self.video_name).name, "video.mp4")
+        raw = (
+            (self.video_name or "").strip()
+            or (self.video_filename or "").strip()
+            or (
+                f"{self.video_stem.strip()}.mp4"
+                if self.video_stem and self.video_stem.strip()
+                else ""
+            )
+        )
+        return safe_filename(Path(raw).name, "video.mp4")
 
     @property
     def stem(self) -> str:
+        if self.video_stem and self.video_stem.strip():
+            return safe_filename(self.video_stem.strip(), Path(self.safe_video_name).stem)
         return Path(self.safe_video_name).stem
 
 
@@ -523,21 +566,24 @@ def materialize_publish(
     video_target: Path | None = None
     upload = form.files.get("video")
     if upload is not None and upload.size > 0:
-        if upload.size != manifest.video_size_bytes:
+        if manifest.video_size_bytes is None or upload.size != manifest.video_size_bytes:
             raise HTTPException(status_code=422, detail="Video size does not match the manifest.")
-        if sha256_file(upload.path) != manifest.video_sha256:
+        if not manifest.video_sha256 or sha256_file(upload.path) != manifest.video_sha256:
             raise HTTPException(status_code=422, detail="Video checksum does not match the manifest.")
         source_dir = report_root / SOURCE_VIDEO_DIRNAME
         source_dir.mkdir(parents=True, exist_ok=True)
         video_target = source_dir / video_name
         upload.path.replace(video_target)
-    else:
+    elif manifest.video_included is not False:
         bundled = report_root / video_name
         if (
             bundled.is_file()
             and not bundled.is_symlink()
             and bundled.suffix.lower() in _VIDEO_SUFFIXES
-            and bundled.stat().st_size == manifest.video_size_bytes
+            and (
+                manifest.video_size_bytes is None
+                or bundled.stat().st_size == manifest.video_size_bytes
+            )
         ):
             video_target = bundled
 

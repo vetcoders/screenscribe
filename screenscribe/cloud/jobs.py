@@ -269,14 +269,20 @@ def accepted_body(job: JobRecord) -> dict[str, Any]:
 
 def job_status_body(services: CloudServices, job: JobRecord) -> dict[str, Any]:
     share_id = job.share_id
+    settings = services.settings
     return {
         "job_id": job.job_id,
         "status": job.status,
         "stage": job.stage,
         "progress_pct": job.progress_pct,
+        "review_id": job.review_id,
         "share_id": share_id,
-        "share_url": services.settings.url(f"/r/{share_id}") if share_id else None,
-        "report_json_url": f"/api/v1/reviews/{share_id}/report.json" if share_id else None,
+        "share_url": settings.url(f"/r/{share_id}") if share_id else None,
+        "video_stream_url": settings.url(f"/r/{share_id}/video") if share_id else None,
+        "agent_manifest_url": (
+            settings.url(f"/r/{share_id}/api/export/agent-manifest") if share_id else None
+        ),
+        "report_json_url": settings.url(f"/api/v1/reviews/{share_id}/report.json") if share_id else None,
         "error": job.error_message,
     }
 
