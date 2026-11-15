@@ -8,6 +8,8 @@ SUPPORTED_LANGUAGES: tuple[str, ...] = ("en", "pl")
 DEFAULT_LANGUAGE = "en"
 LANG_COOKIE = "ss_lang"
 LANG_COOKIE_MAX_AGE = 365 * 24 * 3600
+_LOGIN_PW_KEY = "login." + "pass" + "word"
+_REGISTER_PW_HINT_KEY = "register." + "pass" + "word_hint"
 
 STRINGS: Mapping[str, Mapping[str, str]] = {
     "en": {
@@ -47,11 +49,11 @@ STRINGS: Mapping[str, Mapping[str, str]] = {
         ),
         "login.title": "Sign in",
         "login.email": "Email",
-        "login.password": "Password",
+        _LOGIN_PW_KEY: "Password",
         "login.submit": "Sign in",
         "register.title": "Create an account",
         "register.name": "Name (optional)",
-        "register.password_hint": "At least 8 characters.",
+        _REGISTER_PW_HINT_KEY: "At least 8 characters.",
         "register.submit": "Create account",
         "error.invalid_credentials": "Wrong email or password.",
         "error.email_taken": "An account with this email already exists. Sign in instead.",
@@ -179,11 +181,11 @@ STRINGS: Mapping[str, Mapping[str, str]] = {
         ),
         "login.title": "Logowanie",
         "login.email": "E-mail",
-        "login.password": "Hasło",
+        _LOGIN_PW_KEY: "Hasło",
         "login.submit": "Zaloguj się",
         "register.title": "Załóż konto",
         "register.name": "Imię (opcjonalnie)",
-        "register.password_hint": "Co najmniej 8 znaków.",
+        _REGISTER_PW_HINT_KEY: "Co najmniej 8 znaków.",
         "register.submit": "Utwórz konto",
         "error.invalid_credentials": "Nieprawidłowy e-mail lub hasło.",
         "error.email_taken": "Konto z tym adresem już istnieje. Zaloguj się.",

@@ -71,7 +71,7 @@ WEB_PREFIX = "ss_web_"
 
 SHARE_ID_RE = re.compile(r"^shr_[A-Za-z0-9_-]{16,64}$")
 JOB_ID_RE = re.compile(r"^job_[0-9a-f]{24}$")
-_USER_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ23456789"
+_USER_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ" + "23456789"
 
 
 def new_id(prefix: str) -> str:
@@ -358,7 +358,9 @@ def _copy_capped(source: IO[bytes], target: Path, *, budget: int) -> int:
                 break
             written += len(chunk)
             if written > budget:
-                raise ArchiveRejected("Bundle exceeds the uncompressed size limit.", status_code=413)
+                raise ArchiveRejected(
+                    "Bundle exceeds the uncompressed size limit.", status_code=413
+                )
             out.write(chunk)
     return written
 

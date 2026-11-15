@@ -170,7 +170,9 @@ async def stream_multipart(
                 current.header_value.extend(payload)
             elif kind == "hend":
                 key = current.header_name.decode("latin-1").strip().lower()
-                current.headers[key] = current.header_value.decode("utf-8", errors="replace").strip()
+                current.headers[key] = current.header_value.decode(
+                    "utf-8", errors="replace"
+                ).strip()
                 current.header_name.clear()
                 current.header_value.clear()
             elif kind == "hdone":
@@ -180,7 +182,9 @@ async def stream_multipart(
                 current.name = options.get(b"name", b"").decode("utf-8", errors="replace")
                 raw_filename = options.get(b"filename")
                 current.filename = (
-                    raw_filename.decode("utf-8", errors="replace") if raw_filename is not None else None
+                    raw_filename.decode("utf-8", errors="replace")
+                    if raw_filename is not None
+                    else None
                 )
                 current.content_type = current.headers.get("content-type", "")
                 if current.filename is not None and current.name in file_limits:
@@ -213,7 +217,9 @@ async def stream_multipart(
                 try:
                     parser.write(chunk[offset : offset + CHUNK_BYTES])
                 except FormParserError as exc:
-                    raise HTTPException(status_code=400, detail="Malformed multipart body.") from exc
+                    raise HTTPException(
+                        status_code=400, detail="Malformed multipart body."
+                    ) from exc
                 drain()
         try:
             parser.finalize()
@@ -282,7 +288,9 @@ def job_status_body(services: CloudServices, job: JobRecord) -> dict[str, Any]:
         "agent_manifest_url": (
             settings.url(f"/r/{share_id}/api/export/agent-manifest") if share_id else None
         ),
-        "report_json_url": settings.url(f"/api/v1/reviews/{share_id}/report.json") if share_id else None,
+        "report_json_url": settings.url(f"/api/v1/reviews/{share_id}/report.json")
+        if share_id
+        else None,
         "error": job.error_message,
     }
 
@@ -351,7 +359,7 @@ def build_jobs_router() -> APIRouter:
             form = await stream_multipart(
                 request,
                 upload_dir,
-                file_limits={name: settings.max_upload_bytes for name in VIDEO_FIELDS},
+                file_limits=dict.fromkeys(VIDEO_FIELDS, settings.max_upload_bytes),
                 max_body_bytes=settings.max_upload_bytes + MULTIPART_OVERHEAD_BYTES,
             )
             streamed = next((form.files[name] for name in VIDEO_FIELDS if name in form.files), None)

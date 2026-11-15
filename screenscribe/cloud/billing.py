@@ -170,7 +170,9 @@ async def ensure_stripe_customer(services: CloudServices, user: UserRecord) -> s
     customer_id = str(customer.get("id") or "")
     if not customer_id:
         raise StripeUnavailable("customer without id")
-    await run_in_threadpool(services.store.set_stripe_customer, user.user_id, customer_id, services.now())
+    await run_in_threadpool(
+        services.store.set_stripe_customer, user.user_id, customer_id, services.now()
+    )
     return customer_id
 
 
@@ -311,9 +313,10 @@ async def handle_stripe_event(services: CloudServices, event: dict[str, Any]) ->
             return
         if not subscription.get("customer"):
             subscription = {**subscription, "customer": obj.get("customer")}
+        sub_payload: dict[str, Any] = subscription
         await run_in_threadpool(
             lambda: apply_stripe_subscription(
-                services, cast(dict[str, Any], subscription), user_hint=user_hint, plan_hint=plan_hint
+                services, sub_payload, user_hint=user_hint, plan_hint=plan_hint
             )
         )
     elif event_type in {"customer.subscription.created", "customer.subscription.updated"}:
@@ -323,9 +326,10 @@ async def handle_stripe_event(services: CloudServices, event: dict[str, Any]) ->
             services.store.find_subscription_by_external_id, str(obj.get("id") or "")
         )
         if record is not None:
+            deleted_uid = record.user_id
             await run_in_threadpool(
                 lambda: services.store.set_subscription_state(
-                    record.user_id, active=False, status="canceled", now=services.now()
+                    deleted_uid, active=False, status="canceled", now=services.now()
                 )
             )
     elif event_type == "invoice.payment_failed":
@@ -333,9 +337,10 @@ async def handle_stripe_event(services: CloudServices, event: dict[str, Any]) ->
             services.store.find_subscription_by_external_id, _invoice_subscription_id(obj)
         )
         if record is not None:
+            failed_uid = record.user_id
             await run_in_threadpool(
                 lambda: services.store.set_subscription_state(
-                    record.user_id, active=False, status="past_due", now=services.now()
+                    failed_uid, active=False, status="past_due", now=services.now()
                 )
             )
 
@@ -381,7 +386,10 @@ def sync_app_store(
     )
     if not original_tx:
         raise HTTPException(status_code=400, detail="Transaction has no identifier.")
-    if renewal is not None and str(renewal.get("originalTransactionId") or "") not in ("", original_tx):
+    if renewal is not None and str(renewal.get("originalTransactionId") or "") not in (
+        "",
+        original_tx,
+    ):
         raise HTTPException(status_code=400, detail="Renewal info does not match the transaction.")
     product_id = str(transaction.get("productId") or "")
     plan = settings.appstore_products.get(product_id)

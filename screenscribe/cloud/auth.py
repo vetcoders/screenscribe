@@ -99,7 +99,9 @@ class CloudServices:
 
     def http_client(self) -> httpx.AsyncClient:
         """Outbound client with a finite timeout (Stripe, Apple)."""
-        return httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0), transport=self.http_transport)
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0, connect=5.0), transport=self.http_transport
+        )
 
 
 def get_services(request: Request) -> CloudServices:
@@ -296,7 +298,9 @@ def token_body(tokens: IssuedTokens, user: UserRecord | None = None) -> dict[str
     return body
 
 
-def issue_bundle(services: CloudServices, user: UserRecord, transport: str = "bearer") -> IssuedTokens:
+def issue_bundle(
+    services: CloudServices, user: UserRecord, transport: str = "bearer"
+) -> IssuedTokens:
     tokens = mint_tokens(services.settings, services.now(), transport)
     services.store.issue_token_pair(user.user_id, tokens.rows, services.now())
     return tokens
@@ -381,7 +385,9 @@ def register_account(services: CloudServices, payload: RegisterRequest) -> UserR
         email=email,
         password_hash=hash_password(payload.password),
         display_name=(payload.display_name or "").strip(),
-        preferred_lang=_preferred_lang(payload.preferred_lang, services.settings.default_ui_language),
+        preferred_lang=_preferred_lang(
+            payload.preferred_lang, services.settings.default_ui_language
+        ),
         now=services.now(),
     )
 
@@ -515,7 +521,9 @@ def _remove_child_dir(root: Path, leaf: str) -> None:
         shutil.rmtree(candidate, ignore_errors=True)
 
 
-def purge_account_storage(services: CloudServices, share_ids: list[str], job_ids: list[str]) -> None:
+def purge_account_storage(
+    services: CloudServices, share_ids: list[str], job_ids: list[str]
+) -> None:
     for share_id in share_ids:
         _remove_child_dir(services.settings.reviews_dir, share_id)
     for job_id in job_ids:
@@ -549,7 +557,9 @@ def build_auth_router() -> APIRouter:
         if user is None:
             if form:
                 return _login_redirect(next_path, "email_taken")
-            raise HTTPException(status_code=409, detail="An account with this email already exists.")
+            raise HTTPException(
+                status_code=409, detail="An account with this email already exists."
+            )
         tokens = await run_in_threadpool(issue_bundle, services, user)
         response: Response
         if form:
@@ -599,7 +609,9 @@ def build_auth_router() -> APIRouter:
         if ctx is not None:
             if ctx.via_cookie:
                 await enforce_csrf(request)
-            await run_in_threadpool(services.store.revoke_session, ctx.credential_hash, services.now())
+            await run_in_threadpool(
+                services.store.revoke_session, ctx.credential_hash, services.now()
+            )
         response: Response
         if is_form_post(request):
             response = RedirectResponse(url="/", status_code=303)
@@ -630,7 +642,9 @@ def build_auth_router() -> APIRouter:
             raise HTTPException(status_code=401, detail="Invalid Apple identity token.") from exc
         except httpx.HTTPError as exc:
             logger.warning("Apple JWKS unavailable: %s", type(exc).__name__)
-            raise HTTPException(status_code=503, detail="Apple sign-in is temporarily unavailable.") from exc
+            raise HTTPException(
+                status_code=503, detail="Apple sign-in is temporarily unavailable."
+            ) from exc
         user = await run_in_threadpool(
             apple_upsert, services, claims, payload.email, (payload.display_name or "").strip()
         )
@@ -675,7 +689,10 @@ def build_auth_router() -> APIRouter:
             return _oauth_error("invalid_request")
         tokens = mint_tokens(services.settings, services.now(), "bearer")
         outcome: RefreshOutcome = await run_in_threadpool(
-            services.store.rotate_refresh_token, credential_hash(presented), tokens.rows, services.now()
+            services.store.rotate_refresh_token,
+            credential_hash(presented),
+            tokens.rows,
+            services.now(),
         )
         if outcome.status != "ok":
             if outcome.status == "reused":

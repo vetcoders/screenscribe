@@ -18,12 +18,33 @@ from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from .auth import AuthContext, CloudServices, enforce_csrf, get_services, me_body, read_form_or_json, resolve_auth
-from .i18n import LANG_COOKIE, LANG_COOKIE_MAX_AGE, SUPPORTED_LANGUAGES, negotiate_language, normalize_language, translate
+from .auth import (
+    AuthContext,
+    CloudServices,
+    enforce_csrf,
+    get_services,
+    me_body,
+    read_form_or_json,
+    resolve_auth,
+)
+from .i18n import (
+    LANG_COOKIE,
+    LANG_COOKIE_MAX_AGE,
+    SUPPORTED_LANGUAGES,
+    negotiate_language,
+    normalize_language,
+    translate,
+)
 from .jobs import job_status_body
 from .publish import review_summary
 from .schemas import JOB_PRESETS
-from .security import CSRF_COOKIE, CSRF_FORM_FIELD, new_csrf_value, normalize_user_code, safe_next_path
+from .security import (
+    CSRF_COOKIE,
+    CSRF_FORM_FIELD,
+    new_csrf_value,
+    normalize_user_code,
+    safe_next_path,
+)
 
 PORTAL_CSP = "; ".join(
     (
@@ -194,11 +215,11 @@ def _minutes(value: Any) -> str:
 def home_body(page: Page) -> str:
     settings = page.services.settings
     steps = "".join(
-        f'<li><h3>{page.t(f"home.step{i}.title")}</h3><p>{page.t(f"home.step{i}.body")}</p></li>'
+        f"<li><h3>{page.t(f'home.step{i}.title')}</h3><p>{page.t(f'home.step{i}.body')}</p></li>"
         for i in (1, 2, 3)
     )
     plans = "".join(
-        f'<li><strong>{_e(plan.title())}</strong><span>{page.t("home.plan.minutes", minutes=_minutes(minutes))}</span></li>'
+        f"<li><strong>{_e(plan.title())}</strong><span>{page.t('home.plan.minutes', minutes=_minutes(minutes))}</span></li>"
         for plan, minutes in settings.plan_minutes.items()
         if minutes > 0
     )
@@ -239,7 +260,7 @@ def login_body(page: Page) -> str:
         f'<label>{page.t("register.name")}<input type="text" name="display_name" autocomplete="name" maxlength="120"></label>'
         f'<label>{page.t("login.email")}<input type="email" name="email" autocomplete="email" required></label>'
         f'<label>{page.t("login.password")}<input type="password" name="password" autocomplete="new-password" minlength="8" required>'
-        f'<small>{page.t("register.password_hint")}</small></label>'
+        f"<small>{page.t('register.password_hint')}</small></label>"
         f'<button type="submit">{page.t("register.submit")}</button></form></section></div>'
     )
 
@@ -248,14 +269,17 @@ def subscription_card(page: Page, subscription: dict[str, Any]) -> str:
     if not subscription.get("active"):
         return (
             f'<section class="card"><h2>{page.t("dashboard.subscription")}</h2>'
-            f'<p>{page.t("dashboard.inactive")}</p>'
+            f"<p>{page.t('dashboard.inactive')}</p>"
             f'<p><a class="button" href="/billing">{page.t("billing.choose")}</a></p></section>'
         )
     rows = (
         ("dashboard.plan", _e(str(subscription.get("plan", "")).title())),
         ("dashboard.source", _e(str(subscription.get("source", "")).replace("_", " "))),
         ("dashboard.renews", _time(subscription.get("period_end"))),
-        ("dashboard.minutes", f'{_minutes(subscription.get("minutes_used"))} / {_minutes(subscription.get("minutes_limit"))}'),
+        (
+            "dashboard.minutes",
+            f"{_minutes(subscription.get('minutes_used'))} / {_minutes(subscription.get('minutes_limit'))}",
+        ),
         ("dashboard.remaining", _minutes(subscription.get("minutes_remaining"))),
     )
     cells = "".join(f"<dt>{page.t(key)}</dt><dd>{value}</dd>" for key, value in rows)
@@ -281,8 +305,8 @@ def jobs_table(page: Page, jobs: list[dict[str, Any]]) -> str:
             f"<td>{_e(job.get('progress_pct', 0))}%</td><td>{outcome}</td></tr>"
         )
     return (
-        f'<table><thead><tr><th>{page.t("col.created")}</th><th>{page.t("col.status")}</th>'
-        f'<th>{page.t("col.progress")}</th><th>{page.t("col.actions")}</th></tr></thead>'
+        f"<table><thead><tr><th>{page.t('col.created')}</th><th>{page.t('col.status')}</th>"
+        f"<th>{page.t('col.progress')}</th><th>{page.t('col.actions')}</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
     )
 
@@ -301,8 +325,8 @@ def reviews_table(page: Page, reviews: list[dict[str, Any]]) -> str:
             f'data-confirm="{page.t("dashboard.delete.confirm")}">{page.t("dashboard.delete")}</button></td></tr>'
         )
     return (
-        f'<table><thead><tr><th>{page.t("col.title")}</th><th>{page.t("col.visibility")}</th>'
-        f'<th>{page.t("col.created")}</th><th>{page.t("col.actions")}</th></tr></thead>'
+        f"<table><thead><tr><th>{page.t('col.title')}</th><th>{page.t('col.visibility')}</th>"
+        f"<th>{page.t('col.created')}</th><th>{page.t('col.actions')}</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
     )
 
@@ -311,15 +335,21 @@ def dashboard_data(services: CloudServices, auth: AuthContext) -> dict[str, Any]
     user = auth.user
     return {
         "me": me_body(services, user),
-        "jobs": [job_status_body(services, job) | {"created_at": job.created_at} for job in services.store.list_jobs(user.user_id, limit=20)],
-        "reviews": [review_summary(services, record) for record in services.store.list_reviews(user.user_id, limit=50)],
+        "jobs": [
+            job_status_body(services, job) | {"created_at": job.created_at}
+            for job in services.store.list_jobs(user.user_id, limit=20)
+        ],
+        "reviews": [
+            review_summary(services, record)
+            for record in services.store.list_reviews(user.user_id, limit=50)
+        ],
     }
 
 
 def dashboard_body(page: Page, data: dict[str, Any]) -> str:
     return (
-        f'<h1>{page.t("dashboard.title")}</h1>'
-        f'{subscription_card(page, data["me"]["subscription"])}'
+        f"<h1>{page.t('dashboard.title')}</h1>"
+        f"{subscription_card(page, data['me']['subscription'])}"
         f'<section class="card"><h2>{page.t("dashboard.jobs")}</h2>{jobs_table(page, data["jobs"])}'
         f'<p><a class="button" href="/upload">{page.t("nav.upload")}</a></p></section>'
         f'<section class="card"><h2>{page.t("dashboard.reviews")}</h2>{reviews_table(page, data["reviews"])}</section>'
@@ -345,16 +375,16 @@ def upload_body(page: Page, subscription: dict[str, Any]) -> str:
         for name in ("uploading", "queued", "done", "failed", "needs_plan", "too_large", "error")
     )
     return (
-        f'<h1>{page.t("upload.title")}</h1>{notice}'
+        f"<h1>{page.t('upload.title')}</h1>{notice}"
         f'<form id="upload-form" class="card" {messages} data-billing-url="/billing" '
         f'data-billing-label="{page.t("billing.choose")}" data-open-label="{page.t("dashboard.open")}">'
         f'<label>{page.t("upload.file")}<input type="file" name="file" accept="video/*" required></label>'
         f'<label>{page.t("upload.language")}<select name="language">'
-        f'{_options(page, "upload.language", ("auto", "en", "pl"), "auto")}</select></label>'
+        f"{_options(page, 'upload.language', ('auto', 'en', 'pl'), 'auto')}</select></label>"
         f'<label>{page.t("upload.preset")}<select name="preset">'
-        f'{_options(page, "upload.preset", JOB_PRESETS, "programming")}</select></label>'
+        f"{_options(page, 'upload.preset', JOB_PRESETS, 'programming')}</select></label>"
         f'<label>{page.t("upload.visibility")}<select name="visibility">'
-        f'{_options(page, "visibility", ("private", "unlisted", "team"), "private")}</select></label>'
+        f"{_options(page, 'visibility', ('private', 'unlisted', 'team'), 'private')}</select></label>"
         f'<label>{page.t("upload.prompt")}<textarea name="prompt" rows="3" maxlength="4000"></textarea></label>'
         f'<button type="submit">{page.t("upload.submit")}</button>'
         '<progress id="upload-progress" max="100" value="0" hidden></progress>'
@@ -374,11 +404,11 @@ def billing_body(page: Page, auth: AuthContext, subscription: dict[str, Any]) ->
     source = str(subscription.get("source") or "none")
     if subscription.get("active"):
         current = (
-            f'<p>{page.t("billing.current")}: <strong>{_e(str(subscription.get("plan", "")).title())}</strong>'
-            f' | {page.t("dashboard.renews")}: {_time(subscription.get("period_end"))}</p>'
+            f"<p>{page.t('billing.current')}: <strong>{_e(str(subscription.get('plan', '')).title())}</strong>"
+            f" | {page.t('dashboard.renews')}: {_time(subscription.get('period_end'))}</p>"
         )
     else:
-        current = f'<p>{page.t("billing.none")}</p>'
+        current = f"<p>{page.t('billing.none')}</p>"
     if source == "app_store":
         current += f'<p class="muted">{page.t("billing.appstore")}</p>'
     actions = ""
@@ -389,15 +419,15 @@ def billing_body(page: Page, auth: AuthContext, subscription: dict[str, Any]) ->
             actions += f'<p><button type="button" data-billing-portal="1">{page.t("billing.manage")}</button></p>'
         if not subscription.get("active") or source == "stripe":
             plans = "".join(
-                f'<li><strong>{_e(plan.title())}</strong>'
-                f'<span>{page.t("home.plan.minutes", minutes=_minutes(settings.minutes_for_plan(plan)))}</span>'
+                f"<li><strong>{_e(plan.title())}</strong>"
+                f"<span>{page.t('home.plan.minutes', minutes=_minutes(settings.minutes_for_plan(plan)))}</span>"
                 f'<button type="button" data-checkout-plan="{_e(plan)}">{page.t("billing.subscribe")}</button></li>'
                 for plan in settings.stripe_prices
             )
             if plans:
                 actions += f'<h2>{page.t("billing.choose")}</h2><ul class="plans">{plans}</ul>'
     return (
-        f'<h1>{page.t("billing.title")}</h1>{notice}'
+        f"<h1>{page.t('billing.title')}</h1>{notice}"
         f'<section class="card" id="billing" data-error="{page.t("billing.error")}">{current}{actions}'
         '<p id="billing-status" role="status" aria-live="polite"></p></section>'
     )
@@ -411,14 +441,14 @@ def account_body(page: Page, auth: AuthContext, subscription: dict[str, Any]) ->
         else page.t("billing.none")
     )
     return (
-        f'<h1>{page.t("account.title")}</h1>'
+        f"<h1>{page.t('account.title')}</h1>"
         '<section class="card"><dl>'
-        f'<dt>{page.t("account.email")}</dt><dd>{_e(user.email)}</dd>'
-        f'<dt>{page.t("account.created")}</dt><dd>{_time(user.created_at)}</dd>'
-        f'<dt>{page.t("billing.current")}</dt><dd>{plan}</dd>'
+        f"<dt>{page.t('account.email')}</dt><dd>{_e(user.email)}</dd>"
+        f"<dt>{page.t('account.created')}</dt><dd>{_time(user.created_at)}</dd>"
+        f"<dt>{page.t('billing.current')}</dt><dd>{plan}</dd>"
         "</dl></section>"
         f'<section class="card"><h2>{page.t("account.delete.title")}</h2>'
-        f'<p>{page.t("account.delete.body")}</p>'
+        f"<p>{page.t('account.delete.body')}</p>"
         f'<form method="post" action="/api/v1/auth/account/delete" data-confirm-submit="{page.t("account.delete.confirm")}">'
         f'<input type="hidden" name="{CSRF_FORM_FIELD}" value="{_e(page.csrf)}">'
         f'<button type="submit" class="danger">{page.t("account.delete.submit")}</button>'
@@ -435,7 +465,7 @@ def activate_body(page: Page, *, user_code: str = "", outcome: str | None = None
             return f'<section class="card"><h1>{page.t("activate.title")}</h1>{message}</section>'
     return (
         f'<section class="card"><h1>{page.t("activate.title")}</h1>{message}'
-        f'<p>{page.t("activate.lead")}</p>'
+        f"<p>{page.t('activate.lead')}</p>"
         '<form method="post" action="/activate">'
         f'<input type="hidden" name="{CSRF_FORM_FIELD}" value="{_e(page.csrf)}">'
         f'<label>{page.t("activate.code")}<input type="text" name="user_code" value="{_e(user_code)}" '
@@ -733,7 +763,9 @@ def build_portal_router() -> APIRouter:
     async def login(request: Request) -> Response:
         page = await build_page(request)
         if page.auth is not None and page.auth.via_cookie and not request.query_params.get("error"):
-            return RedirectResponse(url=safe_next_path(request.query_params.get("next")), status_code=303)
+            return RedirectResponse(
+                url=safe_next_path(request.query_params.get("next")), status_code=303
+            )
         return render(page, "login.title", login_body(page))
 
     @router.get("/dashboard", response_class=HTMLResponse)
@@ -773,9 +805,10 @@ def build_portal_router() -> APIRouter:
         page = await build_page(request)
         if page.auth is None:
             return login_redirect(request)
-        code = normalize_user_code(request.query_params.get("user_code", "")) or request.query_params.get(
-            "user_code", ""
-        )[:9]
+        code = (
+            normalize_user_code(request.query_params.get("user_code", ""))
+            or request.query_params.get("user_code", "")[:9]
+        )
         return render(page, "activate.title", activate_body(page, user_code=code))
 
     @router.post("/activate", response_class=HTMLResponse)
@@ -796,7 +829,12 @@ def build_portal_router() -> APIRouter:
             )
         )
         if not decided:
-            return render(page, "activate.title", activate_body(page, user_code=code, outcome="invalid"), status_code=400)
+            return render(
+                page,
+                "activate.title",
+                activate_body(page, user_code=code, outcome="invalid"),
+                status_code=400,
+            )
         outcome = "approved" if approve else "denied"
         return render(page, "activate.title", activate_body(page, outcome=outcome))
 
