@@ -129,7 +129,9 @@ _ECDSA_SIGNATURE_HASHES = {
 }
 
 # DigestInfo DER prefix for SHA-256 in EMSA-PKCS1-v1_5 (RFC 8017, section 9.2, note 1).
-_SHA256_DIGEST_INFO_PREFIX = b"\x30\x31\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\x04\x20"
+_SHA256_DIGEST_INFO_PREFIX = (
+    b"\x30\x31\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\x04\x20"
+)
 
 # DER tags (universal class unless noted).
 _TAG_BOOLEAN = 0x01
@@ -242,7 +244,9 @@ def parse_compact(token: str) -> JwsParts:
     if not signature:
         raise JwsError("JWS signature is empty")
     signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
-    return JwsParts(header=header, payload=payload, signing_input=signing_input, signature=signature)
+    return JwsParts(
+        header=header, payload=payload, signing_input=signing_input, signature=signature
+    )
 
 
 # ---------------------------------------------------------------------------

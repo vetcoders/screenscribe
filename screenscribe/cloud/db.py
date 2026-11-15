@@ -563,7 +563,16 @@ class CloudStore:
                 "INSERT INTO users (user_id, email, password_hash, apple_sub, display_name,"
                 " preferred_lang, stripe_customer_id, created_at, updated_at)"
                 " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
-                (user_id, email, password_hash, apple_sub, display_name, preferred_lang, stamp, stamp),
+                (
+                    user_id,
+                    email,
+                    password_hash,
+                    apple_sub,
+                    display_name,
+                    preferred_lang,
+                    stamp,
+                    stamp,
+                ),
             )
         except sqlite3.IntegrityError:
             return None
@@ -950,7 +959,9 @@ class CloudStore:
                     stamp,
                 ),
             )
-            row = conn.execute("SELECT * FROM subscriptions WHERE user_id = ?", (user_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM subscriptions WHERE user_id = ?", (user_id,)
+            ).fetchone()
             record = _subscription(row)
             if record.active and record.minutes_limit > 0:
                 conn.execute(
@@ -1018,7 +1029,9 @@ class CloudStore:
             return "quota_exceeded", record
         return None, record
 
-    def check_gate(self, user_id: str, now: datetime, required_minutes: float = 0.0) -> GateCode | None:
+    def check_gate(
+        self, user_id: str, now: datetime, required_minutes: float = 0.0
+    ) -> GateCode | None:
         """Read-only gate check (publish): active subscription and quota left."""
         with self.transaction(immediate=False) as conn:
             code, _record = self._gate(conn, user_id, required_minutes, now)
@@ -1096,7 +1109,9 @@ class CloudStore:
     # -- Stripe webhook idempotency ---------------------------------------
 
     def stripe_event_seen(self, event_id: str) -> bool:
-        row = self._one("SELECT 1 AS seen FROM stripe_webhook_events WHERE event_id = ?", (event_id,))
+        row = self._one(
+            "SELECT 1 AS seen FROM stripe_webhook_events WHERE event_id = ?", (event_id,)
+        )
         return row is not None
 
     def mark_stripe_event(self, event_id: str, event_type: str, now: datetime) -> bool:
@@ -1145,7 +1160,9 @@ class CloudStore:
                 " worker_id = ?, updated_at = ? WHERE job_id = ? AND status = 'queued'",
                 (worker_id, stamp, row["job_id"]),
             )
-            claimed = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (row["job_id"],)).fetchone()
+            claimed = conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (row["job_id"],)
+            ).fetchone()
         return _job(claimed) if claimed is not None else None
 
     def update_job_stage(self, job_id: str, stage: str, progress_pct: int, now: datetime) -> None:

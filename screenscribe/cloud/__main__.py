@@ -66,12 +66,20 @@ def run_init_db(settings: CloudSettings) -> int:
 
 
 def build_parser(settings: CloudSettings) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m screenscribe.cloud", description="Screenscribe Cloud")
-    parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
+    parser = argparse.ArgumentParser(
+        prog="python -m screenscribe.cloud", description="Screenscribe Cloud"
+    )
+    parser.add_argument(
+        "--log-level", default="info", choices=["debug", "info", "warning", "error"]
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     serve = commands.add_parser("serve", help="Run the web API, portal and hosted reviews")
-    serve.add_argument("--host", default=settings.host, help="Bind address (env SCREENSCRIBE_CLOUD_HOST)")
-    serve.add_argument("--port", type=int, default=settings.port, help="Bind port (env SCREENSCRIBE_CLOUD_PORT)")
+    serve.add_argument(
+        "--host", default=settings.host, help="Bind address (env SCREENSCRIBE_CLOUD_HOST)"
+    )
+    serve.add_argument(
+        "--port", type=int, default=settings.port, help="Bind port (env SCREENSCRIBE_CLOUD_PORT)"
+    )
     commands.add_parser("worker", help="Run the job worker")
     commands.add_parser("init-db", help="Create or migrate the database schema")
     return parser

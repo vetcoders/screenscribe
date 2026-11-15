@@ -148,7 +148,9 @@ class PublishManifest(BaseModel):
         if self.video_included is True and (
             self.video_sha256 is None or self.video_size_bytes is None
         ):
-            raise ValueError("video_sha256 and video_size_bytes are required when video_included is true")
+            raise ValueError(
+                "video_sha256 and video_size_bytes are required when video_included is true"
+            )
         return self
 
     @property
@@ -194,7 +196,9 @@ def parse_manifest(form: StreamedForm) -> PublishManifest:
             f"{'.'.join(str(p) for p in err.get('loc', ()))}: {err.get('msg', 'invalid')}"
             for err in exc.errors()[:5]
         )
-        raise HTTPException(status_code=422, detail=f"Invalid publish manifest: {problems}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"Invalid publish manifest: {problems}"
+        ) from exc
 
 
 # -- Bundle inspection -------------------------------------------------------
@@ -219,7 +223,9 @@ def read_report(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail="Bundle report JSON is not valid JSON.") from exc
+        raise HTTPException(
+            status_code=422, detail="Bundle report JSON is not valid JSON."
+        ) from exc
     if not isinstance(data, dict) or not isinstance(data.get("findings"), list):
         raise HTTPException(status_code=422, detail="Bundle report JSON has no findings list.")
     return data
@@ -368,7 +374,9 @@ def regenerate_html_report(
             screenshots.append(
                 (
                     member_detection,
-                    frame_path(member.get("screenshot"), f".missing-member-{index}-{member_index}.jpg"),
+                    frame_path(
+                        member.get("screenshot"), f".missing-member-{index}-{member_index}.jpg"
+                    ),
                 )
             )
 
@@ -411,7 +419,7 @@ def _human_from_state(state: dict[str, Any]) -> dict[str, Any]:
     findings_raw = state.get("findings")
     findings: dict[str, Any] = {}
     rejected: list[str] = []
-    for fid, review in (findings_raw.items() if isinstance(findings_raw, dict) else []):
+    for fid, review in findings_raw.items() if isinstance(findings_raw, dict) else []:
         if not isinstance(review, dict):
             continue
         human = {
@@ -569,7 +577,9 @@ def materialize_publish(
         if manifest.video_size_bytes is None or upload.size != manifest.video_size_bytes:
             raise HTTPException(status_code=422, detail="Video size does not match the manifest.")
         if not manifest.video_sha256 or sha256_file(upload.path) != manifest.video_sha256:
-            raise HTTPException(status_code=422, detail="Video checksum does not match the manifest.")
+            raise HTTPException(
+                status_code=422, detail="Video checksum does not match the manifest."
+            )
         source_dir = report_root / SOURCE_VIDEO_DIRNAME
         source_dir.mkdir(parents=True, exist_ok=True)
         video_target = source_dir / video_name
@@ -634,7 +644,9 @@ def materialize_publish(
         try:
             write_review_state_snapshot(stored, report_root)
         except Exception as exc:  # derived artifact; report.json stays canonical
-            logger.info("review_state.json snapshot skipped for %s: %s", share_id, type(exc).__name__)
+            logger.info(
+                "review_state.json snapshot skipped for %s: %s", share_id, type(exc).__name__
+            )
     return stored, created
 
 
@@ -656,7 +668,9 @@ def build_reviews_router() -> APIRouter:
         user_id = auth.user.user_id
         key = idempotency_key(request)
         if key is not None:
-            existing = await run_in_threadpool(services.store.get_review_by_idempotency, user_id, key)
+            existing = await run_in_threadpool(
+                services.store.get_review_by_idempotency, user_id, key
+            )
             if existing is not None:
                 return JSONResponse(status_code=201, content=publish_body(services, existing))
         await run_in_threadpool(require_active_subscription, services, user_id)

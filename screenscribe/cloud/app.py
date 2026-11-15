@@ -136,11 +136,16 @@ class SecurityHeadersMiddleware:
                     (b"x-frame-options", b"DENY"),
                     (b"referrer-policy", b"same-origin"),
                     (b"cross-origin-opener-policy", b"same-origin"),
-                    (b"permissions-policy", b"camera=(), geolocation=(), payment=(), microphone=(self)"),
+                    (
+                        b"permissions-policy",
+                        b"camera=(), geolocation=(), payment=(), microphone=(self)",
+                    ),
                     (b"content-security-policy", PORTAL_CSP.encode("ascii")),
                 ]
                 if self.hsts:
-                    defaults.append((b"strict-transport-security", b"max-age=31536000; includeSubDomains"))
+                    defaults.append(
+                        (b"strict-transport-security", b"max-age=31536000; includeSubDomains")
+                    )
                 headers.extend((name, value) for name, value in defaults if name not in present)
                 message = {**message, "headers": headers}
             await send(message)
@@ -201,7 +206,12 @@ def readiness(services: CloudServices) -> tuple[bool, dict[str, Any]]:
 
 
 def ensure_storage(settings: CloudSettings) -> None:
-    for path in (settings.storage_dir, settings.uploads_dir, settings.reviews_dir, settings.glossary_root):
+    for path in (
+        settings.storage_dir,
+        settings.uploads_dir,
+        settings.reviews_dir,
+        settings.glossary_root,
+    ):
         Path(path).mkdir(parents=True, exist_ok=True)
 
 

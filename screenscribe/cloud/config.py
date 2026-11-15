@@ -280,7 +280,9 @@ class CloudSettings:
             cookie_secure=_flag(env.get("SCREENSCRIBE_CLOUD_COOKIE_SECURE")),
             cors_origins=_csv(env.get("SCREENSCRIBE_CLOUD_CORS_ORIGINS")),
             trusted_hosts=_csv(env.get("SCREENSCRIBE_CLOUD_TRUSTED_HOSTS")),
-            stripe_secret_key=_first(env, "SCREENSCRIBE_CLOUD_STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY"),
+            stripe_secret_key=_first(
+                env, "SCREENSCRIBE_CLOUD_STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY"
+            ),
             stripe_webhook_secret=_first(
                 env, "SCREENSCRIBE_CLOUD_STRIPE_WEBHOOK_SECRET", "STRIPE_WEBHOOK_SECRET"
             ),
@@ -300,12 +302,16 @@ class CloudSettings:
                 env.get("SCREENSCRIBE_CLOUD_WORKER_POLL_SECONDS"), 2.0, minimum=0.05
             ),
             embedded_worker=_flag(env.get("SCREENSCRIBE_CLOUD_EMBEDDED_WORKER")),
-            sse_poll_seconds=_float(env.get("SCREENSCRIBE_CLOUD_SSE_POLL_SECONDS"), 1.0, minimum=0.05),
+            sse_poll_seconds=_float(
+                env.get("SCREENSCRIBE_CLOUD_SSE_POLL_SECONDS"), 1.0, minimum=0.05
+            ),
             sse_keepalive_seconds=_float(
                 env.get("SCREENSCRIBE_CLOUD_SSE_KEEPALIVE_SECONDS"), 10.0, minimum=0.5
             ),
             default_ui_language=(
-                "pl" if env.get("SCREENSCRIBE_CLOUD_DEFAULT_LANG", "").strip().lower() == "pl" else "en"
+                "pl"
+                if env.get("SCREENSCRIBE_CLOUD_DEFAULT_LANG", "").strip().lower() == "pl"
+                else "en"
             ),
         )
 
