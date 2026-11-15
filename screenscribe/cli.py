@@ -233,6 +233,8 @@ def _auto_review_if_video() -> None:
         if first_arg in (
             "review",
             "serve",
+            "publish",
+            "auth",
             "analyze",
             "transcribe",
             "preprocess",
@@ -450,6 +452,7 @@ def main(
 
 @app.command()
 def review(
+    ctx: typer.Context,
     videos: Annotated[
         list[Path],
         typer.Argument(
@@ -662,6 +665,31 @@ def review(
             help="Show detailed progress and debug information",
         ),
     ] = False,
+    publish: Annotated[
+        bool,
+        typer.Option(
+            "--publish",
+            help=(
+                "Upload the generated review bundle to Screenscribe Cloud and return a live "
+                "share URL (local server only with an explicit --serve)"
+            ),
+        ),
+    ] = False,
+    visibility: Annotated[
+        str,
+        typer.Option(
+            "--visibility",
+            help="Cloud share visibility when --publish is set: unlisted or private",
+        ),
+    ] = "unlisted",
+    cloud_url: Annotated[
+        str | None,
+        typer.Option(
+            "--cloud-url",
+            envvar="SCREENSCRIBE_CLOUD_URL",
+            help="Screenscribe Cloud base URL when --publish is set",
+        ),
+    ] = None,
 ) -> None:
     """
     Analyze screencast video(s) and generate interactive review reports.
@@ -697,6 +725,8 @@ def review(
     • --force: Overwrite a previous screenscribe review instead of versioning
       (never a folder screenscribe does not own)
     • --resume: Continue from checkpoint if interrupted
+    • --publish: Upload the finished review to Screenscribe Cloud and print its
+      share URL (sign in first: screenscribe auth login cloud)
 
     Examples:
         uv run screenscribe review video.mov
@@ -715,6 +745,23 @@ def review(
                 f"[red]Error:[/] Path is a directory: [link=file://{video}]{video}[/link]"
             )
             raise typer.Exit(1)
+
+    # --publish: validate and check the Cloud sign-in before any paid work.
+    publish_plan = None
+    if publish:
+        from .cli_publish import prepare_review_publish
+
+        publish_plan = prepare_review_publish(
+            videos=videos,
+            output=output,
+            visibility=visibility,
+            cloud_url=cloud_url,
+            json_report=json_report,
+            estimate=estimate,
+            dry_run=dry_run,
+            serve=serve,
+            serve_source=ctx.get_parameter_source("serve"),
+        )
 
     # Bootstrap prints an immediate banner before heavy imports; avoid duplicate header.
     if os.environ.get(BOOTSTRAP_BANNER_SHOWN_ENV) != "1":
@@ -921,13 +968,22 @@ def review(
         force=force,
         estimate=estimate,
         dry_run=dry_run,
-        serve=serve,
+        serve=serve and publish_plan is None,
         port=port,
         transcript_source=requested_source,
         frame_interval=frame_interval,
         ocr_max_frames=ocr_max_frames,
         preset=active_preset,
     )
+
+    if publish_plan is not None:
+        from .cli_serve import ReviewDirError, resolve_existing_review
+
+        to_serve = publish_plan.finish(
+            resolver=resolve_existing_review, resolver_errors=(ReviewDirError,)
+        )
+        if to_serve is not None:
+            _serve_report(to_serve[0], to_serve[1], port)
 
 
 @app.command()
@@ -972,6 +1028,152 @@ def serve(
     except ReviewDirError as exc:
         console.print(f"[red]Error:[/] {exc}")
         raise typer.Exit(1) from None
+
+
+@app.command()
+def publish(
+    ctx: typer.Context,
+    target: Annotated[
+        Path,
+        typer.Argument(
+            help=(
+                "Review directory to publish, or a recording to review first "
+                "(locally, or in Screenscribe Cloud with --cloud-run)"
+            ),
+        ),
+    ],
+    video: Annotated[
+        Path | None,
+        typer.Option(
+            "--video",
+            help="Recording of the review directory, when it was moved or renamed",
+        ),
+    ] = None,
+    visibility: Annotated[
+        str,
+        typer.Option("--visibility", help="Share visibility: unlisted or private"),
+    ] = "unlisted",
+    no_video: Annotated[
+        bool,
+        typer.Option(
+            "--no-video",
+            help="Publish findings, screenshots and transcript without the recording",
+        ),
+    ] = False,
+    cloud_run: Annotated[
+        bool,
+        typer.Option(
+            "--cloud-run",
+            help=(
+                "Upload the recording and run the whole review in Screenscribe Cloud "
+                "(no local ffmpeg or API key needed)"
+            ),
+        ),
+    ] = False,
+    cloud_url: Annotated[
+        str | None,
+        typer.Option(
+            "--cloud-url",
+            envvar="SCREENSCRIBE_CLOUD_URL",
+            help="Screenscribe Cloud base URL (default: the signed-in host)",
+        ),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print exactly one JSON object on stdout"),
+    ] = False,
+    open_browser: Annotated[
+        bool,
+        typer.Option("--open/--no-open", help="Open the share URL in the browser"),
+    ] = False,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Review directory for the local review when TARGET is a recording",
+        ),
+    ] = None,
+    language: Annotated[
+        str | None,
+        typer.Option(
+            "--lang",
+            "-l",
+            help="Transcription language (local review: config default; cloud: auto)",
+        ),
+    ] = None,
+    preset: Annotated[
+        str | None,
+        typer.Option(
+            "--preset",
+            help="Analysis preset: programming (default), casual, medical, veterinary",
+        ),
+    ] = None,
+    prompt: Annotated[
+        str | None,
+        typer.Option("--prompt", "-P", help="Extra instructions for the analysis"),
+    ] = None,
+    vision: Annotated[
+        bool,
+        typer.Option("--vision/--no-vision", help="Local review: run the visual analysis"),
+    ] = True,
+    local: Annotated[
+        bool,
+        typer.Option("--local", help="Local review: use the local STT server"),
+    ] = False,
+) -> None:
+    """Publish a review to Screenscribe Cloud and print its live share URL.
+
+    TARGET is either an existing review directory or a recording:
+
+    • review directory: findings, screenshots, transcript and review state are
+      packed (local paths removed) and uploaded with the recording, unless
+      --no-video. A receipt is saved as publish_receipt.json.
+    • recording: reviewed locally first (same pipeline as `review`, without the
+      local server), then published.
+    • recording + --cloud-run: uploaded as is; Screenscribe Cloud runs the
+      whole review and the CLI follows its progress.
+
+    Sign in first: screenscribe auth login cloud
+
+    Examples:
+        screenscribe publish demo_review
+        screenscribe publish demo_review --visibility private --no-video
+        screenscribe publish demo.mov --cloud-run --json
+    """
+    from .cli_publish import run_publish_command
+    from .cli_serve import ReviewDirError, resolve_existing_review
+
+    def run_local_review() -> None:
+        review(
+            ctx,
+            [target],
+            output=output,
+            prompt=prompt,
+            language=language,
+            local=local,
+            vision=vision,
+            preset=preset or "programming",
+            serve=False,
+        )
+
+    run_publish_command(
+        target=target,
+        video=video,
+        visibility=visibility,
+        no_video=no_video,
+        cloud_run=cloud_run,
+        cloud_url=cloud_url,
+        json_output=json_output,
+        open_browser=open_browser,
+        language=language,
+        preset=preset,
+        prompt=prompt,
+        output_dir=output,
+        resolver=resolve_existing_review,
+        resolver_errors=(ReviewDirError,),
+        run_local_review=run_local_review,
+    )
 
 
 @app.command()
