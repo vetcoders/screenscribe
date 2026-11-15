@@ -250,7 +250,7 @@ Before anything leaves the machine:
 | Symptom | What to do |
 |---|---|
 | `Screenscribe Cloud sign-in required` / `auth_required` | `screenscribe auth login cloud` (for the same host you publish to). An expired access token is refreshed and the request retried once before this appears. |
-| `Subscription required` / HTTP 402 | No active plan, or the quota is used up. The panel shows your plan, minutes used and the upgrade URL. |
+| `Subscription required` / HTTP 402 | No active plan, or the quota is used up. The panel shows the server's message, your minutes used (when known) and the upgrade URL; `screenscribe auth status` shows the plan. |
 | `payload_too_large` | The server refused the upload size (HTTP 413). Publish with `--no-video`, or trim the recording. |
 | `redirect_refused` | The host answered with a redirect. Use the final URL in `--cloud-url` / `SCREENSCRIBE_CLOUD_URL`. |
 | `…but not the recording it was made from` | The recording was moved, renamed or deleted. Pass `--video <file>` or `--no-video`. |
