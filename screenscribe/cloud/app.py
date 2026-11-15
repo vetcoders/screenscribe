@@ -29,7 +29,6 @@ from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -60,6 +59,10 @@ _WEBHOOK_PATH = "/api/v1/billing/stripe/webhook"
 # -- Middleware ---------------------------------------------------------------
 
 
+class _BodyTooLargeError(Exception):
+    """Internal signal raised when a streaming body exceeds the per-route cap."""
+
+
 class BodyLimitMiddleware:
     """Reject request bodies above a per-route cap before handlers buffer them."""
 
@@ -85,6 +88,7 @@ class BodyLimitMiddleware:
             await response(scope, receive, send)
             return
         received = 0
+        response_started = False
 
         async def limited_receive() -> Message:
             nonlocal received
@@ -92,10 +96,23 @@ class BodyLimitMiddleware:
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > limit:
-                    raise StarletteHTTPException(status_code=413, detail="Request body too large.")
+                    raise _BodyTooLargeError
             return message
 
-        await self.app(scope, limited_receive, send)
+        async def tracked_send(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracked_send)
+        except _BodyTooLargeError:
+            if not response_started:
+                response = JSONResponse(
+                    status_code=413, content={"detail": "Request body too large."}
+                )
+                await response(scope, receive, send)
 
 
 class SecurityHeadersMiddleware:

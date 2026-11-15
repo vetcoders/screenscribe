@@ -452,6 +452,7 @@ def publish_body(services: CloudServices, record: ReviewRecord) -> dict[str, Any
         "share_url": settings.url(f"/r/{share}"),
         "video_stream_url": settings.url(f"/r/{share}/video") if record.has_video else None,
         "agent_manifest_url": settings.url(f"/r/{share}/api/export/agent-manifest"),
+        "report_json_url": settings.url(f"/api/v1/reviews/{share}/report.json"),
         "visibility": record.visibility,
         "created_at": record.created_at,
     }

@@ -163,12 +163,71 @@ def review_visibility(job_visibility: str) -> str:
     return "unlisted" if job_visibility == "unlisted" else "private"
 
 
+def _extract_job_audio(video: Path, audio_path: Path) -> Path:
+    """Extract speech-ready MP3, mixing multiple audio tracks when present.
+
+    Native macOS ScreenCaptureKit recordings carry separate system-audio and
+    microphone AAC tracks; bare ``ffmpeg -vn`` picks only ``0:a:0``. When two or
+    more audio streams exist, mix them down with ``amix`` before transcoding.
+    """
+    from screenscribe.audio import (
+        _FFMPEG_TIMEOUT_SECONDS,
+        _FFPROBE_TIMEOUT_SECONDS,
+        _raise_ffmpeg_error,
+        _run_media_command,
+        extract_audio,
+    )
+
+    probe_cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=index",
+        "-of",
+        "csv=p=0",
+        str(video),
+    ]
+    probe = _run_media_command(probe_cmd, timeout=_FFPROBE_TIMEOUT_SECONDS, tool="ffprobe")
+    stream_lines = [line.strip() for line in probe.stdout.splitlines() if line.strip()]
+    if probe.returncode == 0 and len(stream_lines) >= 2:
+        count = len(stream_lines)
+        inputs = "".join(f"[0:a:{idx}]" for idx in range(count))
+        mix_filter = f"{inputs}amix=inputs={count}:duration=longest:dropout_transition=0:normalize=0[aout]"
+        mix_cmd = [
+            "ffmpeg",
+            "-i",
+            str(video),
+            "-filter_complex",
+            mix_filter,
+            "-map",
+            "[aout]",
+            "-vn",
+            "-acodec",
+            "libmp3lame",
+            "-q:a",
+            "2",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-y",
+            str(audio_path),
+        ]
+        mixed = _run_media_command(mix_cmd, timeout=_FFMPEG_TIMEOUT_SECONDS, tool="ffmpeg")
+        if mixed.returncode != 0:
+            _raise_ffmpeg_error(video, mixed.stderr)
+        return audio_path
+    return extract_audio(video, audio_path)
+
+
 # -- Default pipeline runner (stage modules, no CLI orchestrator) -----------
 
 
 def run_pipeline(ctx: JobContext) -> PipelineResult:
     """Run audio → STT → semantic detection → screenshots → VLM → reports."""
-    from screenscribe.audio import extract_audio
     from screenscribe.keywords import KeywordsConfig
     from screenscribe.presets import PresetError, load_preset
     from screenscribe.report import (
@@ -224,7 +283,7 @@ def run_pipeline(ctx: JobContext) -> PipelineResult:
     ctx.progress("audio")
     audio_path = video.parent / f"{stem}.audio.mp3"
     try:
-        extract_audio(video, audio_path)
+        _extract_job_audio(video, audio_path)
     except (RuntimeError, OSError, ValueError) as exc:
         logger.info("Job %s audio extraction failed: %s", job.job_id, redact_error_message(exc))
         raise PipelineFailure(

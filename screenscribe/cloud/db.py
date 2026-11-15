@@ -601,6 +601,30 @@ class CloudStore:
             (customer_id, isoformat_z(now), user_id),
         )
 
+    def delete_user(self, user_id: str) -> tuple[list[str], list[str]] | None:
+        """Delete an account and cascade all owned sessions, jobs, reviews and usage rows.
+
+        Returns ``(share_ids, job_ids)`` for post-commit filesystem cleanup, or
+        ``None`` when the user does not exist.
+        """
+        with self.transaction() as conn:
+            existing = conn.execute(
+                "SELECT user_id FROM users WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            if existing is None:
+                return None
+            share_rows = conn.execute(
+                "SELECT share_id FROM reviews WHERE user_id = ?", (user_id,)
+            ).fetchall()
+            job_rows = conn.execute(
+                "SELECT job_id FROM jobs WHERE user_id = ?", (user_id,)
+            ).fetchall()
+            conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+        return (
+            [str(row["share_id"]) for row in share_rows],
+            [str(row["job_id"]) for row in job_rows],
+        )
+
     # -- Sessions & refresh tokens ----------------------------------------
 
     @staticmethod

@@ -29,7 +29,7 @@ def _should_render_banner(argv: list[str]) -> bool:
         return False
     if not sys.stdout.isatty():
         return False
-    if "--help" in argv or "-h" in argv:
+    if "--help" in argv or "-h" in argv or "--json" in argv:
         return False
     return True
 

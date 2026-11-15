@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -505,6 +506,22 @@ def _token_response(body: dict[str, Any], status_code: int = 200) -> JSONRespons
 # -- Router ------------------------------------------------------------------
 
 
+def _remove_child_dir(root: Path, leaf: str) -> None:
+    if not leaf or "/" in leaf or "\\" in leaf or leaf in {".", ".."}:
+        return
+    base = root.resolve()
+    candidate = (base / leaf).resolve()
+    if candidate.parent == base and candidate.exists():
+        shutil.rmtree(candidate, ignore_errors=True)
+
+
+def purge_account_storage(services: CloudServices, share_ids: list[str], job_ids: list[str]) -> None:
+    for share_id in share_ids:
+        _remove_child_dir(services.settings.reviews_dir, share_id)
+    for job_id in job_ids:
+        _remove_child_dir(services.settings.uploads_dir, job_id)
+
+
 def _login_redirect(next_path: str, error: str) -> RedirectResponse:
     query = urlencode({"next": next_path, "error": error})
     return RedirectResponse(url=f"/login?{query}", status_code=303)
@@ -646,6 +663,7 @@ def build_auth_router() -> APIRouter:
         return _token_response(token_body(tokens))
 
     @router.post("/token/refresh")
+    @router.post("/refresh", include_in_schema=False)
     async def refresh(request: Request) -> Response:
         services = get_services(request)
         data = await read_form_or_json(request)
@@ -664,6 +682,27 @@ def build_auth_router() -> APIRouter:
                 logger.warning("Refresh token reuse detected; token family revoked.")
             return _oauth_error("invalid_grant")
         return _token_response(token_body(tokens))
+
+    @router.post("/account/delete")
+    @router.delete("/account")
+    async def delete_account(request: Request, auth: CurrentAuth) -> Response:
+        services = get_services(request)
+        user_id = auth.user.user_id
+        purged = await run_in_threadpool(services.store.delete_user, user_id)
+        if purged is not None:
+            share_ids, job_ids = purged
+            registry = getattr(request.app.state, "review_registry", None)
+            if registry is not None:
+                for share_id in share_ids:
+                    registry.drop(share_id)
+            await run_in_threadpool(purge_account_storage, services, share_ids, job_ids)
+        response: Response
+        if is_form_post(request):
+            response = RedirectResponse(url="/", status_code=303)
+        else:
+            response = JSONResponse(content={"deleted": True, "user_id": user_id})
+        clear_session_cookies(response, services.settings)
+        return response
 
     return router
 

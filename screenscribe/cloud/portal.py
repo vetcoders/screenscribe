@@ -95,7 +95,12 @@ async def build_page(request: Request) -> Page:
 def _nav(page: Page) -> str:
     links = [("/", "nav.home")]
     if page.auth is not None:
-        links += [("/dashboard", "nav.dashboard"), ("/upload", "nav.upload"), ("/billing", "nav.billing")]
+        links += [
+            ("/dashboard", "nav.dashboard"),
+            ("/upload", "nav.upload"),
+            ("/billing", "nav.billing"),
+            ("/account", "nav.account"),
+        ]
     current = page.request.url.path
     current_marker = ' aria-current="page"'
     items = "".join(
@@ -398,6 +403,29 @@ def billing_body(page: Page, auth: AuthContext, subscription: dict[str, Any]) ->
     )
 
 
+def account_body(page: Page, auth: AuthContext, subscription: dict[str, Any]) -> str:
+    user = auth.user
+    plan = (
+        _e(str(subscription.get("plan") or "none").title())
+        if subscription.get("active")
+        else page.t("billing.none")
+    )
+    return (
+        f'<h1>{page.t("account.title")}</h1>'
+        '<section class="card"><dl>'
+        f'<dt>{page.t("account.email")}</dt><dd>{_e(user.email)}</dd>'
+        f'<dt>{page.t("account.created")}</dt><dd>{_time(user.created_at)}</dd>'
+        f'<dt>{page.t("billing.current")}</dt><dd>{plan}</dd>'
+        "</dl></section>"
+        f'<section class="card"><h2>{page.t("account.delete.title")}</h2>'
+        f'<p>{page.t("account.delete.body")}</p>'
+        f'<form method="post" action="/api/v1/auth/account/delete" data-confirm-submit="{page.t("account.delete.confirm")}">'
+        f'<input type="hidden" name="{CSRF_FORM_FIELD}" value="{_e(page.csrf)}">'
+        f'<button type="submit" class="danger">{page.t("account.delete.submit")}</button>'
+        "</form></section>"
+    )
+
+
 def activate_body(page: Page, *, user_code: str = "", outcome: str | None = None) -> str:
     message = ""
     if outcome in {"approved", "denied", "invalid"}:
@@ -532,6 +560,14 @@ PORTAL_JS = """(function () {
       });
     });
   }
+
+  // Destructive form confirmation (account deletion).
+  document.addEventListener("submit", function (event) {
+    var formEl = event.target;
+    if (!(formEl instanceof HTMLFormElement)) { return; }
+    var promptText = formEl.getAttribute("data-confirm-submit");
+    if (promptText && !window.confirm(promptText)) { event.preventDefault(); }
+  });
 
   // Review deletion (dashboard).
   document.addEventListener("click", function (event) {
@@ -724,6 +760,14 @@ def build_portal_router() -> APIRouter:
         me = await run_in_threadpool(me_body, page.services, page.auth.user)
         return render(page, "billing.title", billing_body(page, page.auth, me["subscription"]))
 
+    @router.get("/account", response_class=HTMLResponse)
+    async def account(request: Request) -> Response:
+        page = await build_page(request)
+        if page.auth is None:
+            return login_redirect(request)
+        me = await run_in_threadpool(me_body, page.services, page.auth.user)
+        return render(page, "account.title", account_body(page, page.auth, me["subscription"]))
+
     @router.get("/activate", response_class=HTMLResponse)
     async def activate(request: Request) -> Response:
         page = await build_page(request)
@@ -781,6 +825,7 @@ __all__ = [
     "PORTAL_JS",
     "SIGNATURE",
     "Page",
+    "account_body",
     "activate_body",
     "billing_body",
     "build_page",

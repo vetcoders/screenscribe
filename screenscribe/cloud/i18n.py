@@ -18,6 +18,7 @@ STRINGS: Mapping[str, Mapping[str, str]] = {
         "nav.dashboard": "Dashboard",
         "nav.upload": "Upload",
         "nav.billing": "Billing",
+        "nav.account": "Account",
         "nav.login": "Sign in",
         "nav.logout": "Sign out",
         "home.title": "Screenscribe Cloud",
@@ -123,6 +124,16 @@ STRINGS: Mapping[str, Mapping[str, str]] = {
         "activate.approved": "Device connected. You can return to it now.",
         "activate.denied": "The request was denied. The device was not connected.",
         "activate.invalid": "This code is invalid or has expired. Request a new one on the device.",
+        "account.title": "Account",
+        "account.email": "Email",
+        "account.created": "Member since",
+        "account.delete.title": "Delete account",
+        "account.delete.body": (
+            "Permanently delete your account, active sessions, uploaded recordings, and hosted reviews. "
+            "If you subscribed through the App Store, also cancel renewal in Apple Account Settings."
+        ),
+        "account.delete.submit": "Delete account permanently",
+        "account.delete.confirm": "Delete your account and all hosted reviews permanently?",
         "review.signin.title": "Sign in to open this review",
         "review.signin.body": "This review is private. Sign in with the account that owns it.",
         "review.forbidden.title": "This review is private",
@@ -139,6 +150,7 @@ STRINGS: Mapping[str, Mapping[str, str]] = {
         "nav.dashboard": "Panel",
         "nav.upload": "Wyślij nagranie",
         "nav.billing": "Płatności",
+        "nav.account": "Konto",
         "nav.login": "Zaloguj się",
         "nav.logout": "Wyloguj się",
         "home.title": "Screenscribe Cloud",
@@ -244,6 +256,16 @@ STRINGS: Mapping[str, Mapping[str, str]] = {
         "activate.approved": "Urządzenie połączone. Możesz do niego wrócić.",
         "activate.denied": "Prośba została odrzucona. Urządzenie nie zostało połączone.",
         "activate.invalid": "Kod jest nieprawidłowy lub wygasł. Poproś o nowy na urządzeniu.",
+        "account.title": "Konto",
+        "account.email": "E-mail",
+        "account.created": "Data utworzenia",
+        "account.delete.title": "Usuń konto",
+        "account.delete.body": (
+            "Trwale usuń konto, aktywne sesje, przesłane nagrania oraz hostowane przeglądy. "
+            "Jeśli subskrypcja pochodzi z App Store, anuluj odnawianie także w ustawieniach konta Apple."
+        ),
+        "account.delete.submit": "Usuń konto na stałe",
+        "account.delete.confirm": "Usunąć konto oraz wszystkie hostowane przeglądy na stałe?",
         "review.signin.title": "Zaloguj się, aby otworzyć przegląd",
         "review.signin.body": "Ten przegląd jest prywatny. Zaloguj się na konto, do którego należy.",
         "review.forbidden.title": "Ten przegląd jest prywatny",

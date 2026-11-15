@@ -89,7 +89,16 @@ from screenscribe.server_common import (
 from screenscribe.shell.renderer import refresh_live_assets
 from screenscribe.work_item import WorkItem, from_manual_frame, normalize_verdict
 
-from .auth import AuthContext, CloudServices, enforce_csrf, ensure_csrf_cookie, get_services, resolve_auth
+from .auth import (
+    AuthContext,
+    CloudServices,
+    enforce_csrf,
+    ensure_csrf_cookie,
+    get_services,
+    resolve_auth,
+    set_session_cookies,
+    start_web_session,
+)
 from .billing import require_active_subscription
 from .db import ReviewRecord
 from .i18n import LANG_COOKIE, negotiate_language, translate
@@ -1193,7 +1202,13 @@ def build_review_host_router() -> APIRouter:
                 "X-Robots-Tag": "noindex, nofollow",
             },
         )
-        ensure_csrf_cookie(request, response, services.settings)
+        if _auth is not None and not _auth.via_cookie:
+            session_value, csrf_value = await run_in_threadpool(
+                start_web_session, services, _auth.user
+            )
+            set_session_cookies(response, services.settings, session_value, csrf_value)
+        else:
+            ensure_csrf_cookie(request, response, services.settings)
         return response
 
     @router.get("/r/{share_id}", response_class=HTMLResponse)
