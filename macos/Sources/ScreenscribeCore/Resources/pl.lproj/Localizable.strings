@@ -1,0 +1,359 @@
+/* Screenscribe for macOS — polski. Klucze muszą być identyczne z en.lproj. */
+
+/* App & menus */
+"app.name" = "Screenscribe";
+"menu.record" = "Nowe nagranie";
+"menu.stop" = "Zatrzymaj nagrywanie";
+"menu.import" = "Importuj wideo…";
+"menu.account" = "Konto";
+"menu.subscription" = "Screenscribe Pro…";
+"menu.signin" = "Zaloguj się…";
+"menu.signout" = "Wyloguj się";
+
+/* Common */
+"common.cancel" = "Anuluj";
+"common.close" = "Zamknij";
+"common.dismiss" = "Odrzuć";
+"detail.missing" = "Ten element nie jest już dostępny";
+
+/* Sidebar & toolbar */
+"sidebar.record" = "Nagrywanie";
+"sidebar.uploads" = "Wysyłane";
+"sidebar.uploads.empty" = "Tutaj pojawią się nagrania i zaimportowane filmy.";
+"sidebar.reviews" = "Ostatnie przeglądy";
+"sidebar.reviews.empty" = "Tutaj pojawią się gotowe przeglądy.";
+"sidebar.reviews.signedout" = "Zaloguj się, aby zobaczyć swoje przeglądy.";
+"toolbar.record" = "Nagrywaj";
+"toolbar.record.help" = "Rozpocznij nowe nagranie ekranu (⇧⌘R)";
+"toolbar.stop" = "Zatrzymaj";
+"toolbar.import" = "Importuj";
+"toolbar.import.help" = "Wyślij istniejące nagranie ekranu (⌘O)";
+"toolbar.reviews.refresh" = "Odśwież przeglądy";
+
+/* Record pane */
+"record.title" = "Nagraj omówienie";
+"record.subtitle" = "Opowiadaj o tym, co widzisz. Screenscribe Cloud transkrybuje nagranie, znajduje problemy i tworzy raport ze zrzutami ekranu, który można udostępnić.";
+
+/* Recorder */
+"recorder.start" = "Rozpocznij nagrywanie";
+"recorder.start.hint" = "⇧⌘R z dowolnego miejsca";
+"recorder.countdown" = "Nagrywanie rozpocznie się za…";
+"recorder.preparing" = "Przygotowywanie przechwytywania…";
+"recorder.finalizing" = "Zapisywanie nagrania…";
+"recorder.pause" = "Pauza";
+"recorder.resume" = "Wznów";
+"recorder.paused" = "Wstrzymano";
+"recorder.stop" = "Zatrzymaj";
+"recorder.discard" = "Odrzuć";
+"recorder.discard.confirm" = "Odrzucić to nagranie? Nie będzie można go odzyskać.";
+"recorder.saved" = "Ostatnie nagranie: %1$@ · %2$@";
+"recorder.error.noaudio" = "Włącz dźwięk systemowy lub mikrofon: przegląd powstaje na podstawie Twojego komentarza.";
+"recorder.stopped.saved" = "Nagrywanie przerwane (%@). Zapisano wszystko, co zdążyło się nagrać.";
+"recorder.stopped.lost" = "Nagrywanie przerwane (%@). Nie udało się nic zapisać.";
+"recorder.source" = "Źródło";
+"recorder.source.display" = "Ekran";
+"recorder.source.window" = "Okno";
+"recorder.source.application" = "Aplikacja";
+"recorder.source.refresh" = "Odśwież";
+"recorder.source.privacy" = "Okna Screenscribe, w tym to okno i panel w pasku menu, nigdy nie trafiają do nagrania.";
+"recorder.window.choose" = "Wybierz okno";
+"recorder.application.choose" = "Wybierz aplikację";
+"recorder.permission.screen.title" = "Potrzebny dostęp do nagrywania ekranu";
+"recorder.permission.screen.detail" = "Zezwól aplikacji Screenscribe w Ustawieniach systemowych › Prywatność i ochrona › Nagrywanie ekranu i dźwięku systemowego, a potem wróć tutaj.";
+"recorder.permission.screen.settings" = "Nagrywanie ekranu jest wyłączone dla Screenscribe. Włącz je w Ustawieniach systemowych i spróbuj ponownie.";
+"recorder.permission.grant" = "Zezwól";
+"recorder.permission.settings" = "Otwórz Ustawienia systemowe";
+"recorder.permission.recheck" = "Sprawdź ponownie";
+"recorder.permission.mic.ask" = "Zezwól na mikrofon, aby nagrać swój komentarz.";
+"recorder.permission.mic.denied" = "Dostęp do mikrofonu jest wyłączony. Włącz go w Ustawieniach systemowych, aby nagrywać komentarz.";
+"recorder.permission.mic.allow" = "Zezwól na mikrofon";
+
+/* Capture engine */
+"capture.display.fallback" = "Ekran %ld";
+"capture.error.busy" = "Nagrywanie już trwa.";
+"capture.error.idle" = "Nagrywanie nie jest aktywne.";
+"capture.error.permission" = "Wymagane jest uprawnienie do nagrywania ekranu.";
+"capture.error.microphone" = "Do nagrania komentarza wymagane jest uprawnienie do mikrofonu.";
+"capture.error.source" = "Wybrany ekran, okno lub aplikacja nie są już dostępne.";
+"capture.error.noframes" = "Nie przechwycono obrazu. Upewnij się, że wybrane źródło jest widoczne na ekranie.";
+"capture.error.stream" = "Przechwytywanie ekranu nie powiodło się: %@";
+"capture.error.writer" = "Nie udało się zapisać nagrania: %@";
+
+/* Review options */
+"options.title" = "Przegląd";
+"options.preset" = "Profil";
+"options.language" = "Język";
+"options.visibility" = "Widoczność";
+"options.prompt" = "Na co zwrócić uwagę";
+"options.prompt.placeholder" = "Opcjonalnie: na czym ma się skupić przegląd?";
+"options.audio.system" = "Nagrywaj dźwięk systemowy";
+"options.audio.microphone" = "Nagrywaj mikrofon";
+"options.audio.device" = "Mikrofon";
+"options.audio.device.default" = "Domyślny systemowy";
+"options.autoupload" = "Wysyłaj automatycznie po zakończeniu nagrania";
+
+/* Presets */
+"preset.programming.title" = "Oprogramowanie";
+"preset.programming.detail" = "Błędy interfejsu, problemy z UX, dostępność i wydajność aplikacji oraz stron.";
+"preset.casual.title" = "Ogólny";
+"preset.casual.detail" = "Podsumowanie prostym językiem z listą działań dla dowolnego omówienia.";
+"preset.medical.title" = "Medyczny";
+"preset.medical.detail" = "Oprogramowanie kliniczne: bezpieczeństwo procesów, błędy wprowadzania danych i luki w dokumentacji.";
+"preset.veterinary.title" = "Weterynaryjny";
+"preset.veterinary.detail" = "Oprogramowanie dla lecznic: kartoteki pacjentów, plany leczenia i przepływ pracy w klinice.";
+
+/* Languages & visibility */
+"language.auto" = "Wykryj automatycznie";
+"language.en" = "Angielski";
+"language.pl" = "Polski";
+"visibility.private" = "Prywatny";
+"visibility.unlisted" = "Każdy z linkiem";
+"visibility.team" = "Zespół";
+
+/* Codecs & containers */
+"codec.h264" = "H.264 (najszersza zgodność)";
+"codec.hevc" = "HEVC (mniejsze pliki)";
+"container.mp4" = "MPEG-4 (.mp4)";
+"container.mov" = "QuickTime (.mov)";
+
+/* Upload queue */
+"queue.state.draft" = "Gotowe do wysłania";
+"queue.state.pending" = "Oczekuje";
+"queue.state.uploading" = "Wysyłanie";
+"queue.state.processing" = "Przetwarzanie";
+"queue.state.completed" = "Gotowe";
+"queue.state.failed" = "Błąd";
+"queue.state.billing" = "Wymagana subskrypcja";
+"queue.row.uploading" = "Wysyłanie %@";
+"queue.action.upload" = "Wyślij";
+"queue.action.retry" = "Ponów";
+"queue.action.cancel" = "Anuluj wysyłanie";
+"queue.action.remove" = "Usuń";
+"queue.action.subscribe" = "Subskrybuj";
+"queue.recovered" = "Odzyskano po nieoczekiwanym zamknięciu Screenscribe. Wyślij, kiedy będziesz gotowy.";
+"queue.error.persist" = "Nie udało się zapisać kolejki wysyłania: %@";
+
+/* Pipeline */
+"pipeline.title" = "Przetwarzanie";
+"pipeline.upload" = "Wysyłanie";
+"pipeline.upload.bytes" = "%1$@ z %2$@";
+"pipeline.upload.done" = "Wysłano";
+"pipeline.upload.draft" = "Jeszcze nie wysłano";
+"pipeline.upload.waiting" = "Czeka na wysłanie";
+"pipeline.upload.signin" = "Zaloguj się, aby wysłać";
+"pipeline.upload.failed" = "Wysyłanie nie powiodło się";
+"pipeline.retry.at" = "Kolejna próba o %@";
+"pipeline.status.waiting" = "Oczekuje";
+"pipeline.status.running" = "W toku";
+"pipeline.status.done" = "Gotowe";
+"pipeline.status.failed" = "Błąd";
+
+/* Job stages */
+"stage.queued" = "W kolejce";
+"stage.audio" = "Wyodrębnianie dźwięku";
+"stage.transcribe" = "Transkrypcja";
+"stage.detect" = "Wykrywanie problemów";
+"stage.screenshots" = "Zrzuty ekranu";
+"stage.analyze" = "Analiza";
+"stage.report" = "Tworzenie raportu";
+"stage.done" = "Gotowe";
+"stage.unknown" = "Przetwarzanie";
+"job.error.generic" = "Przetwarzanie w Screenscribe Cloud nie powiodło się.";
+
+/* Hosted review */
+"review.copy" = "Kopiuj link";
+"review.copied" = "Skopiowano";
+"review.copy.help" = "Skopiuj link do tego przeglądu";
+"review.open" = "Otwórz w przeglądarce";
+"review.open.help" = "Otwórz ten przegląd w domyślnej przeglądarce";
+"review.reload" = "Wczytaj ponownie";
+"review.error.title" = "Nie udało się wczytać przeglądu";
+"review.error.private" = "Ten przegląd jest prywatny. Zaloguj się na konto, do którego należy.";
+"review.error.missing" = "Ten przegląd już nie istnieje.";
+
+/* Menu bar HUD */
+"hud.open" = "Otwórz Screenscribe";
+"hud.settings" = "Ustawienia";
+"hud.quit" = "Zakończ Screenscribe";
+"hud.queue" = "WYSYŁANE";
+"hud.queue.more" = "+%ld więcej";
+"hud.reviews" = "OSTATNIE PRZEGLĄDY";
+"hud.source.none" = "Nie wybrano źródła";
+"hud.source.change" = "Zmień…";
+
+/* Import */
+"import.error.type" = "Pliki „%@” nie są obsługiwane. Użyj MP4, MOV lub M4V.";
+"import.error.unreadable" = "Nie udało się odczytać pliku „%@”.";
+"import.error.empty" = "Plik jest pusty.";
+"import.error.novideo" = "Plik nie zawiera ścieżki wideo.";
+"import.error.noaudio" = "Plik nie zawiera ścieżki dźwiękowej. Screenscribe potrzebuje Twojego komentarza, aby przygotować przegląd.";
+"import.error.short" = "Film jest za krótki na przegląd.";
+"import.error.copy" = "Nie udało się skopiować pliku do Screenscribe: %@";
+
+/* Account */
+"account.signedin" = "Zalogowano";
+"account.plan.pro" = "Pro";
+"account.plan.none" = "Darmowy";
+"account.subscribe" = "Kup Screenscribe Pro";
+"account.minutes" = "Wykorzystano %1$@ z %2$@ min";
+"account.source.appstore" = "App Store";
+"account.source.stripe" = "Strona WWW";
+"account.source.other" = "Inne";
+
+/* Sign in */
+"signin.title" = "Zaloguj się do Screenscribe";
+"signin.subtitle" = "Nagrania są przetwarzane w Screenscribe Cloud, a przeglądy zapisywane na Twoim koncie.";
+"signin.apple" = "Zaloguj się przez Apple";
+"signin.apple.failed" = "Logowanie przez Apple nie powiodło się: %@";
+"signin.apple.notoken" = "Apple nie zwróciło tokenu tożsamości. Spróbuj ponownie.";
+"signin.or" = "lub";
+"signin.mode" = "Tryb";
+"signin.mode.signin" = "Logowanie";
+"signin.mode.register" = "Nowe konto";
+"signin.email" = "E-mail";
+"signin.email.prompt" = "ty@example.com";
+"signin.credential" = "Hasło";
+"signin.credential.hint" = "Co najmniej %ld znaków.";
+"signin.submit.signin" = "Zaloguj się";
+"signin.submit.register" = "Utwórz konto";
+"signin.error.invalid" = "Podaj poprawny adres e-mail i hasło.";
+"signin.error.credential.short" = "Użyj co najmniej %ld znaków.";
+"signin.error.rejected" = "Nieprawidłowy e-mail lub hasło.";
+"signin.error.exists" = "Konto z tym adresem e-mail już istnieje. Zaloguj się.";
+"signin.expired" = "Sesja wygasła. Zaloguj się ponownie.";
+"signin.server.help" = "Serwer Screenscribe Cloud (zmienisz go w Ustawieniach › Chmura)";
+"signin.device.title" = "Zaloguj się przez przeglądarkę";
+"signin.device.detail" = "Użyj konta założonego na stronie WWW.";
+"signin.device.start" = "Użyj przeglądarki";
+"signin.device.instructions" = "Potwierdź ten kod na stronie otwartej w przeglądarce. Screenscribe zaloguje Cię zaraz po zatwierdzeniu.";
+"signin.device.code.a11y" = "Kod logowania %@";
+"signin.device.copy" = "Kopiuj kod";
+"signin.device.copied" = "Skopiowano";
+"signin.device.open" = "Otwórz stronę";
+"signin.device.waiting" = "Czekam na zatwierdzenie · wygasa za %@";
+"signin.device.denied" = "Logowanie zostało odrzucone w przeglądarce.";
+"signin.device.expired" = "Kod logowania wygasł. Zacznij od nowa.";
+
+/* Paywall */
+"paywall.subtitle" = "Zamieniaj nagrania ekranu w przejrzane raporty, którymi łatwo się dzielić.";
+"paywall.reason.inactive" = "Wysyłanie wymaga aktywnej subskrypcji Screenscribe Pro.";
+"paywall.reason.quota" = "Wykorzystano wszystkie minuty przetwarzania w tym okresie. Zmień plan albo poczekaj na odnowienie.";
+"paywall.feature.pipeline" = "Transkrypcja, wykrywanie problemów i zrzuty ekranu w Screenscribe Cloud";
+"paywall.feature.reports" = "Uporządkowane raporty ze znacznikami czasu i listą działań";
+"paywall.feature.share" = "Prywatne lub udostępniane linkiem przeglądy dla zespołu";
+"paywall.active" = "Screenscribe Pro jest aktywne";
+"paywall.active.renews" = "Odnowienie lub koniec: %@";
+"paywall.loading" = "Wczytywanie planów…";
+"paywall.retry" = "Wczytaj plany ponownie";
+"paywall.savings" = "Oszczędzasz %ld%%";
+"paywall.offer.trial" = "Za darmo przez %@, potem automatyczne odnowienie";
+"paywall.offer.intro" = "Cena na start %1$@ przez %2$@";
+"paywall.subscribe" = "Subskrybuj";
+"paywall.signin.subscribe" = "Zaloguj się, aby subskrybować";
+"paywall.restore" = "Przywróć zakupy";
+"paywall.manage" = "Zarządzaj subskrypcją";
+"paywall.status.syncing" = "Zakup przyjęty. Aktywujemy subskrypcję…";
+"paywall.status.pending" = "Zakup czeka na zatwierdzenie.";
+"paywall.status.nothing" = "Nie znaleziono aktywnego zakupu Screenscribe Pro dla tego konta Apple.";
+"paywall.legal.renewal" = "Płatność zostanie pobrana z konta Apple po potwierdzeniu zakupu. Subskrypcja odnawia się automatycznie, jeśli nie zostanie anulowana co najmniej 24 godziny przed końcem bieżącego okresu; opłata za odnowienie jest pobierana w ciągu 24 godzin przed jego końcem. Subskrypcją możesz w każdej chwili zarządzać lub ją anulować w ustawieniach konta App Store.";
+"paywall.error.unavailable" = "Plany są teraz niedostępne. Sprawdź połączenie i spróbuj ponownie.";
+"paywall.error.load" = "Nie udało się wczytać planów: %@";
+"paywall.error.generic" = "Nie udało się dokończyć zakupu.";
+"paywall.error.signin" = "Zaloguj się, aby subskrybować. Subskrypcja jest przypisana do konta Screenscribe.";
+"paywall.error.sync" = "Zakup się powiódł, ale Screenscribe Cloud nie może go jeszcze aktywować: %@. Ponowimy próbę automatycznie.";
+"paywall.error.notallowed" = "Zakupy są zablokowane na tym Macu.";
+"paywall.error.product" = "Ten plan nie jest dostępny w Twoim regionie.";
+"paywall.error.verification" = "App Store nie może zweryfikować tego zakupu.";
+
+/* Billing periods */
+"billing.period.day" = "dziennie";
+"billing.period.days" = "co %ld dni";
+"billing.period.week" = "tygodniowo";
+"billing.period.weeks" = "co %ld tyg.";
+"billing.period.month" = "miesięcznie";
+"billing.period.months" = "co %ld mies.";
+"billing.period.year" = "rocznie";
+"billing.period.years" = "co %ld r.";
+
+/* Legal */
+"legal.terms" = "Warunki korzystania";
+"legal.privacy" = "Polityka prywatności";
+
+/* Permissions */
+"permission.screen" = "Nagrywanie ekranu";
+"permission.microphone" = "Mikrofon";
+"permission.request" = "Poproś";
+"permission.open" = "Otwórz Ustawienia";
+"permission.state.granted" = "Dozwolone";
+"permission.state.denied" = "Niedozwolone";
+"permission.state.undetermined" = "Jeszcze nie pytano";
+"permission.state.restricted" = "Ograniczone";
+
+/* Settings */
+"settings.tab.general" = "Ogólne";
+"settings.tab.recording" = "Nagrywanie";
+"settings.tab.account" = "Konto";
+"settings.tab.cloud" = "Chmura";
+"settings.section.review" = "Domyślne ustawienia przeglądu";
+"settings.section.upload" = "Wysyłanie";
+"settings.section.privacy" = "Prywatność";
+"settings.section.video" = "Wideo";
+"settings.section.audio" = "Dźwięk";
+"settings.section.permissions" = "Uprawnienia";
+"settings.section.account" = "Konto";
+"settings.section.subscription" = "Subskrypcja";
+"settings.section.data" = "Twoje dane";
+"settings.section.cloud" = "Screenscribe Cloud";
+"settings.autoupload.detail" = "W przeciwnym razie nagrania czekają w sekcji Wysyłane, aż je uruchomisz.";
+"settings.privacy.note" = "Transkrypcja i analiza odbywają się w Screenscribe Cloud. Aplikacja nigdy nie prosi o klucze dostawców AI i wysyła nagrania wyłącznie na serwer ustawiony w zakładce Chmura.";
+"settings.reset" = "Przywróć domyślne";
+"settings.codec" = "Kodek";
+"settings.codec.detail" = "Pliki HEVC są mniejsze; H.264 odtworzysz wszędzie.";
+"settings.container" = "Format pliku";
+"settings.fps" = "Liczba klatek";
+"settings.fps.value" = "%ld kl./s";
+"settings.countdown" = "Odliczanie";
+"settings.countdown.off" = "Wyłączone";
+"settings.countdown.value" = "%ld s";
+"settings.cursor" = "Pokazuj wskaźnik";
+"settings.account.email" = "E-mail";
+"settings.account.plan" = "Plan";
+"settings.account.source" = "Rozliczane przez";
+"settings.account.renews" = "Odnowienie lub koniec";
+"settings.account.usage" = "Wykorzystanie";
+"settings.account.refresh" = "Odśwież";
+"settings.account.manage" = "Zarządzaj kontem…";
+"settings.account.manage.detail" = "Na stronie konta wyeksportujesz dane albo usuniesz konto Screenscribe razem z przeglądami.";
+"settings.account.delete" = "Usuń konto…";
+"settings.account.signedout" = "Nie jesteś zalogowany.";
+"settings.account.signout.confirm" = "Wylogować się ze Screenscribe na tym Macu?";
+"settings.cloud.url" = "Adres serwera";
+"settings.cloud.current" = "Połączono z";
+"settings.cloud.local" = "Lokalny";
+"settings.cloud.default" = "Użyj domyślnego";
+"settings.cloud.apply" = "Zastosuj";
+"settings.cloud.applied" = "Używany serwer: %@.";
+"settings.cloud.hint" = "Wymagane jest HTTPS. Zwykłe HTTP działa tylko lokalnie, na 127.0.0.1 lub localhost.";
+"settings.cloud.confirm" = "Zmienić serwer Screenscribe Cloud?";
+"settings.cloud.confirm.detail" = "Sesja jest przypisana do jednego serwera, więc nastąpi wylogowanie.";
+"settings.cloud.confirm.action" = "Zmień i wyloguj";
+"settings.cloud.error.malformed" = "To nie jest poprawny adres URL.";
+"settings.cloud.error.insecure" = "Użyj HTTPS. Zwykłe HTTP działa tylko dla 127.0.0.1 lub localhost.";
+"settings.cloud.error.scheme" = "Obsługiwane są tylko adresy https://.";
+"settings.cloud.error.host" = "W adresie brakuje nazwy hosta.";
+"settings.cloud.error.credentials" = "Usuń z adresu nazwę użytkownika i hasło.";
+
+/* Errors */
+"error.auth.required" = "Zaloguj się ponownie.";
+"error.cancelled" = "Anulowano.";
+"error.http.status" = "Screenscribe Cloud zwrócił błąd (HTTP %ld).";
+"error.http.message" = "Screenscribe Cloud zwrócił błąd (HTTP %1$ld): %2$@";
+"error.network" = "Błąd sieci: %@";
+"error.response.invalid" = "Screenscribe Cloud zwrócił nieoczekiwaną odpowiedź.";
+"error.response.decoding" = "Nie udało się odczytać odpowiedzi Screenscribe Cloud.";
+"error.url.invalid" = "Serwer zwrócił nieprawidłowy link.";
+"error.url.crossorigin" = "Zablokowano link do innego serwera.";
+"error.keychain" = "Błąd pęku kluczy: %@";
+"error.upload.empty" = "Nagranie jest puste.";
+"error.upload.unreadable" = "Nie udało się odczytać pliku „%@” do wysłania.";
+"error.upload.scratch" = "Za mało miejsca, aby przygotować wysyłanie.";

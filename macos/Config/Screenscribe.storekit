@@ -1,0 +1,109 @@
+{
+  "identifier" : "5C2B7A41",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+
+  ],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+
+    ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21581124",
+      "localizations" : [
+        {
+          "customName" : null,
+          "description" : "Screenscribe Pro",
+          "displayName" : "Screenscribe Pro",
+          "locale" : "en_US"
+        },
+        {
+          "customName" : null,
+          "description" : "Screenscribe Pro",
+          "displayName" : "Screenscribe Pro",
+          "locale" : "pl"
+        }
+      ],
+      "name" : "Screenscribe Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "9.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "6739151001",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Hosted transcription, issue detection and shareable review reports, billed monthly.",
+              "displayName" : "Screenscribe Pro Monthly",
+              "locale" : "en_US"
+            },
+            {
+              "description" : "Transkrypcja, wykrywanie problemów i raporty do udostępniania w chmurze, płatne co miesiąc.",
+              "displayName" : "Screenscribe Pro miesięcznie",
+              "locale" : "pl"
+            }
+          ],
+          "productID" : "io.vetcoders.screenscribe.pro.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Screenscribe Pro Monthly",
+          "subscriptionGroupID" : "21581124",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "99.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "6739151002",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Hosted transcription, issue detection and shareable review reports, billed yearly.",
+              "displayName" : "Screenscribe Pro Annual",
+              "locale" : "en_US"
+            },
+            {
+              "description" : "Transkrypcja, wykrywanie problemów i raporty do udostępniania w chmurze, płatne raz w roku.",
+              "displayName" : "Screenscribe Pro rocznie",
+              "locale" : "pl"
+            }
+          ],
+          "productID" : "io.vetcoders.screenscribe.pro.annual",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Screenscribe Pro Annual",
+          "subscriptionGroupID" : "21581124",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

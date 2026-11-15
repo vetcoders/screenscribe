@@ -58,6 +58,23 @@ public struct SubscriptionPeriod: Sendable, Equatable {
             return count == 1 ? L10n.string("billing.period.year") : L10n.format("billing.period.years", count)
         }
     }
+
+    /// "1 week" / "3 days" style duration (intro offers), localized by Foundation.
+    public var localizedDuration: String {
+        let count = max(1, value)
+        var components = DateComponents()
+        switch unit {
+        case .day: components.day = count
+        case .week: components.weekOfMonth = count
+        case .month: components.month = count
+        case .year: components.year = count
+        }
+        let formatter = DateComponentsFormatter()
+        formatter.unitsStyle = .full
+        formatter.allowedUnits = [.day, .weekOfMonth, .month, .year]
+        formatter.maximumUnitCount = 1
+        return formatter.string(from: components) ?? localizedDescription
+    }
 }
 
 /// A StoreKit product reduced to the values the paywall renders.

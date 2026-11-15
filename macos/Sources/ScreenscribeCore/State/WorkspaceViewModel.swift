@@ -45,6 +45,8 @@ public final class WorkspaceViewModel {
     public private(set) var errorMessage: String?
     public private(set) var reviewsError: String?
     public var selection: WorkspaceSelection? = .record
+    /// Drives the "Import Video…" open panel (toolbar, menu command, HUD).
+    public var isImporterPresented = false
 
     @ObservationIgnored let queueStore: UploadQueueStore
     @ObservationIgnored private let mediaInspector: any MediaInspectorProtocol

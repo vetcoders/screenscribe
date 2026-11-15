@@ -188,7 +188,7 @@ public final class StoreKit2Client: StoreKitClientProtocol {
             let subscriptionPeriod = mapPeriod(subscription.subscriptionPeriod)
             period = subscriptionPeriod
             if let offer = subscription.introductoryOffer, await subscription.isEligibleForIntroOffer {
-                let offerPeriod = mapPeriod(offer.period).localizedDescription
+                let offerPeriod = mapPeriod(offer.period).localizedDuration
                 if offer.paymentMode == .freeTrial {
                     introductoryOffer = L10n.format("paywall.offer.trial", offerPeriod)
                 } else {

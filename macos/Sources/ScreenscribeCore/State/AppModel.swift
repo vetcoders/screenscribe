@@ -119,6 +119,14 @@ public final class AppModel {
         dependencies.configurationStore.save(updated)
     }
 
+    /// Two-way view of `configuration` for SwiftUI (`$model.editableConfiguration.x`).
+    /// Writes go through `updateConfiguration`, so they are clamped and
+    /// persisted, and the Cloud URL can never be changed this way.
+    public var editableConfiguration: AppConfiguration {
+        get { configuration }
+        set { updateConfiguration { $0 = newValue } }
+    }
+
     /// Restores every default except the Cloud URL.
     public func resetConfiguration() {
         var defaults = AppConfiguration.standard
@@ -130,22 +138,46 @@ public final class AppModel {
     // MARK: Launch
 
     /// Restores the session, starts the StoreKit listener and resumes the
-    /// upload queue. Safe to call more than once.
+    /// upload queue. Safe to call more than once and from several views.
+    ///
+    /// The work runs in a task owned by the model, not by the caller: a
+    /// view's `.task` is cancelled when the view goes away (e.g. the menu bar
+    /// window closes at launch), and a cancelled launch must not leave the
+    /// session, the profile or the product list half-loaded for good.
     public func start() async {
-        guard !hasStarted else { return }
-        hasStarted = true
-
-        await storeKit.startTransactionListener { [weak self] profile in
-            await self?.profileUpdated(profile)
+        if startTask == nil {
+            hasStarted = true
+            startTask = Task { [weak self] in
+                await self?.performStart()
+            }
         }
+        await startTask?.value
+    }
+
+    @ObservationIgnored private var startTask: Task<Void, Never>?
+
+    private func performStart() async {
         await workspace.start()
         recorder.start()
 
-        if await client.isSignedIn() {
+        // Install the Band 2 syncer before the listener starts: StoreKit
+        // redelivers unfinished transactions right after launch.
+        let restored = await client.isSignedIn()
+        if restored {
             isSignedIn = true
             await installSyncer()
+        }
+        await storeKit.startTransactionListener { [weak self] profile in
+            await self?.profileUpdated(profile)
+        }
+        if restored {
             await refreshProfile()
-            await workspace.didSignIn()
+            if isSignedIn, let profile = await storeKit.retryPendingSync() {
+                profileUpdated(profile)
+            }
+            if isSignedIn {
+                await workspace.didSignIn()
+            }
         }
         await paywall.loadProducts()
     }

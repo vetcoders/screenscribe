@@ -1,0 +1,359 @@
+/* Screenscribe for macOS — English (base). Keys must match pl.lproj exactly. */
+
+/* App & menus */
+"app.name" = "Screenscribe";
+"menu.record" = "New Recording";
+"menu.stop" = "Stop Recording";
+"menu.import" = "Import Video…";
+"menu.account" = "Account";
+"menu.subscription" = "Screenscribe Pro…";
+"menu.signin" = "Sign In…";
+"menu.signout" = "Sign Out";
+
+/* Common */
+"common.cancel" = "Cancel";
+"common.close" = "Close";
+"common.dismiss" = "Dismiss";
+"detail.missing" = "This item is no longer available";
+
+/* Sidebar & toolbar */
+"sidebar.record" = "Record";
+"sidebar.uploads" = "Uploads";
+"sidebar.uploads.empty" = "Recordings and imported videos appear here.";
+"sidebar.reviews" = "Recent Reviews";
+"sidebar.reviews.empty" = "Finished reviews appear here.";
+"sidebar.reviews.signedout" = "Sign in to see your reviews.";
+"toolbar.record" = "Record";
+"toolbar.record.help" = "Start a new screen recording (⇧⌘R)";
+"toolbar.stop" = "Stop";
+"toolbar.import" = "Import";
+"toolbar.import.help" = "Upload an existing screen recording (⌘O)";
+"toolbar.reviews.refresh" = "Refresh Reviews";
+
+/* Record pane */
+"record.title" = "Record a walkthrough";
+"record.subtitle" = "Talk through what you see. Screenscribe Cloud transcribes it, finds the issues and builds a shareable report with screenshots.";
+
+/* Recorder */
+"recorder.start" = "Start Recording";
+"recorder.start.hint" = "⇧⌘R from anywhere";
+"recorder.countdown" = "Recording starts in…";
+"recorder.preparing" = "Preparing capture…";
+"recorder.finalizing" = "Saving recording…";
+"recorder.pause" = "Pause";
+"recorder.resume" = "Resume";
+"recorder.paused" = "Paused";
+"recorder.stop" = "Stop";
+"recorder.discard" = "Discard";
+"recorder.discard.confirm" = "Discard this recording? It cannot be recovered.";
+"recorder.saved" = "Last recording: %1$@ · %2$@";
+"recorder.error.noaudio" = "Turn on system audio or the microphone: the review is built from your narration.";
+"recorder.stopped.saved" = "Recording stopped (%@). Everything captured so far was saved.";
+"recorder.stopped.lost" = "Recording stopped (%@). Nothing could be saved.";
+"recorder.source" = "Source";
+"recorder.source.display" = "Display";
+"recorder.source.window" = "Window";
+"recorder.source.application" = "App";
+"recorder.source.refresh" = "Refresh";
+"recorder.source.privacy" = "Screenscribe windows, including this one and the menu bar HUD, are never recorded.";
+"recorder.window.choose" = "Choose a window";
+"recorder.application.choose" = "Choose an app";
+"recorder.permission.screen.title" = "Screen Recording access needed";
+"recorder.permission.screen.detail" = "Allow Screenscribe in System Settings › Privacy & Security › Screen & System Audio Recording, then come back here.";
+"recorder.permission.screen.settings" = "Screen Recording is turned off for Screenscribe. Turn it on in System Settings, then try again.";
+"recorder.permission.grant" = "Allow Access";
+"recorder.permission.settings" = "Open System Settings";
+"recorder.permission.recheck" = "Check Again";
+"recorder.permission.mic.ask" = "Allow the microphone to record your narration.";
+"recorder.permission.mic.denied" = "Microphone access is off. Turn it on in System Settings to record narration.";
+"recorder.permission.mic.allow" = "Allow Microphone";
+
+/* Capture engine */
+"capture.display.fallback" = "Display %ld";
+"capture.error.busy" = "A recording is already running.";
+"capture.error.idle" = "No recording is running.";
+"capture.error.permission" = "Screen Recording permission is required.";
+"capture.error.microphone" = "Microphone permission is required for narration.";
+"capture.error.source" = "The selected display, window or app is no longer available.";
+"capture.error.noframes" = "No video was captured. Make sure the selected source is visible on screen.";
+"capture.error.stream" = "Screen capture failed: %@";
+"capture.error.writer" = "The recording could not be written: %@";
+
+/* Review options */
+"options.title" = "Review";
+"options.preset" = "Preset";
+"options.language" = "Language";
+"options.visibility" = "Visibility";
+"options.prompt" = "Focus";
+"options.prompt.placeholder" = "Optional: what should the review pay attention to?";
+"options.audio.system" = "Record system audio";
+"options.audio.microphone" = "Record microphone";
+"options.audio.device" = "Microphone";
+"options.audio.device.default" = "System default";
+"options.autoupload" = "Upload automatically when a recording ends";
+
+/* Presets */
+"preset.programming.title" = "Software";
+"preset.programming.detail" = "UI bugs, UX friction, accessibility and performance in apps and websites.";
+"preset.casual.title" = "General";
+"preset.casual.detail" = "A plain-language summary with action items for any walkthrough.";
+"preset.medical.title" = "Medical";
+"preset.medical.detail" = "Clinical software: workflow safety, data entry errors and documentation gaps.";
+"preset.veterinary.title" = "Veterinary";
+"preset.veterinary.detail" = "Veterinary practice software: patient records, treatment plans and clinic workflow.";
+
+/* Languages & visibility */
+"language.auto" = "Detect automatically";
+"language.en" = "English";
+"language.pl" = "Polish";
+"visibility.private" = "Private";
+"visibility.unlisted" = "Anyone with the link";
+"visibility.team" = "Team";
+
+/* Codecs & containers */
+"codec.h264" = "H.264 (most compatible)";
+"codec.hevc" = "HEVC (smaller files)";
+"container.mp4" = "MPEG-4 (.mp4)";
+"container.mov" = "QuickTime (.mov)";
+
+/* Upload queue */
+"queue.state.draft" = "Ready to upload";
+"queue.state.pending" = "Waiting";
+"queue.state.uploading" = "Uploading";
+"queue.state.processing" = "Processing";
+"queue.state.completed" = "Done";
+"queue.state.failed" = "Failed";
+"queue.state.billing" = "Subscription required";
+"queue.row.uploading" = "Uploading %@";
+"queue.action.upload" = "Upload";
+"queue.action.retry" = "Retry";
+"queue.action.cancel" = "Cancel Upload";
+"queue.action.remove" = "Remove";
+"queue.action.subscribe" = "Subscribe";
+"queue.recovered" = "Recovered after Screenscribe quit unexpectedly. Upload it when you are ready.";
+"queue.error.persist" = "The upload queue could not be saved: %@";
+
+/* Pipeline */
+"pipeline.title" = "Pipeline";
+"pipeline.upload" = "Upload";
+"pipeline.upload.bytes" = "%1$@ of %2$@";
+"pipeline.upload.done" = "Uploaded";
+"pipeline.upload.draft" = "Not uploaded yet";
+"pipeline.upload.waiting" = "Waiting to upload";
+"pipeline.upload.signin" = "Sign in to upload";
+"pipeline.upload.failed" = "Upload failed";
+"pipeline.retry.at" = "Next try at %@";
+"pipeline.status.waiting" = "Waiting";
+"pipeline.status.running" = "In progress";
+"pipeline.status.done" = "Done";
+"pipeline.status.failed" = "Failed";
+
+/* Job stages */
+"stage.queued" = "Queued";
+"stage.audio" = "Extracting audio";
+"stage.transcribe" = "Transcribing";
+"stage.detect" = "Detecting issues";
+"stage.screenshots" = "Capturing screenshots";
+"stage.analyze" = "Analyzing";
+"stage.report" = "Building report";
+"stage.done" = "Done";
+"stage.unknown" = "Processing";
+"job.error.generic" = "Processing failed on Screenscribe Cloud.";
+
+/* Hosted review */
+"review.copy" = "Copy Share Link";
+"review.copied" = "Copied";
+"review.copy.help" = "Copy the link to this review";
+"review.open" = "Open in Browser";
+"review.open.help" = "Open this review in your default browser";
+"review.reload" = "Reload";
+"review.error.title" = "The review could not be loaded";
+"review.error.private" = "This review is private. Sign in with the account that owns it.";
+"review.error.missing" = "This review no longer exists.";
+
+/* Menu bar HUD */
+"hud.open" = "Open Screenscribe";
+"hud.settings" = "Settings";
+"hud.quit" = "Quit Screenscribe";
+"hud.queue" = "UPLOADS";
+"hud.queue.more" = "+%ld more";
+"hud.reviews" = "RECENT REVIEWS";
+"hud.source.none" = "No source selected";
+"hud.source.change" = "Change…";
+
+/* Import */
+"import.error.type" = "“%@” files are not supported. Use MP4, MOV or M4V.";
+"import.error.unreadable" = "“%@” could not be read.";
+"import.error.empty" = "The file is empty.";
+"import.error.novideo" = "The file has no video track.";
+"import.error.noaudio" = "The file has no audio track. Screenscribe needs your narration to build a review.";
+"import.error.short" = "The video is too short to review.";
+"import.error.copy" = "The file could not be copied into Screenscribe: %@";
+
+/* Account */
+"account.signedin" = "Signed in";
+"account.plan.pro" = "Pro";
+"account.plan.none" = "Free";
+"account.subscribe" = "Get Screenscribe Pro";
+"account.minutes" = "%1$@ of %2$@ min used";
+"account.source.appstore" = "App Store";
+"account.source.stripe" = "Web";
+"account.source.other" = "Other";
+
+/* Sign in */
+"signin.title" = "Sign in to Screenscribe";
+"signin.subtitle" = "Your recordings are processed in Screenscribe Cloud and reviews are saved to your account.";
+"signin.apple" = "Sign in with Apple";
+"signin.apple.failed" = "Sign in with Apple failed: %@";
+"signin.apple.notoken" = "Apple did not return an identity token. Please try again.";
+"signin.or" = "or";
+"signin.mode" = "Mode";
+"signin.mode.signin" = "Sign In";
+"signin.mode.register" = "Create Account";
+"signin.email" = "Email";
+"signin.email.prompt" = "you@example.com";
+"signin.credential" = "Password";
+"signin.credential.hint" = "At least %ld characters.";
+"signin.submit.signin" = "Sign In";
+"signin.submit.register" = "Create Account";
+"signin.error.invalid" = "Enter a valid email address and password.";
+"signin.error.credential.short" = "Use at least %ld characters.";
+"signin.error.rejected" = "Email or password is incorrect.";
+"signin.error.exists" = "An account with this email already exists. Sign in instead.";
+"signin.expired" = "Your session expired. Please sign in again.";
+"signin.server.help" = "Screenscribe Cloud server (change it in Settings › Cloud)";
+"signin.device.title" = "Sign in with a browser";
+"signin.device.detail" = "Use an account you created on the web.";
+"signin.device.start" = "Use Browser";
+"signin.device.instructions" = "Confirm this code on the page that opened in your browser. Screenscribe signs you in as soon as you approve it.";
+"signin.device.code.a11y" = "Sign-in code %@";
+"signin.device.copy" = "Copy Code";
+"signin.device.copied" = "Copied";
+"signin.device.open" = "Open Page";
+"signin.device.waiting" = "Waiting for approval · expires in %@";
+"signin.device.denied" = "Sign-in was declined in the browser.";
+"signin.device.expired" = "The sign-in code expired. Start again.";
+
+/* Paywall */
+"paywall.subtitle" = "Turn screen recordings into reviewed, shareable reports.";
+"paywall.reason.inactive" = "Uploading needs an active Screenscribe Pro subscription.";
+"paywall.reason.quota" = "You have used all processing minutes for this period. Upgrade or wait for the next renewal.";
+"paywall.feature.pipeline" = "Transcription, issue detection and screenshots in Screenscribe Cloud";
+"paywall.feature.reports" = "Structured reports with timestamps and action items";
+"paywall.feature.share" = "Private or link-shared reviews for your team";
+"paywall.active" = "Screenscribe Pro is active";
+"paywall.active.renews" = "Renews or ends on %@";
+"paywall.loading" = "Loading plans…";
+"paywall.retry" = "Load Plans Again";
+"paywall.savings" = "Save %ld%%";
+"paywall.offer.trial" = "Free for %@, then renews automatically";
+"paywall.offer.intro" = "Introductory price %1$@ for %2$@";
+"paywall.subscribe" = "Subscribe";
+"paywall.signin.subscribe" = "Sign In to Subscribe";
+"paywall.restore" = "Restore Purchases";
+"paywall.manage" = "Manage Subscription";
+"paywall.status.syncing" = "Purchase received. Activating your subscription…";
+"paywall.status.pending" = "The purchase is waiting for approval.";
+"paywall.status.nothing" = "No active Screenscribe Pro purchase was found for this Apple Account.";
+"paywall.legal.renewal" = "Payment is charged to your Apple Account when you confirm the purchase. The subscription renews automatically unless it is cancelled at least 24 hours before the end of the current period; renewal is charged within the 24 hours before the period ends. Manage or cancel it any time in your App Store account settings.";
+"paywall.error.unavailable" = "Plans are not available right now. Check your connection and try again.";
+"paywall.error.load" = "Plans could not be loaded: %@";
+"paywall.error.generic" = "The purchase could not be completed.";
+"paywall.error.signin" = "Sign in to subscribe. The subscription is attached to your Screenscribe account.";
+"paywall.error.sync" = "The purchase went through, but Screenscribe Cloud could not activate it yet: %@. It will retry automatically.";
+"paywall.error.notallowed" = "Purchases are not allowed on this Mac.";
+"paywall.error.product" = "This plan is not available in your region.";
+"paywall.error.verification" = "The App Store could not verify this purchase.";
+
+/* Billing periods */
+"billing.period.day" = "per day";
+"billing.period.days" = "every %ld days";
+"billing.period.week" = "per week";
+"billing.period.weeks" = "every %ld weeks";
+"billing.period.month" = "per month";
+"billing.period.months" = "every %ld months";
+"billing.period.year" = "per year";
+"billing.period.years" = "every %ld years";
+
+/* Legal */
+"legal.terms" = "Terms of Use";
+"legal.privacy" = "Privacy Policy";
+
+/* Permissions */
+"permission.screen" = "Screen Recording";
+"permission.microphone" = "Microphone";
+"permission.request" = "Request";
+"permission.open" = "Open Settings";
+"permission.state.granted" = "Allowed";
+"permission.state.denied" = "Not allowed";
+"permission.state.undetermined" = "Not asked yet";
+"permission.state.restricted" = "Restricted";
+
+/* Settings */
+"settings.tab.general" = "General";
+"settings.tab.recording" = "Recording";
+"settings.tab.account" = "Account";
+"settings.tab.cloud" = "Cloud";
+"settings.section.review" = "Review defaults";
+"settings.section.upload" = "Upload";
+"settings.section.privacy" = "Privacy";
+"settings.section.video" = "Video";
+"settings.section.audio" = "Audio";
+"settings.section.permissions" = "Permissions";
+"settings.section.account" = "Account";
+"settings.section.subscription" = "Subscription";
+"settings.section.data" = "Your data";
+"settings.section.cloud" = "Screenscribe Cloud";
+"settings.autoupload.detail" = "Otherwise recordings wait in Uploads until you start them.";
+"settings.privacy.note" = "Transcription and analysis run in Screenscribe Cloud. The app never asks for AI provider keys and uploads recordings only to the server set in Cloud settings.";
+"settings.reset" = "Restore Defaults";
+"settings.codec" = "Codec";
+"settings.codec.detail" = "HEVC files are smaller; H.264 plays everywhere.";
+"settings.container" = "File format";
+"settings.fps" = "Frame rate";
+"settings.fps.value" = "%ld fps";
+"settings.countdown" = "Countdown";
+"settings.countdown.off" = "Off";
+"settings.countdown.value" = "%ld s";
+"settings.cursor" = "Show the pointer";
+"settings.account.email" = "Email";
+"settings.account.plan" = "Plan";
+"settings.account.source" = "Billed through";
+"settings.account.renews" = "Renews or ends";
+"settings.account.usage" = "Usage";
+"settings.account.refresh" = "Refresh";
+"settings.account.manage" = "Manage Account…";
+"settings.account.manage.detail" = "Export your data or delete your Screenscribe account and its reviews on the account page.";
+"settings.account.delete" = "Delete Account…";
+"settings.account.signedout" = "You are not signed in.";
+"settings.account.signout.confirm" = "Sign out of Screenscribe on this Mac?";
+"settings.cloud.url" = "Server URL";
+"settings.cloud.current" = "Connected to";
+"settings.cloud.local" = "Local";
+"settings.cloud.default" = "Use Default";
+"settings.cloud.apply" = "Apply";
+"settings.cloud.applied" = "Now using %@.";
+"settings.cloud.hint" = "HTTPS is required. Plain HTTP is accepted only for local development on 127.0.0.1 or localhost.";
+"settings.cloud.confirm" = "Switch Screenscribe Cloud server?";
+"settings.cloud.confirm.detail" = "Sessions belong to one server, so you will be signed out.";
+"settings.cloud.confirm.action" = "Switch and Sign Out";
+"settings.cloud.error.malformed" = "This is not a valid URL.";
+"settings.cloud.error.insecure" = "Use HTTPS. Plain HTTP works only for 127.0.0.1 or localhost.";
+"settings.cloud.error.scheme" = "Only https:// URLs are supported.";
+"settings.cloud.error.host" = "The URL has no host name.";
+"settings.cloud.error.credentials" = "Remove the user name and password from the URL.";
+
+/* Errors */
+"error.auth.required" = "Please sign in again.";
+"error.cancelled" = "Cancelled.";
+"error.http.status" = "Screenscribe Cloud returned an error (HTTP %ld).";
+"error.http.message" = "Screenscribe Cloud returned an error (HTTP %1$ld): %2$@";
+"error.network" = "Network error: %@";
+"error.response.invalid" = "Screenscribe Cloud sent an unexpected response.";
+"error.response.decoding" = "The response from Screenscribe Cloud could not be read.";
+"error.url.invalid" = "The server returned an invalid link.";
+"error.url.crossorigin" = "Blocked a link to a different server.";
+"error.keychain" = "Keychain error: %@";
+"error.upload.empty" = "The recording is empty.";
+"error.upload.unreadable" = "“%@” could not be read for upload.";
+"error.upload.scratch" = "There is not enough space to prepare the upload.";
