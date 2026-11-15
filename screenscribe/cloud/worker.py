@@ -195,7 +195,9 @@ def _extract_job_audio(video: Path, audio_path: Path) -> Path:
     if probe.returncode == 0 and len(stream_lines) >= 2:
         count = len(stream_lines)
         inputs = "".join(f"[0:a:{idx}]" for idx in range(count))
-        mix_filter = f"{inputs}amix=inputs={count}:duration=longest:dropout_transition=0:normalize=0[aout]"
+        mix_filter = (
+            f"{inputs}amix=inputs={count}:duration=longest:dropout_transition=0:normalize=0[aout]"
+        )
         mix_cmd = [
             "ffmpeg",
             "-i",
@@ -267,7 +269,9 @@ def run_pipeline(ctx: JobContext) -> PipelineResult:
         preset = load_preset(job.preset)
     except PresetError as exc:
         raise PipelineFailure("queued", "Unknown analysis preset.", refundable=True) from exc
-    prompt = "\n\n".join(part for part in (preset.prompt, (job.prompt_override or "").strip()) if part)
+    prompt = "\n\n".join(
+        part for part in (preset.prompt, (job.prompt_override or "").strip()) if part
+    )
     config = build_pipeline_config(ctx.settings, language=ctx.language, prompt=prompt or None)
     keywords = KeywordsConfig.load(None, preset=preset)
     config.keywords = keywords
@@ -363,7 +367,9 @@ def run_pipeline(ctx: JobContext) -> PipelineResult:
     if detections:
         # 4. Screenshots.
         ctx.progress("screenshots")
-        screenshots = extract_screenshots_for_detections(video, detections, output_dir / "screenshots")
+        screenshots = extract_screenshots_for_detections(
+            video, detections, output_dir / "screenshots"
+        )
         if not screenshots:
             errors.append(
                 {
@@ -626,7 +632,9 @@ class JobWorker:
         try:
             if not settings.has_ai_capacity:
                 raise PipelineFailure(
-                    "queued", "Processing capacity is not configured on this server.", refundable=True
+                    "queued",
+                    "Processing capacity is not configured on this server.",
+                    refundable=True,
                 )
             video_path = Path(job.video_path)
             if not video_path.is_file():

@@ -390,7 +390,9 @@ def restore_manual_frame_image(entry: HostedReview, frame: dict[str, Any]) -> No
     frame["frameDataUrl"] = data_url
 
 
-def build_review_state_from_report(entry: HostedReview, report_data: dict[str, Any]) -> dict[str, Any]:
+def build_review_state_from_report(
+    entry: HostedReview, report_data: dict[str, Any]
+) -> dict[str, Any]:
     human_raw = report_data.get("human_review")
     human = human_raw if isinstance(human_raw, dict) else {}
     findings = {
@@ -452,7 +454,9 @@ def hydrate_session_manual_state(entry: HostedReview, report_data: dict[str, Any
         if not math.isfinite(timestamp) or timestamp < 0:
             continue
         data_url = frame.get("frameDataUrl")
-        frame_base64 = data_url.split(",", 1)[1] if isinstance(data_url, str) and "," in data_url else ""
+        frame_base64 = (
+            data_url.split(",", 1)[1] if isinstance(data_url, str) and "," in data_url else ""
+        )
         result_payload = frame.get("result")
         result = result_payload if isinstance(result_payload, dict) else None
         restored_markers[marker_id] = ManualFrameMarker(
@@ -487,7 +491,9 @@ def review_state_snapshot(entry: HostedReview) -> dict[str, Any]:
     report_data = load_report_json(entry)
     state = build_review_state_from_report(entry, report_data)
     with session.lock:
-        session.reset_generation = max(session.reset_generation, _report_reset_generation(report_data))
+        session.reset_generation = max(
+            session.reset_generation, _report_reset_generation(report_data)
+        )
         session_markers = list(session.markers.values())
         reset_generation = session.reset_generation
     hydrate_state_with_session_frames(state, session_markers)
@@ -512,7 +518,9 @@ def apply_review_save(entry: HostedReview, review: Any) -> dict[str, Any]:
     ):
         raise HTTPException(status_code=422, detail="Invalid review reset generation.")
     with session.lock:
-        session.reset_generation = max(session.reset_generation, _report_reset_generation(report_data))
+        session.reset_generation = max(
+            session.reset_generation, _report_reset_generation(report_data)
+        )
         current_generation = session.reset_generation
         markers = list(session.markers.values())
         results = list(session.results.values())
@@ -583,7 +591,9 @@ def apply_review_save(entry: HostedReview, review: Any) -> dict[str, Any]:
         reviewed_at = str(review.get("reviewed_at") or "")
         reviewer = str(review.get("reviewer") or "")
         work_items.extend(
-            work_item_from_review_manual_frame(frame, reviewer=reviewer, reviewed_at=reviewed_at).to_dict()
+            work_item_from_review_manual_frame(
+                frame, reviewer=reviewer, reviewed_at=reviewed_at
+            ).to_dict()
             for frame in persisted_manual_frames
         )
         report_data["human_review"] = {
@@ -620,9 +630,7 @@ def apply_review_reset(entry: HostedReview) -> dict[str, Any]:
     session = entry.session
     report_data = load_report_json(entry)
     with session.lock:
-        reset_generation = (
-            max(session.reset_generation, _report_reset_generation(report_data)) + 1
-        )
+        reset_generation = max(session.reset_generation, _report_reset_generation(report_data)) + 1
     report_data.pop("human_review", None)
     report_data.pop("manual_review", None)
     work_items = report_data.get("work_items")
@@ -749,7 +757,9 @@ def analyze_single_marker(
             if marker.severity is not None:
                 result.severity = marker.severity
             session.results[marker_id] = result
-            advance_response_id_cas(session, previous_response_id, finding.response_id, logger=logger)
+            advance_response_id_cas(
+                session, previous_response_id, finding.response_id, logger=logger
+            )
             marker.status = "completed"
         return {
             "marker_id": marker_id,
@@ -792,7 +802,9 @@ def _action_items(review: dict[str, Any], analysis: dict[str, Any]) -> list[str]
     return []
 
 
-def build_agent_manifest(services: CloudServices, record: ReviewRecord, report: dict[str, Any]) -> dict[str, Any]:
+def build_agent_manifest(
+    services: CloudServices, record: ReviewRecord, report: dict[str, Any]
+) -> dict[str, Any]:
     """Structured coding-agent handoff derived from the canonical report.json.
 
     Mirrors the browser ZIP export's ``agent_manifest.json`` field names. The
@@ -820,7 +832,10 @@ def build_agent_manifest(services: CloudServices, record: ReviewRecord, report: 
         analysis_raw = finding.get("unified_analysis")
         analysis = analysis_raw if isinstance(analysis_raw, dict) else {}
         severity = str(
-            review.get("severity_override") or review.get("severity") or analysis.get("severity") or "medium"
+            review.get("severity_override")
+            or review.get("severity")
+            or analysis.get("severity")
+            or "medium"
         ).lower()
         screenshot = finding.get("screenshot")
         screenshot_name = screenshot if isinstance(screenshot, str) and screenshot else None
@@ -831,7 +846,10 @@ def build_agent_manifest(services: CloudServices, record: ReviewRecord, report: 
                 "priority": _SEVERITY_PRIORITY.get(severity, "P2"),
                 "severity": severity,
                 "title": str(
-                    review.get("summary_override") or analysis.get("summary") or finding.get("text") or ""
+                    review.get("summary_override")
+                    or analysis.get("summary")
+                    or finding.get("text")
+                    or ""
                 ),
                 "user_said": str(finding.get("text") or ""),
                 "context": str(finding.get("context") or ""),
@@ -843,7 +861,9 @@ def build_agent_manifest(services: CloudServices, record: ReviewRecord, report: 
                 "annotations": list(review.get("annotations") or []),
                 "action_items": _action_items(review, analysis),
                 "suggested_fix": str(analysis.get("suggested_fix") or ""),
-                "affected_components": [str(item) for item in analysis.get("affected_components") or []],
+                "affected_components": [
+                    str(item) for item in analysis.get("affected_components") or []
+                ],
                 "screenshot": f"screenshots/{screenshot_name}" if screenshot_name else None,
                 "screenshot_url": (
                     settings.url(f"/r/{share}/screenshots/{quote(screenshot_name)}")
@@ -890,7 +910,9 @@ def build_agent_manifest(services: CloudServices, record: ReviewRecord, report: 
                 "issues_detected": [str(item) for item in result.get("issues_detected") or []],
                 "screenshot": f"manual_frames/{frame_name}" if frame_name else None,
                 "screenshot_url": (
-                    settings.url(f"/r/{share}/manual_frames/{quote(frame_name)}") if frame_name else None
+                    settings.url(f"/r/{share}/manual_frames/{quote(frame_name)}")
+                    if frame_name
+                    else None
                 ),
             }
         )
@@ -1158,7 +1180,9 @@ def _glossary_dir(services: CloudServices, record: ReviewRecord) -> Path:
     return directory
 
 
-def _toolbelt(services: CloudServices, access: ReviewAccess, report: dict[str, Any]) -> ReportToolbelt:
+def _toolbelt(
+    services: CloudServices, access: ReviewAccess, report: dict[str, Any]
+) -> ReportToolbelt:
     return ReportToolbelt(
         report,
         output_dir=access.entry.output_dir,
@@ -1251,7 +1275,9 @@ def build_review_host_router() -> APIRouter:
             except HTTPException:
                 raise
             except Exception as exc:
-                logger.error("Hosted save failed for %s: %s", access.record.share_id, type(exc).__name__)
+                logger.error(
+                    "Hosted save failed for %s: %s", access.record.share_id, type(exc).__name__
+                )
                 raise HTTPException(status_code=500, detail="Failed to save review state.") from exc
 
     @router.post(f"{api}/reset-review")
@@ -1264,8 +1290,12 @@ def build_review_host_router() -> APIRouter:
             except HTTPException:
                 raise
             except Exception as exc:
-                logger.error("Hosted reset failed for %s: %s", access.record.share_id, type(exc).__name__)
-                raise HTTPException(status_code=500, detail="Failed to reset review state.") from exc
+                logger.error(
+                    "Hosted reset failed for %s: %s", access.record.share_id, type(exc).__name__
+                )
+                raise HTTPException(
+                    status_code=500, detail="Failed to reset review state."
+                ) from exc
         return JSONResponse(content=outcome)
 
     @router.post(f"{api}/corrections")
@@ -1291,8 +1321,12 @@ def build_review_host_router() -> APIRouter:
             except transcript_corrections.CorrectionRejected as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except OSError as exc:
-                raise HTTPException(status_code=500, detail="Failed to write corrections ledger.") from exc
-            loaded = await run_in_threadpool(transcript_corrections.load_ledger, access.entry.output_dir)
+                raise HTTPException(
+                    status_code=500, detail="Failed to write corrections ledger."
+                ) from exc
+            loaded = await run_in_threadpool(
+                transcript_corrections.load_ledger, access.entry.output_dir
+            )
         return JSONResponse(
             content={"status": "saved", "entry": dict(entry), "corrections": loaded.entries}
         )
@@ -1302,7 +1336,9 @@ def build_review_host_router() -> APIRouter:
         session = access.entry.session
         with session.lock:
             if body.reset_generation != session.reset_generation:
-                raise HTTPException(status_code=409, detail="Review reset invalidated this manual frame.")
+                raise HTTPException(
+                    status_code=409, detail="Review reset invalidated this manual frame."
+                )
         marker_id = str(uuid.uuid4())
         frame_path = await run_in_threadpool(
             store_manual_frame_image, access.entry.output_dir, marker_id, body.frame_base64
@@ -1322,7 +1358,9 @@ def build_review_host_router() -> APIRouter:
                 session.markers[marker_id] = marker
         if stale:
             _remove_manual_frame_image(access.entry.output_dir, frame_path)
-            raise HTTPException(status_code=409, detail="Review reset invalidated this manual frame.")
+            raise HTTPException(
+                status_code=409, detail="Review reset invalidated this manual frame."
+            )
         return JSONResponse(
             content={
                 "marker_id": marker_id,
@@ -1406,7 +1444,9 @@ def build_review_host_router() -> APIRouter:
         session = access.entry.session
         with session.lock:
             if reset_generation is not None and reset_generation != session.reset_generation:
-                raise HTTPException(status_code=409, detail="Review reset invalidated this voice transcription.")
+                raise HTTPException(
+                    status_code=409, detail="Review reset invalidated this voice transcription."
+                )
             previous_response_id = session.last_response_id
         try:
             result = await run_in_threadpool(
@@ -1423,8 +1463,12 @@ def build_review_host_router() -> APIRouter:
                     raise HTTPException(
                         status_code=409, detail="Review reset invalidated this voice transcription."
                     )
-                advance_response_id_cas(session, previous_response_id, result.response_id, logger=logger)
-            return JSONResponse(content=serialize_stt_result(result, quality_warning=quality_warning))
+                advance_response_id_cas(
+                    session, previous_response_id, result.response_id, logger=logger
+                )
+            return JSONResponse(
+                content=serialize_stt_result(result, quality_warning=quality_warning)
+            )
         except HTTPException:
             raise
         except Exception as exc:
@@ -1495,7 +1539,9 @@ def build_review_host_router() -> APIRouter:
         )
 
     @router.post(f"{api}/agent/chat")
-    async def agent_chat(request: Request, access: Access, payload: AgentChatRequest) -> dict[str, Any]:
+    async def agent_chat(
+        request: Request, access: Access, payload: AgentChatRequest
+    ) -> dict[str, Any]:
         services = get_services(request)
         config = await paid_ai_config(request, access)
         report = await run_in_threadpool(load_report_json, access.entry)

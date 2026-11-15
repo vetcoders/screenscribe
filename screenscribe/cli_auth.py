@@ -83,9 +83,7 @@ def _cloud_login(cloud_url: str | None, *, no_browser: bool) -> None:
             webbrowser.open(device.verification_url)
         except (webbrowser.Error, OSError):  # browser launch is best-effort
             console.print("[dim]Could not open a browser; use the URL above.[/]")
-    console.print(
-        f"[dim]Waiting for approval on {escape(device.host)} (Ctrl+C to abort)...[/]"
-    )
+    console.print(f"[dim]Waiting for approval on {escape(device.host)} (Ctrl+C to abort)...[/]")
 
     try:
         session = complete_cloud_login(device)

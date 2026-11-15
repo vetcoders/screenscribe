@@ -829,9 +829,7 @@ def build_publish_bundle(source: ReviewSource, *, visibility: str) -> PublishBun
     if transcript is not None:
         members.append(_Member(transcript_name, "transcript", transcript.encode("utf-8")))
 
-    has_review_state = (
-        clean.get("human_review") is not None or clean.get("work_items") is not None
-    )
+    has_review_state = clean.get("human_review") is not None or clean.get("work_items") is not None
     if has_review_state:
         state = {"human_review": clean.get("human_review"), "work_items": clean.get("work_items")}
         members.append(_Member(REVIEW_STATE_NAME, "review_state", data=_pretty_json(state)))
