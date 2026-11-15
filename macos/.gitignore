@@ -1,0 +1,9 @@
+# SwiftPM / Xcode build products — never tracked (scripts/ss_verify.py no-junk gate).
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+*.xcuserstate
+xcuserdata/
+.DS_Store
