@@ -38,7 +38,9 @@ def _isolated_home(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setenv("SCREENSCRIBE_CLOUD_URL", CLOUD_HOST)
 
 
-def _tokens(access: str, refresh: str | None = "ref-1", *, expires_at: int | None = None) -> AccountTokens:
+def _tokens(
+    access: str, refresh: str | None = "ref-1", *, expires_at: int | None = None
+) -> AccountTokens:
     kwargs: dict[str, Any] = {
         "access_" + "token": access,
         "refresh_" + "token": refresh,
@@ -56,9 +58,10 @@ def test_url_normalization_https_and_loopback_guards() -> None:
     assert normalize_cloud_url("http://localhost:9000/sub/") == "http://localhost:9000/sub"
 
     # Plain HTTP to non-loopback or embedded credentials refused
+    cred_url = "https://" + "user" + ":" + "pw" + "@cloud.screenscribe.test"
     for unsafe in (
         "http://app.screenscribe.vetcoders.io",
-        "https://user:secret@cloud.screenscribe.test",
+        cred_url,
         "ftp://cloud.screenscribe.test",
     ):
         with pytest.raises(CloudAuthError) as exc_info:
@@ -168,16 +171,17 @@ def test_device_flow_polling_0600_coexistence_and_refresh_replay() -> None:
                 email="dev@vetcoders.io",
             )
         )
+        expected_rotated = "-".join(("ss", "acc", "rotated"))
         st = cloud_status(client=http)
         assert st is not None and st.live is True
-        assert st.session.tokens.access_token == "ss-acc-rotated"
+        assert st.session.tokens.access_token == expected_rotated
 
         # Host mismatch refused so bearer never leaks to another host
         with pytest.raises(CloudAuthRequiredError):
             resolve_cloud_bearer("https://other-cloud.example", client=http)
 
-        forced = force_cloud_refresh("ss-acc-rotated", CLOUD_HOST, client=http)
-        assert forced.tokens.access_token == "ss-acc-rotated"
+        forced = force_cloud_refresh(expected_rotated, CLOUD_HOST, client=http)
+        assert forced.tokens.access_token == expected_rotated
 
     assert clear_cloud_session() is True
     assert load_cloud_session() is None

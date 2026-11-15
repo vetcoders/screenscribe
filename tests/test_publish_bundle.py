@@ -81,7 +81,9 @@ def test_deterministic_archive_allowlist_sanitization_and_symlinks(tmp_path: Pat
         "frameDataUrl": "data:image/png;base64,AAAA",
         "human_review": {
             "reviewer": "Maciej",
-            "findings": {"1": {"verdict": "confirmed", "frameDataUrl": "data:image/png;base64,BBBB"}},
+            "findings": {
+                "1": {"verdict": "confirmed", "frameDataUrl": "data:image/png;base64,BBBB"}
+            },
         },
         "findings": [
             {

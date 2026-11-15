@@ -9,13 +9,15 @@ import json
 import struct
 import tarfile
 import zlib
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
 
+from screenscribe.agent.tools import responses_tool_schemas
 from screenscribe.cloud.app import create_cloud_app
-from screenscribe.cloud.security import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
+from screenscribe.cloud.security import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE, isoformat_z
 from tests.cloud_test_helpers import auth_payload, make_cloud_settings
 
 
@@ -33,8 +35,8 @@ def _register_and_subscribe(client: TestClient, app: Any, email: str) -> str:
         status="active",
         minutes_limit=300.0,
         now=now,
-        period_start="2026-06-01T00:00:00Z",
-        period_end="2026-07-01T00:00:00Z",
+        period_start=isoformat_z(now - timedelta(days=1)),
+        period_end=isoformat_z(now + timedelta(days=30)),
     )
     return str(reg["access_token"])
 
@@ -95,9 +97,7 @@ def test_publish_bundle_zip_slip_symlink_rejection_and_idempotency(tmp_path: Pat
         # 3. Valid bundle + video streams cleanly, regenerates HTML, and replays Idempotency-Key
         video_bytes = b"".join(f"frame-{idx:04d}-payload-".encode() for idx in range(120))
         video_sha = hashlib.sha256(video_bytes).hexdigest()
-        jpeg_bytes = (
-            b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
-        )
+        jpeg_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
         report_obj = {
             "video": "demo.mp4",
             "generated_at": "2026-06-15T12:00:00Z",
@@ -174,7 +174,9 @@ def test_publish_bundle_zip_slip_symlink_rejection_and_idempotency(tmp_path: Pat
         share_id = body1["share_id"]
         assert body1["share_url"] == f"http://testserver/r/{share_id}"
         assert body1["video_stream_url"] == f"http://testserver/r/{share_id}/video"
-        assert body1["report_json_url"] == f"http://testserver/api/v1/reviews/{share_id}/report.json"
+        assert (
+            body1["report_json_url"] == f"http://testserver/api/v1/reviews/{share_id}/report.json"
+        )
 
         pub2 = client.post(
             "/api/v1/reviews/publish",
@@ -208,9 +210,13 @@ def test_hosted_review_visibility_bearer_cookie_bridge_range_206_and_sandboxed_a
     video_bytes = bytes(range(256)) * 20  # 5120 bytes
     video_sha = hashlib.sha256(video_bytes).hexdigest()
     png_1x1 = _make_1x1_png()
-    png_data_url = "data:image/png;base64," + base64.b64encode(png_1x1).decode("ascii")
+    png_b64 = base64.b64encode(png_1x1).decode("ascii")
 
-    with TestClient(app) as owner_client, TestClient(app) as anon_client, TestClient(app) as other_client:
+    with (
+        TestClient(app) as owner_client,
+        TestClient(app) as anon_client,
+        TestClient(app) as other_client,
+    ):
         owner_bearer = _register_and_subscribe(owner_client, app, "owner@example.com")
         other_reg = other_client.post(
             "/api/v1/auth/register",
@@ -325,7 +331,7 @@ def test_hosted_review_visibility_bearer_cookie_bridge_range_206_and_sandboxed_a
             headers=csrf_headers,
             json={
                 "timestamp": 3.5,
-                "frame_base64": png_data_url,
+                "frame_base64": png_b64,
                 "transcript": "Extra frame",
                 "notes": "Button glitch",
                 "reset_generation": 0,
@@ -350,7 +356,7 @@ def test_hosted_review_visibility_bearer_cookie_bridge_range_206_and_sandboxed_a
 
         manifest_res = owner_client.get(f"/r/{priv_share}/api/export/agent-manifest")
         assert manifest_res.status_code == 200
-        assert manifest_res.json()["metadata"]["share_id"] == priv_share
+        assert manifest_res.json()["meta"]["share_id"] == priv_share
 
         # Hosted Floating Agent: verify ReportToolbelt has repo_root=None (zero host-filesystem tools!)
         captured_tools: list[Any] = []
@@ -369,8 +375,13 @@ def test_hosted_review_visibility_bearer_cookie_bridge_range_206_and_sandboxed_a
         assert len(captured_tools) == 1
         toolbelt = captured_tools[0]
         assert toolbelt.repo_root is None
-        tool_names = {spec["name"] for spec in toolbelt.tool_specs()}
-        assert not any("repo" in name or "file" in name for name in tool_names)
+        tool_names = {
+            spec["name"]
+            for spec in responses_tool_schemas(include_repo=toolbelt.repo_root is not None)
+        }
+        assert "open_repo_file" not in tool_names
+        repo_attempt = json.loads(toolbelt.execute("open_repo_file", {"path": "pyproject.toml"}))
+        assert "error" in repo_attempt
 
         # Reset review clears human verdicts and increments reset_generation
         reset_res = owner_client.post(f"/r/{priv_share}/api/reset-review", headers=csrf_headers)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from screenscribe.cli_publish import (
     same_origin_url,
 )
 from screenscribe.cloud.app import create_cloud_app
+from screenscribe.cloud.security import isoformat_z
 from screenscribe.publish_bundle import RECEIPT_FILENAME
 from tests.cloud_test_helpers import auth_payload, make_cloud_settings
 
@@ -64,6 +66,7 @@ def _seed_cli_session(
 
 
 def _make_local_review(base: Path, stem: str = "demo") -> tuple[Path, Path]:
+    base.mkdir(parents=True, exist_ok=True)
     video = base / f"{stem}.mp4"
     video.write_bytes(b"mp4-recording-bytes-" * 80)
     review_dir = base / f"{stem}_review"
@@ -269,8 +272,8 @@ def test_cross_band_e2e_cli_publish_into_live_cloud_app(tmp_path: Path) -> None:
             status="active",
             minutes_limit=300.0,
             now=now,
-            period_start="2026-06-01T00:00:00Z",
-            period_end="2026-07-01T00:00:00Z",
+            period_start=isoformat_z(now - timedelta(days=1)),
+            period_end=isoformat_z(now + timedelta(days=30)),
         )
 
         session = _seed_cli_session(cloud_url=cloud_base, access=bearer)
@@ -292,7 +295,9 @@ def test_cross_band_e2e_cli_publish_into_live_cloud_app(tmp_path: Path) -> None:
             share_id = receipt["share_id"]
             assert share_id
             assert receipt["share_url"] == f"{cloud_base}/r/{share_id}"
-            assert receipt["report_json_url"] == f"{cloud_base}/api/v1/reviews/{share_id}/report.json"
+            assert (
+                receipt["report_json_url"] == f"{cloud_base}/api/v1/reviews/{share_id}/report.json"
+            )
 
             # Verify --no-video publish also works end-to-end across Band 3 -> Band 2!
             receipt_novid, _ = publish_existing_review(
