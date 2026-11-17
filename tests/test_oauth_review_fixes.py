@@ -344,7 +344,7 @@ def test_chatgpt_selection_never_persists_environment_only_secrets(
     config_env = tmp_path / ".config" / "screenscribe" / "config.env"
     config_env.parent.mkdir(parents=True)
     config_env.write_text(
-        "SCREENSCRIBE_STT_ENDPOINT=https://api.libraxis.cloud/v1/audio/transcriptions\n",
+        "SCREENSCRIBE_STT_ENDPOINT=https://api.libraxis.com/v1/audio/transcriptions\n",
         encoding="utf-8",
     )
     config_env.chmod(0o600)

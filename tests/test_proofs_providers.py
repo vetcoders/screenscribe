@@ -255,7 +255,7 @@ def test_xai_stt_probe_sends_nothing_when_stt_is_not_xai(
 ) -> None:
     """With STT on LibraxisAI the xAI probe must not send the STT key to api.x.ai."""
     config = ScreenScribeConfig()
-    config.stt_endpoint = "https://api.libraxis.cloud/v1/audio/transcriptions"
+    config.stt_endpoint = "https://api.libraxis.com/v1/audio/transcriptions"
     config.stt_api_key = "lbx-test-key"  # pragma: allowlist secret
     monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
     sent: list[str] = []
@@ -354,7 +354,7 @@ def test_receipts_never_carry_secrets_or_url_queries(
     or a provider error echoing the key must not survive into them.
     """
     config = ScreenScribeConfig()
-    config.stt_endpoint = "https://stt.libraxis.cloud/v1/audio/transcriptions?token=tok-in-url"
+    config.stt_endpoint = "https://stt.libraxis.com/v1/audio/transcriptions?token=tok-in-url"
     config.stt_api_key = "sk-proof-secret-123"  # pragma: allowlist secret
     monkeypatch.setattr("screenscribe.proofs.providers.ScreenScribeConfig.load", lambda: config)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -373,7 +373,7 @@ def test_receipts_never_carry_secrets_or_url_queries(
     joined = " ".join((stt.request_essence, stt.response_essence, stt.reason))
     assert "sk-proof-secret-123" not in joined  # pragma: allowlist secret
     assert "tok-in-url" not in joined
-    assert "https://stt.libraxis.cloud/v1/audio/transcriptions" in stt.request_essence
+    assert "https://stt.libraxis.com/v1/audio/transcriptions" in stt.request_essence
 
 
 @pytest.mark.parametrize(

@@ -628,9 +628,9 @@ class TestKeyEndpointMismatchWarning:
             ("https://api.openai.com/v1/responses", "openai"),
             ("https://api.openai\u3002com/v1/responses", "openai"),
             ("https://api.openai\uff61com/v1/responses", "openai"),
-            ("https://libraxis.cloud/v1/responses", None),
-            ("https://api.libraxis.cloud/v1/responses", "libraxis"),
-            ("https://api.libraxis\uff0ecloud/v1/responses", "libraxis"),
+            ("https://libraxis.com/v1/responses", None),
+            ("https://api.libraxis.com/v1/responses", "libraxis"),
+            ("https://api.libraxis\uff0ecom/v1/responses", "libraxis"),
         ],
     )
     def test_endpoint_provider_accepts_only_canonical_domain_boundaries(
@@ -643,8 +643,8 @@ class TestKeyEndpointMismatchWarning:
         [
             "https://openai.com.evil.example/v1/responses",
             "https://evilopenai.com/v1/responses",
-            "https://libraxis.cloud.evil.example/v1/responses",
-            "https://evillibraxis.cloud/v1/responses",
+            "https://libraxis.com.evil.example/v1/responses",
+            "https://evillibraxis.com/v1/responses",
             "not-a-url-with-openai.com-in-its-path",
         ],
     )
@@ -1072,7 +1072,7 @@ class TestInvalidEndpointMessageRedaction:
     def test_invalid_libraxis_chat_endpoint_is_redacted(self) -> None:
         config = ScreenScribeConfig(
             llm_endpoint=(
-                "https://user:secret@api.libraxis.cloud/v1/chat/completions?key=abc"  # pragma: allowlist secret
+                "https://user:secret@api.libraxis.com/v1/chat/completions?key=abc"  # pragma: allowlist secret
             ),
         )
 
@@ -1080,7 +1080,7 @@ class TestInvalidEndpointMessageRedaction:
         first_line = errors[0].splitlines()[0]
 
         assert first_line == (
-            "Invalid endpoint: https://***@api.libraxis.cloud/v1/chat/completions?key=***"
+            "Invalid endpoint: https://***@api.libraxis.com/v1/chat/completions?key=***"
         )
         assert "secret" not in errors[0]
         assert "key=abc" not in errors[0]

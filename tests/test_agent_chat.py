@@ -67,7 +67,7 @@ def _libraxis_config(**overrides: Any) -> ScreenScribeConfig:
     values: dict[str, Any] = {
         "provider": "libraxis",
         "api_key": "test-key",  # pragma: allowlist secret
-        "llm_endpoint": "https://api.libraxis.cloud/v1/responses",
+        "llm_endpoint": "https://api.libraxis.com/v1/responses",
         "llm_model": "programmer",
         "agent_egress": "deny",
     }
@@ -661,7 +661,7 @@ def test_stateful_finalization_tool_violation_clears_cursor_and_separates_preamb
 @pytest.mark.parametrize(
     ("protocol", "host", "stateful"),
     [
-        ("responses", "api.libraxis.cloud", True),
+        ("responses", "api.libraxis.com", True),
         ("responses", "api.x.ai", False),
         ("anthropic", "anthropic.example", False),
     ],
@@ -1272,10 +1272,10 @@ def test_xai_uses_full_history_with_instructions_for_second_turn_and_tools(
     ("provider_name", "protocol", "host", "should_chain"),
     [
         (None, None, None, False),
-        ("fallback", "responses", "api.libraxis.cloud", False),
-        ("primary", "anthropic", "api.libraxis.cloud", False),
+        ("fallback", "responses", "api.libraxis.com", False),
+        ("primary", "anthropic", "api.libraxis.com", False),
         ("primary", "responses", "other.example", False),
-        ("primary", "responses", "api.libraxis.cloud", True),
+        ("primary", "responses", "api.libraxis.com", True),
     ],
 )
 def test_non_xai_cursor_requires_exact_primary_identity(
@@ -1805,7 +1805,7 @@ def test_chat_completions_endpoint_is_rejected_before_network(
     assert "requires a Responses API endpoint" in body
 
 
-@pytest.mark.parametrize("host", ["api.x.ai", "api.libraxis.cloud"])
+@pytest.mark.parametrize("host", ["api.x.ai", "api.libraxis.com"])
 @pytest.mark.parametrize("use_response_id", [False, True])
 def test_two_turns_over_responses_http_preserve_role_content_contract(
     monkeypatch: pytest.MonkeyPatch,
@@ -1983,7 +1983,7 @@ def test_three_turns_with_tools_keep_the_chain(monkeypatch: pytest.MonkeyPatch) 
                     previous_response_id=previous,
                     previous_response_provider="primary",
                     previous_response_protocol="responses",
-                    previous_response_host="api.libraxis.cloud",
+                    previous_response_host="api.libraxis.com",
                 )
             ]
             body = "".join(frames)
@@ -2048,7 +2048,7 @@ def test_forwarded_history_caps_at_20_and_keeps_chain(
                     previous_response_id="resp_chain",
                     previous_response_provider="primary",
                     previous_response_protocol="responses",
-                    previous_response_host="api.libraxis.cloud",
+                    previous_response_host="api.libraxis.com",
                 )
             ]
         )

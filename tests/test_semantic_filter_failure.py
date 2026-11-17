@@ -767,7 +767,7 @@ def test_prefilter_connect_timeout_names_unreachable_host(
 
 # --- Reasoning effort + no retry after the model produced output -------------
 #
-# Live root cause (api.libraxis.cloud, model `programmer`): without an explicit
+# Live root cause (api.libraxis.com, model `programmer`): without an explicit
 # reasoning effort the model reasoned in a loop for 11-20 minutes, emitted no
 # output_text and ended with response.failed / server_error. Retrying that
 # "transient" code would multiply the hang, so a provider error after any model

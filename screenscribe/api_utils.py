@@ -35,7 +35,7 @@ AUTH_FAILURE_STATUS_CODES = {401, 403}
 
 # Only these endpoints establish provider identity; custom gateways remain custom.
 PROVIDER_HOSTS = {
-    "api.libraxis.cloud": "libraxis",
+    "api.libraxis.com": "libraxis",
     "api.openai.com": "openai",
     "api.x.ai": "xai",
     # ChatGPT account route (Codex backend): LLM + vision, account token only.

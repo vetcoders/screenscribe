@@ -498,7 +498,7 @@ def _run(provider: AgentProvider, belt: ReportToolbelt) -> tuple[list[dict[str, 
     return payloads, body
 
 
-@pytest.mark.parametrize("host", ["api.libraxis.cloud", "api.x.ai"])
+@pytest.mark.parametrize("host", ["api.libraxis.com", "api.x.ai"])
 def test_responses_loop_sends_frames_as_input_image(report_dir: Path, host: str) -> None:
     payloads, body = _run(_provider("responses", host), _belt(report_dir))
     assert len(payloads) == 2

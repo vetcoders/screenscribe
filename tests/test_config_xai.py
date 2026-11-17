@@ -130,7 +130,7 @@ def test_tts_and_live_helpers_derive_from_stt_provider() -> None:
 
     libraxis = ScreenScribeConfig.provider_preset("libraxis", "lx")
     assert libraxis.get_tts_endpoint() == ""  # no TTS provider wired for LibraxisAI
-    assert libraxis.get_stt_live_endpoint() == "wss://api.libraxis.cloud/v1/audio/transcribe"
+    assert libraxis.get_stt_live_endpoint() == "wss://api.libraxis.com/v1/audio/transcribe"
 
     explicit = ScreenScribeConfig(tts_api_key="t", tts_endpoint="https://api.x.ai/v1/tts")
     assert explicit.get_tts_api_key() == "t"

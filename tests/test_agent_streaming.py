@@ -27,7 +27,7 @@ from screenscribe.transcribe import Segment, TranscriptionResult
 VALID_BROWSER_AUDIO = b"voice-data" + (b"x" * 2048)
 
 
-def _provider(slot: str = "primary", host: str = "api.libraxis.cloud") -> AgentProvider:
+def _provider(slot: str = "primary", host: str = "api.libraxis.com") -> AgentProvider:
     return AgentProvider(
         name=slot,
         protocol="responses",

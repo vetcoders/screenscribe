@@ -605,7 +605,7 @@ proof that an arbitrary issuer is trustworthy. Both resolved issuers and final
 token destinations are validated, and OAuth redirects are refused even for an
 injected client configured to follow redirects.
 
-Automatic provider identity uses only `api.libraxis.cloud`, `api.openai.com`,
+Automatic provider identity uses only `api.libraxis.com`, `api.openai.com`,
 and `api.x.ai`, plus `chatgpt.com` for the ChatGPT account route (account token
 only), after IDNA/case/trailing-dot normalization. Parent domains and
 unlisted subdomains are custom endpoints, not proof of provider ownership.
@@ -672,9 +672,9 @@ Per-endpoint keys fall back to the generic `api_key` when empty, so a single
 
 Defaults (LibraxisAI):
 
-- STT: `https://api.libraxis.cloud/v1/audio/transcriptions`
-- LLM: `https://api.libraxis.cloud/v1/responses`
-- Vision: `https://api.libraxis.cloud/v1/responses`
+- STT: `https://api.libraxis.com/v1/audio/transcriptions`
+- LLM: `https://api.libraxis.com/v1/responses`
+- Vision: `https://api.libraxis.com/v1/responses`
 
 The LLM and vision endpoints use the **Responses API** (`/v1/responses`), which
 enables response-ID chaining across pipeline stages. To use OpenAI, set
@@ -849,7 +849,7 @@ keep, or a recording without narration minute by minute.
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `SCREENSCRIBE_AGENT_EGRESS` | `deny` | `deny` skips providers whose trust is `external`. `allow` sends the loaded report (and therefore the recording's contents) to those hosts. Analysis hosts (`processor`) are always kept. |
-| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from host and report receipt | `local` / `internal` / `processor` / `external`. Strict loopback is `local`; only the canonical `api.libraxis.cloud` is implicitly `internal`, not other subdomains; a recorded successful semantic LLM host is `processor`. Set `external` to exclude that host under `deny`. An explicit trust override never bypasses transport validation. |
+| `SCREENSCRIBE_AGENT_PRIMARY_TRUST` | inferred from host and report receipt | `local` / `internal` / `processor` / `external`. Strict loopback is `local`; only the canonical `api.libraxis.com` is implicitly `internal`, not other subdomains; a recorded successful semantic LLM host is `processor`. Set `external` to exclude that host under `deny`. An explicit trust override never bypasses transport validation. |
 
 Optional Anthropic fallback (skipped when unset): `ANTHROPIC_API_KEY` or `SCREENSCRIBE_AGENT_FALLBACK_API_KEY`. Install the extra with `pip install 'screenscribe[anthropic]'`.
 
@@ -909,7 +909,7 @@ the chat panel; a report-scoped one is saved when the tool runs.
 | `SCREENSCRIBE_TTS_ENDPOINT` | TTS endpoint (default derived: `https://api.x.ai/v1/tts` on the xAI preset). |
 | `SCREENSCRIBE_TTS_API_KEY` | TTS key (falls back to the STT key, then the generic key). |
 | `SCREENSCRIBE_TTS_VOICE` | Default voice id for `screenscribe tts`. |
-| `SCREENSCRIBE_STT_LIVE_ENDPOINT` | Websocket STT gateway for `transcribe --live` (derived: `wss://api.x.ai/v1/stt` or `wss://api.libraxis.cloud/v1/audio/transcribe`). |
+| `SCREENSCRIBE_STT_LIVE_ENDPOINT` | Websocket STT gateway for `transcribe --live` (derived: `wss://api.x.ai/v1/stt` or `wss://api.libraxis.com/v1/audio/transcribe`). |
 
 ### ChatGPT account (LLM + vision)
 
