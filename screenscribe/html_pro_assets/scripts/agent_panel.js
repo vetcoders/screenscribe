@@ -36,7 +36,7 @@
     // items than _MAX_HISTORY_ITEMS or longer fields than
     // _MAX_HISTORY_FIELD_CHARS get a 422 before the agent even starts.
     var HISTORY_MAX_ITEMS = 50;
-    var HISTORY_MAX_FIELD_CHARS = 16000;
+    var HISTORY_MAX_FIELD_CHARS = 256000;
     var MAX_ATTACHMENTS = 4;
     var ATTACH_MAX_SIDE = 2048;
     var ATTACH_KEEP_BYTES = 1500000;

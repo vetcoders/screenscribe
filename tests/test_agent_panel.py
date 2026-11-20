@@ -2087,7 +2087,7 @@ def test_dictation_status_reflects_whether_autosend_actually_runs() -> None:
 def test_request_history_is_capped_to_the_api_contract() -> None:
     """R3-02: the 27th turn must not 422 on history length.
 
-    The backend accepts at most 50 history items of at most 16000 chars each;
+    The backend accepts at most 50 history items of at most 256000 chars each;
     the panel used to send the whole conversation verbatim.
     """
     output = _run_agent_panel(
@@ -2108,12 +2108,12 @@ def test_request_history_is_capped_to_the_api_contract() -> None:
             const history = api.getState().history;
             for (let i = 0; i < 30; i += 1) {
                 history.push({ role: 'user', content: 'q' + i });
-                history.push({ role: 'assistant', content: i === 29 ? 'x'.repeat(20000) : 'a' + i });
+                history.push({ role: 'assistant', content: i === 29 ? 'x'.repeat(260000) : 'a' + i });
             }
             await api.send('turn 31');
             const sent = bodies[0].history;
             if (sent.length !== 50) throw new Error('history length ' + sent.length);
-            if (sent[sent.length - 1].content.length !== 16000) {
+            if (sent[sent.length - 1].content.length !== 256000) {
                 throw new Error('field not truncated: ' + sent[sent.length - 1].content.length);
             }
             if (sent[0].content !== 'q5') throw new Error('oldest kept entry ' + sent[0].content);

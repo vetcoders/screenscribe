@@ -233,10 +233,16 @@ def test_agent_chat_rejects_empty_message(tmp_path: Path) -> None:
 
 
 def test_agent_chat_rejects_oversized_message_and_history(tmp_path: Path) -> None:
+    from screenscribe.agent.chat import AgentChatRequest
+
     client = TestClient(_app(tmp_path))
+    # Multi-screen markdown / x9stt transcript pastes (>16k chars) must pass schema validation.
+    accepted_payload = AgentChatRequest(message="x" * 20_000, history=[])
+    assert len(accepted_payload.message) == 20_000
+
     oversized_message = client.post(
         "/api/agent/chat",
-        json={"message": "x" * 16_001, "history": []},
+        json={"message": "x" * 256_001, "history": []},
     )
     assert oversized_message.status_code == 422
 
@@ -244,7 +250,7 @@ def test_agent_chat_rejects_oversized_message_and_history(tmp_path: Path) -> Non
         "/api/agent/chat",
         json={
             "message": "hi",
-            "history": [{"role": "user", "content": "x" * 16_001}],
+            "history": [{"role": "user", "content": "x" * 256_001}],
         },
     )
     assert oversized_history.status_code == 422

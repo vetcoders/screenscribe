@@ -62,9 +62,9 @@ from .tools import ReportToolbelt, anthropic_tool_schemas, responses_tool_schema
 logger = logging.getLogger(__name__)
 
 _MAX_TOOL_ROUNDS = 8
-_MAX_MESSAGE_CHARS = 16_000
+_MAX_MESSAGE_CHARS = 256_000
 _MAX_HISTORY_ITEMS = 50
-_MAX_HISTORY_FIELD_CHARS = 16_000
+_MAX_HISTORY_FIELD_CHARS = 256_000
 # Screenshots the reviewer pastes or drops into the chat. The browser downscales
 # them before upload; these caps bound the request even if it does not.
 _MAX_USER_IMAGES = 4
