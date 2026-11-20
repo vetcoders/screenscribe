@@ -475,7 +475,7 @@ def test_config_getters_fall_back_to_xai_account_only_on_api_x_ai() -> None:
     config = ScreenScribeConfig(
         stt_endpoint="https://api.x.ai/v1/stt",
         llm_endpoint="https://api.x.ai/v1/responses",
-        vision_endpoint="https://api.libraxis.cloud/v1/responses",
+        vision_endpoint="https://api.libraxis.com/v1/responses",
     )
     assert config.get_stt_api_key() == "at-xai"
     assert config.get_llm_api_key() == "at-xai"

@@ -207,7 +207,7 @@ with a warning when provider compatibility cannot be verified.
 Remote provider endpoints require HTTPS (WSS for live STT). HTTP/WS is allowed
 only for `localhost` or a literal loopback address, including IPv6. Private LAN
 addresses still require TLS. Provider identity is restricted to the exact API
-hosts `api.libraxis.cloud`, `api.openai.com`, and `api.x.ai`, plus `chatgpt.com`
+hosts `api.libraxis.com`, `api.openai.com`, and `api.x.ai`, plus `chatgpt.com`
 for the ChatGPT account route (account token only); other gateways are
 custom providers and need explicitly configured credentials. Provider redirects
 are not followed; configure the final endpoint directly.
@@ -497,7 +497,7 @@ export SCREENSCRIBE_VISION_ENDPOINT=https://api.openai.com/v1/responses
 
 The LLM and vision endpoints use the **Responses API** (`/v1/responses`), which
 enables response-ID chaining across pipeline stages. The default provider is
-LibraxisAI (`https://api.libraxis.cloud`); override the variables above to use
+LibraxisAI (`https://api.libraxis.com`); override the variables above to use
 OpenAI or any compatible provider.
 
 ### Models

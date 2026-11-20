@@ -264,7 +264,7 @@ def test_send_after_finish_is_rejected() -> None:
     ("endpoint", "expected"),
     [
         ("wss://api.x.ai/v1/stt", XaiStreamClient),
-        ("wss://api.libraxis.cloud/v1/audio/transcribe", LibraxisStreamClient),
+        ("wss://api.libraxis.com/v1/audio/transcribe", LibraxisStreamClient),
         ("ws://127.0.0.1:7237/live", LibraxisStreamClient),
     ],
 )

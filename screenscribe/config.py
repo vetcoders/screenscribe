@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from .keywords import KeywordsConfig
 
 # Default LibraxisAI configuration
-LIBRAXIS_API_BASE = "https://api.libraxis.cloud"
+LIBRAXIS_API_BASE = "https://api.libraxis.com"
 LIBRAXIS_STT_ENDPOINT = f"{LIBRAXIS_API_BASE}/v1/audio/transcriptions"
 LIBRAXIS_LLM_ENDPOINT = f"{LIBRAXIS_API_BASE}/v1/responses"
 LIBRAXIS_VISION_ENDPOINT = f"{LIBRAXIS_API_BASE}/v1/responses"
@@ -65,7 +65,7 @@ CHATGPT_VISION_MODEL = "gpt-5.6-luna"
 CHATGPT_SIGN_IN_HINT = "ChatGPT sign-in required: run `screenscribe auth login openai`"
 
 # LibraxisAI live STT gateway (stt-ws-v1; see screenscribe.stt_stream).
-LIBRAXIS_STT_LIVE_ENDPOINT = "wss://api.libraxis.cloud/v1/audio/transcribe"
+LIBRAXIS_STT_LIVE_ENDPOINT = "wss://api.libraxis.com/v1/audio/transcribe"
 
 # Default models
 DEFAULT_STT_MODEL = "whisper-1"
@@ -1299,7 +1299,7 @@ class ScreenScribeConfig:
             lines.append(f"SCREENSCRIBE_API_BASE={self.api_base}")
         else:
             lines.append("# SCREENSCRIBE_API_BASE=https://api.openai.com")
-            lines.append("# SCREENSCRIBE_API_BASE=https://api.libraxis.cloud")
+            lines.append("# SCREENSCRIBE_API_BASE=https://api.libraxis.com")
         lines += [
             "",
             sep,

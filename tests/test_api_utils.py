@@ -105,7 +105,7 @@ def test_retry_request_falls_back_to_backoff_without_retry_after(
 class TestExtractLlmResponseTextResponsesAPI:
     """Tests for the default LibraxisAI (OpenAI-compatible) Responses API format."""
 
-    ENDPOINT = "https://api.libraxis.cloud/v1/responses"
+    ENDPOINT = "https://api.libraxis.com/v1/responses"
 
     def test_direct_output_text_string(self) -> None:
         response = {"output_text": "Direct text response."}

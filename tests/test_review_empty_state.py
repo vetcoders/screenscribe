@@ -25,7 +25,7 @@ from screenscribe.transcribe import Segment, TranscriptionResult
 
 _LIBRAXIS_LLM_RECEIPT = {
     "llm": {
-        "host": "api.libraxis.cloud",
+        "host": "api.libraxis.com",
         "protocol": "responses",
         "provider": "libraxis",
     }
@@ -140,7 +140,7 @@ def test_review_writes_all_three_reports_when_prefilter_returns_zero_pois(
     assert report["transcript"] == "OK, success."
     assert report["transcript_source"] == "audio"
     assert report["processing_provenance"]["llm"] == {
-        "host": "api.libraxis.cloud",
+        "host": "api.libraxis.com",
         "protocol": "responses",
         "provider": "libraxis",
     }

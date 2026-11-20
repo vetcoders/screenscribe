@@ -60,7 +60,7 @@ class DirectProviderConnect(connect):
 
 EventKind = Literal["partial", "final", "ended", "error"]
 
-LIBRAXIS_STT_LIVE_ENDPOINT = "wss://api.libraxis.cloud/v1/audio/transcribe"
+LIBRAXIS_STT_LIVE_ENDPOINT = "wss://api.libraxis.com/v1/audio/transcribe"
 XAI_STT_LIVE_ENDPOINT = "wss://api.x.ai/v1/stt"
 
 # Time allowed for the server to flush its tail after the client end frames.

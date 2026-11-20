@@ -1240,7 +1240,7 @@ def _agent_provider(host: str, protocol: str = "responses") -> AgentProvider:
         ("chatgpt.com", False),
         ("api.x.ai", False),
         ("api.openai.com", True),
-        ("api.libraxis.cloud", True),
+        ("api.libraxis.com", True),
     ],
 )
 def test_agent_stateful_chain_is_off_for_chatgpt(host: str, expected: bool) -> None:

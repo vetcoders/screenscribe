@@ -391,7 +391,7 @@ class TestValidate:
     def test_warns_on_libraxis_chat_completions_endpoint(self):
         """A libraxis LLM endpoint using /v1/chat/completions raises a warning."""
         config = ScreenScribeConfig()
-        config.llm_endpoint = "https://api.libraxis.cloud/v1/chat/completions"
+        config.llm_endpoint = "https://api.libraxis.com/v1/chat/completions"
 
         warnings = config.validate()
 

@@ -101,9 +101,9 @@ def test_transport_error_does_not_echo_url_credentials() -> None:
 @pytest.mark.parametrize(
     "host",
     [
-        "libraxis.cloud",
-        "unlisted.libraxis.cloud",
-        "api.libraxis.cloud.example.invalid",
+        "libraxis.com",
+        "unlisted.libraxis.com",
+        "api.libraxis.com.example.invalid",
         "api.openai.com.example.invalid",
     ],
 )
@@ -119,12 +119,12 @@ def test_unlisted_host_does_not_gain_provider_identity_or_implicit_internal_trus
 
 
 @pytest.mark.parametrize(
-    "host", ["api.libraxis.cloud", "API.LIBRAXIS.CLOUD.", "api.libraxis\u3002cloud"]
+    "host", ["api.libraxis.com", "API.LIBRAXIS.COM.", "api.libraxis\u3002com"]
 )
 def test_exact_internal_host_canonicalizes_consistently(host: str) -> None:
     assert ScreenScribeConfig._endpoint_provider(f"https://{host}/v1/responses") == "libraxis"
     assert chat.infer_trust(host) == "internal"
-    assert chat._host_of(f"https://{host}/v1/responses") == "api.libraxis.cloud"
+    assert chat._host_of(f"https://{host}/v1/responses") == "api.libraxis.com"
 
 
 @pytest.mark.parametrize(

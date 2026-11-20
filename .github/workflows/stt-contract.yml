@@ -1,6 +1,6 @@
 name: STT Contract
 
-# Nightly contract check against the LIVE providers (api.libraxis.cloud).
+# Nightly contract check against the LIVE providers (api.libraxis.com).
 # This is a DRIFT DETECTOR, not a PR gate: it runs the integration suite
 # (`-m integration`, which ci.yml deliberately deselects) so that a change in
 # the real STT/LLM API surface reddens HERE — on a schedule — before it can
@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   contract:
-    name: STT contract (live api.libraxis.cloud)
+    name: STT contract (live api.libraxis.com)
     runs-on: ubuntu-latest
     env:
       # The integration fixtures read the key straight from the environment:

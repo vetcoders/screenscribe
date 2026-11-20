@@ -3,7 +3,7 @@
 These tests require:
 - API key configured in ~/.config/screenscribe/config.env
 - Or LIBRAXIS_API_KEY environment variable
-- Network access to api.libraxis.cloud
+- Network access to api.libraxis.com
 
 Run with: make test-integration
 """
